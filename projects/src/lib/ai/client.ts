@@ -7,6 +7,7 @@ export type InvokeOptions = {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  jsonMode?: boolean;
 };
 
 interface AiConfig {
@@ -71,6 +72,7 @@ async function requestCompletion(
         messages,
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.maxTokens,
+        ...(options?.jsonMode ? { response_format: { type: 'json_object' } } : {}),
         stream,
       }),
       signal: AbortSignal.timeout(config.timeoutMs),

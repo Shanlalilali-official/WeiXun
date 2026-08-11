@@ -57,6 +57,21 @@ export const RELATIONSHIP_ACTIONS: Record<string, RelationshipAction> = {
 
 const clamp = (value: number, min = 0, max = 100) => Math.max(min, Math.min(max, value));
 
+function deriveUnlockedNpcIds(
+  unlockedNpcIds: string[],
+  unlockedClues: ProjectOneClue[],
+  npcAffinity: Record<string, number>,
+): string[] {
+  const next = [...unlockedNpcIds];
+  const shouldUnlockMinister =
+    unlockedClues.includes('decision_process') ||
+    Object.values(npcAffinity).some((affinity) => affinity >= 50);
+  if (shouldUnlockMinister && !next.includes('p1-minister-chen-jianguo')) {
+    next.push('p1-minister-chen-jianguo');
+  }
+  return next;
+}
+
 export function createProjectOneState(): GameRuntimeState {
   return {
     scenarioCode: PROJECT_ONE_CODE,
@@ -106,13 +121,7 @@ export function applyNpcEvaluation(
     (clue) => clue !== 'personal_interest' || npcAffinity[npcId] >= 50,
   );
   const unlockedClues = Array.from(new Set([...state.unlockedClues, ...acceptedClues]));
-  const unlockedNpcIds = [...state.unlockedNpcIds];
-  const shouldUnlockMinister =
-    unlockedClues.includes('decision_process') ||
-    Object.values(npcAffinity).some((affinity) => affinity >= 50);
-  if (shouldUnlockMinister && !unlockedNpcIds.includes('p1-minister-chen-jianguo')) {
-    unlockedNpcIds.push('p1-minister-chen-jianguo');
-  }
+  const unlockedNpcIds = deriveUnlockedNpcIds(state.unlockedNpcIds, unlockedClues, npcAffinity);
 
   return { ...state, dimensions, npcAffinity, unlockedClues, unlockedNpcIds };
 }
@@ -128,13 +137,16 @@ export function applyRelationshipAction(
   if (!action) throw new Error('ACTION_UNKNOWN');
   if (state.actionPoints < action.cost) throw new Error('ACTION_POINTS_INSUFFICIENT');
 
+  const npcAffinity = {
+    ...state.npcAffinity,
+    [npcId]: clamp((state.npcAffinity[npcId] ?? 35) + action.affinityGain),
+  };
+
   return {
     ...state,
     actionPoints: state.actionPoints - action.cost,
-    npcAffinity: {
-      ...state.npcAffinity,
-      [npcId]: clamp((state.npcAffinity[npcId] ?? 35) + action.affinityGain),
-    },
+    npcAffinity,
+    unlockedNpcIds: deriveUnlockedNpcIds(state.unlockedNpcIds, state.unlockedClues, npcAffinity),
     lastAction: actionId,
   };
 }

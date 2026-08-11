@@ -22,6 +22,15 @@ export interface ProjectOneNpc {
   initiallyVisible: boolean;
 }
 
+export const PROJECT_ONE_COMPETITORS = [
+  {
+    company_name: 'ABC竞品',
+    features: '既有客情与价格竞争',
+    more_info: '具体报价和项目动作需要在对局中继续收集。',
+    project_id: 1,
+  },
+];
+
 /** 来源：项目内“各项目人物表.docx”的最新导入版本。 */
 export const PROJECT_ONE_NPCS: ProjectOneNpc[] = [
   {

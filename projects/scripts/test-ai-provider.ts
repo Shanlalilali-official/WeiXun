@@ -12,14 +12,14 @@ async function main() {
     request.setEncoding('utf8');
     request.on('data', (chunk) => { body += chunk; });
     request.on('end', () => {
-      const payload = JSON.parse(body) as { stream?: boolean };
+      const payload = JSON.parse(body) as { stream?: boolean; response_format?: { type?: string } };
       if (request.headers.authorization !== 'Bearer local-test-key') {
         response.writeHead(401).end();
         return;
       }
       if (!payload.stream) {
         response.writeHead(200, { 'Content-Type': 'application/json' });
-        response.end(JSON.stringify({ choices: [{ message: { content: '普通响应通过' } }] }));
+        response.end(JSON.stringify({ choices: [{ message: { content: payload.response_format ? '{"ok":true}' : '普通响应通过' } }] }));
         return;
       }
 
@@ -42,6 +42,8 @@ async function main() {
     const { invokeLLM, streamLLM } = await import('../src/lib/ai/client');
     const response = await invokeLLM([{ role: 'user', content: 'test' }]);
     if (response !== '普通响应通过') throw new Error(`INVOKE_MISMATCH: ${response}`);
+    const jsonResponse = await invokeLLM([{ role: 'user', content: 'json test' }], { jsonMode: true });
+    if (jsonResponse !== '{"ok":true}') throw new Error(`JSON_MODE_MISMATCH: ${jsonResponse}`);
 
     let streamed = '';
     for await (const chunk of streamLLM([{ role: 'user', content: 'test stream' }])) {

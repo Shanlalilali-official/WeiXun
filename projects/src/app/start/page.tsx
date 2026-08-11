@@ -37,7 +37,7 @@ const DEFAULT_PROJECTS: Hotspot[] = [
     leader: { name: '赵峰', style: '老虎型，年富力强', title: '分管业务副主任' },
     technicalDifficulties: ['人物关系链短', '信息挖掘门槛低', '适合零基础销售'],
     customerNeeds: ['办公配套升级', '预算固定', '日常使用需求清晰'],
-    aiAdvice: '单位内部人员层级简单，新任分管领导刚接手业务。资深中层是最终拍板人，必须主攻资深中层。',
+    aiAdvice: '单位内部人员层级简单，新任分管领导刚接手业务。当前决策链尚不明确，应先从基层和采购验证流程，再识别真正拍板人。',
     expectedProfit: 25,
     winRate: 70,
   },
@@ -294,7 +294,7 @@ export default function StartPage() {
                   <div className="text-xs text-muted-foreground mb-2">项目信息</div>
                   <div className="space-y-1.5 text-xs">
                     <div className="flex justify-between"><span className="text-muted-foreground">项目预算</span><span className="font-semibold text-foreground">¥{selected.budget}万</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">交付周期</span><span className="font-semibold text-foreground">12 个月</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">交付周期</span><span className="font-semibold text-foreground">5 个月</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">参与竞品</span><span className="font-semibold text-foreground">3 家</span></div>
                   </div>
                 </div>
@@ -365,7 +365,7 @@ export default function StartPage() {
 
                 {/* 决策人 */}
                 <div className="mb-4 p-4 rounded-xl border border-border">
-                  <div className="text-xs font-semibold text-foreground mb-2">关键决策人</div>
+                  <div className="text-xs font-semibold text-foreground mb-2">当前已知负责人</div>
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center text-base font-bold text-primary">
                       {selected.leader.name[0]}

@@ -120,7 +120,7 @@ function GameInner() {
   const [aiPracticeInput, setAiPracticeInput] = useState('');
   const [showAiPracticeModal, setShowAiPracticeModal] = useState(false);
   const [streaming, setStreaming] = useState(false);
-  const [competitor, setCompetitor] = useState({ name: '华宇科技', bid: 540, trust: 42 });
+  const [advancing, setAdvancing] = useState(false);
   const [competitors, setCompetitors] = useState<CompetitorProfile[]>([]);
   const [loadingCompetitors, setLoadingCompetitors] = useState(true);
   const [npcs, setNpcs] = useState<NpcProfile[]>([]);
@@ -135,6 +135,15 @@ function GameInner() {
   const score = gameState ? calculateTotalScore(gameState.dimensions) : 50;
   const coins = gameState?.actionPoints ?? 0;
   const intimacy = selectedNpc ? (gameState?.npcAffinity[selectedNpc] ?? 35) : 35;
+  const decisionAnalysis = gameState?.dimensions.decisionAnalysis ?? 50;
+  const valuePresentation = gameState?.dimensions.valuePresentation ?? 50;
+  const nextSuggestion = !gameState?.unlockedClues.includes('decision_process')
+    ? '优先向基层和采购了解预算、评审人与最终拍板流程。'
+    : (gameState.npcAffinity['p1-minister-chen-jianguo'] ?? 0) < 45
+      ? '决策流程已经明确，下一步应建立与关键中层的信任关系。'
+      : score < 60
+        ? '关键关系已建立，继续提升需求分析和价值呈现得分。'
+        : '当前中标条件接近达成，注意保持关键关系并核对全部线索。';
 
   // 语音输入
   const toggleRecording = (target: 'input' | 'aiPractice') => {
@@ -434,19 +443,24 @@ function GameInner() {
   };
 
   const advanceGame = async () => {
-    if (!gameSessionId || streaming) return;
-    const response = await fetch(`/api/game/sessions/${gameSessionId}/advance`, {
-      method: 'POST',
-      headers: { 'x-session': localStorage.getItem('weixun_session') || '' },
-    });
-    const data = await response.json().catch(() => null);
-    if (!response.ok) {
-      alert(data?.error || '轮次推进失败');
-      return;
-    }
-    setGameState(data.state);
-    if (data.state.status !== 'playing') {
-      router.push(`/result?sessionId=${gameSessionId}`);
+    if (!gameSessionId || streaming || advancing) return;
+    setAdvancing(true);
+    try {
+      const response = await fetch(`/api/game/sessions/${gameSessionId}/advance`, {
+        method: 'POST',
+        headers: { 'x-session': localStorage.getItem('weixun_session') || '' },
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        alert(data?.error || '轮次推进失败');
+        return;
+      }
+      setGameState(data.state);
+      if (data.state.status !== 'playing') {
+        router.push(`/result?sessionId=${gameSessionId}`);
+      }
+    } finally {
+      setAdvancing(false);
     }
   };
 
@@ -477,9 +491,10 @@ function GameInner() {
           </div>
           <button
             onClick={advanceGame}
-            className="ml-2 px-3 py-1.5 rounded bg-error text-white text-xs font-semibold hover:bg-error/90"
+            disabled={advancing || streaming || !gameSessionId}
+            className="ml-2 px-3 py-1.5 rounded bg-error text-white text-xs font-semibold hover:bg-error/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {round >= (gameState?.maxRounds ?? 5) ? '完成对局' : '结束本轮'}
+            {advancing ? '处理中...' : round >= (gameState?.maxRounds ?? 5) ? '完成对局' : '结束本轮'}
           </button>
         </div>
       </header>
@@ -601,7 +616,7 @@ function GameInner() {
                             <div className="text-sm font-semibold text-primary">¥{scene.budget}万</div>
                           </div>
                           <div>
-                            <span className="text-[10px] text-muted-foreground">核心决策人</span>
+                            <span className="text-[10px] text-muted-foreground">当前已知负责人</span>
                             <div className="text-sm font-semibold text-foreground">{scene.leader}</div>
                           </div>
                           <div>
@@ -814,21 +829,21 @@ function GameInner() {
 
               <div>
                 <div className="flex items-center justify-between text-[10px] mb-1">
-                  <span className="text-muted-foreground">技术匹配</span>
-                  <span className="font-semibold text-foreground">72%</span>
+                  <span className="text-muted-foreground">决策分析</span>
+                  <span className="font-semibold text-foreground">{decisionAnalysis} / 100</span>
                 </div>
                 <div className="h-2 rounded-full bg-surface-container overflow-hidden">
-                  <div className="h-full bg-warning transition-all" style={{ width: '72%' }} />
+                  <div className="h-full bg-warning transition-all" style={{ width: `${decisionAnalysis}%` }} />
                 </div>
               </div>
 
               <div>
                 <div className="flex items-center justify-between text-[10px] mb-1">
-                  <span className="text-muted-foreground">价格竞争力</span>
-                  <span className="font-semibold text-foreground">65%</span>
+                  <span className="text-muted-foreground">价值呈现</span>
+                  <span className="font-semibold text-foreground">{valuePresentation} / 100</span>
                 </div>
                 <div className="h-2 rounded-full bg-surface-container overflow-hidden">
-                  <div className="h-full bg-error transition-all" style={{ width: '65%' }} />
+                  <div className="h-full bg-error transition-all" style={{ width: `${valuePresentation}%` }} />
                 </div>
               </div>
             </div>
@@ -842,7 +857,7 @@ function GameInner() {
                 className="w-full px-3 py-2 rounded-lg bg-primary/5 border border-primary/20 text-xs font-semibold text-primary hover:bg-primary/10 transition-colors flex items-center justify-center gap-1.5"
               >
                 <FileText className="w-3.5 h-3.5" />
-                查看{competitors.length === 3 ? 'ABC' : 'ABCD'}公司特点表
+                查看竞品信息
               </button>
             </div>
           </div>
@@ -850,7 +865,7 @@ function GameInner() {
           <div>
             <div className="text-xs font-semibold text-foreground mb-2">下一步建议</div>
             <div className="p-3 rounded-lg bg-primary/5 border border-primary/20 text-[11px] text-foreground">
-              建议强调国产化适配经验，匹配张副市长的技术驱动偏好。
+              {nextSuggestion}
             </div>
           </div>
         </aside>
@@ -866,7 +881,7 @@ function GameInner() {
                   <FileText className="w-5 h-5 text-primary" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-foreground">{competitors.length === 3 ? 'ABC' : 'ABCD'}公司特点表</h2>
+                  <h2 className="text-lg font-bold text-foreground">竞品信息</h2>
                   <p className="text-xs text-muted-foreground">竞品公司信息对比</p>
                 </div>
               </div>

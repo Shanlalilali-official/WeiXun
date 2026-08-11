@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@/storage/database/supabase-client';
+import { PROJECT_ONE_COMPETITORS } from '@/lib/game/project-one';
 
 // GET /api/game-data/competitors?project_id=1 - 获取某项目的公司特点
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const projectId = searchParams.get('project_id');
+
+    if (projectId === '1') {
+      return NextResponse.json({ success: true, data: PROJECT_ONE_COMPETITORS });
+    }
 
     const supabase = createServerClient();
 

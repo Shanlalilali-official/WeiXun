@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
 import { invokeLLM } from '@/lib/ai/client';
+import { parseAiJsonObject } from '@/lib/ai/json';
 import { SCENARIO_GENERATOR_PROMPT } from '@/lib/ai/prompts/scenario-generator';
 import { generatedScenarioSchema, scenarioGenerateRequestSchema } from '@/lib/contracts/ai';
 
@@ -31,14 +32,13 @@ export async function POST(request: NextRequest) {
         { role: 'system', content: prompt },
         { role: 'user', content: `行业：${industry}\n产品分类：${productCategory}\n${customRequirement ? `补充：${customRequirement}` : ''}` },
       ],
-      { temperature: 0.8, maxTokens: 2000 }
+      { temperature: 0.8, maxTokens: 2000, jsonMode: true }
     );
 
     // 尝试解析 JSON（LLM 可能包了 markdown 代码块）
     let json: unknown;
     try {
-      const cleaned = result.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
-      json = JSON.parse(cleaned);
+      json = parseAiJsonObject(result);
     } catch {
       return NextResponse.json({ error: 'AI未返回有效JSON' }, { status: 502 });
     }

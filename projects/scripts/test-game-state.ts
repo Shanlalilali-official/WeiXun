@@ -19,6 +19,17 @@ assert.equal(afterAction.actionPoints, 22);
 assert.equal(afterAction.npcAffinity['p1-frontline-wang-hao'], 39);
 assert.equal(initial.actionPoints, 28, 'reducer must not mutate input state');
 
+let relationshipUnlocked = initial;
+for (let index = 0; index < 8; index += 1) {
+  relationshipUnlocked = applyRelationshipAction(
+    relationshipUnlocked,
+    'p1-frontline-wang-hao',
+    'festival',
+  );
+}
+assert.equal(relationshipUnlocked.npcAffinity['p1-frontline-wang-hao'], 51);
+assert.equal(relationshipUnlocked.unlockedNpcIds.includes('p1-minister-chen-jianguo'), true);
+
 assert.throws(
   () => applyRelationshipAction({ ...initial, actionPoints: 0 }, 'p1-frontline-wang-hao', 'gift'),
   /ACTION_POINTS_INSUFFICIENT/,
