@@ -4,7 +4,7 @@
 - 状态：范围已批准，按工作包 A → B → C/D → E 执行
 - 当前目标：完成项目一可运行、可对话、可恢复、可结算的单人纵向闭环
 - 实现授权：已开放，仅限 `CURRENT_ITERATION.md` 批准项
-- 最近基线：`a21908b fix(ai): align npc and scenario contracts`
+- 最近实现：`663d77f feat(game): add project one server-authoritative loop`
 - 下一道门：取得非生产Supabase与扣子开发环境，应用迁移并执行完整纵向冒烟
 
 ## 当前已知事实

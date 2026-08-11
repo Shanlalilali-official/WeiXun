@@ -4,6 +4,8 @@
 
 工作包A/B已完成并提交。C/D/E的项目一代码已完成本地实现：5轮状态机、稳定NPC、服务端动作、事件/消息持久化、滚动摘要、五维结算和AI复盘。生产构建与纯函数测试通过，但远程迁移和真实模型/数据库纵向冒烟被凭证阻塞。
 
+当前实现提交：`663d77f feat(game): add project one server-authoritative loop`。
+
 ## 下一位执行者先做什么
 
 1. 阅读 `harness/STATE.md`。
