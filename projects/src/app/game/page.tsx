@@ -191,7 +191,18 @@ function GameInner() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const typewriterTimerRef = useRef<number | null>(null);
+  const typewriterQueueRef = useRef<string[]>([]);
   const emotionTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => () => {
+    abortRef.current?.abort();
+    if (typewriterTimerRef.current !== null) {
+      window.clearInterval(typewriterTimerRef.current);
+      typewriterTimerRef.current = null;
+    }
+    typewriterQueueRef.current = [];
+  }, []);
 
   // 情绪超时回退到寒暄
   useEffect(() => {
@@ -329,10 +340,40 @@ function GameInner() {
     setStreaming(true);
 
     // 准备 assistant 占位
-    const assistantMsg: Message = { role: 'assistant', content: '', ts: Date.now() };
+    const assistantMsg: Message = { role: 'assistant', content: '', ts: Date.now() + 1 };
     setMessages((m) => [...m, assistantMsg]);
 
     abortRef.current = new AbortController();
+    typewriterQueueRef.current = [];
+    if (typewriterTimerRef.current !== null) {
+      window.clearInterval(typewriterTimerRef.current);
+    }
+
+    let networkComplete = false;
+    const finishStreamingIfReady = () => {
+      if (!networkComplete || typewriterQueueRef.current.length > 0) return;
+      if (typewriterTimerRef.current !== null) {
+        window.clearInterval(typewriterTimerRef.current);
+        typewriterTimerRef.current = null;
+      }
+      setStreaming(false);
+    };
+    typewriterTimerRef.current = window.setInterval(() => {
+      const backlog = typewriterQueueRef.current.length;
+      if (backlog === 0) {
+        finishStreamingIfReady();
+        return;
+      }
+
+      const charactersPerTick = backlog > 120 ? 3 : backlog > 60 ? 2 : 1;
+      const visibleChunk = typewriterQueueRef.current.splice(0, charactersPerTick).join('');
+      setMessages((current) => current.map((item) =>
+        item.ts === assistantMsg.ts
+          ? { ...item, content: item.content + visibleChunk }
+          : item
+      ));
+      finishStreamingIfReady();
+    }, 30);
 
     try {
       const res = await fetch('/api/chat/stream', {
@@ -357,7 +398,7 @@ function GameInner() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let accumulated = '';
+      let receivedContent = '';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -372,20 +413,16 @@ function GameInner() {
           if (line.startsWith('data: ')) {
             const data = line.slice(6).trim();
             if (data === '[DONE]') {
-              setStreaming(false);
+              networkComplete = true;
+              finishStreamingIfReady();
               return;
             }
             try {
               const json = JSON.parse(data);
-              if (json.content) {
-                accumulated += json.content;
-                setMessages((m) =>
-                  m.map((msg, i) =>
-                    i === m.length - 1 && msg.role === 'assistant'
-                      ? { ...msg, content: accumulated }
-                      : msg
-                  )
-                );
+              const content = json.content;
+              if (typeof content === 'string' && content) {
+                receivedContent += content;
+                typewriterQueueRef.current.push(...Array.from(content));
               }
               if (json.type === 'result' && json.state) {
                 setGameState(json.state);
@@ -393,7 +430,7 @@ function GameInner() {
               }
               if (json.type === 'error') {
                 console.warn(json.code, json.error);
-                if (!accumulated && json.error) {
+                if (!receivedContent && json.error) {
                   setMessages((current) =>
                     current.map((message, index) =>
                       index === current.length - 1 && message.role === 'assistant'
@@ -409,9 +446,15 @@ function GameInner() {
           }
         }
       }
-      setStreaming(false);
+      networkComplete = true;
+      finishStreamingIfReady();
     } catch (err) {
       console.error(err);
+      typewriterQueueRef.current = [];
+      if (typewriterTimerRef.current !== null) {
+        window.clearInterval(typewriterTimerRef.current);
+        typewriterTimerRef.current = null;
+      }
       setMessages((m) =>
         m.map((msg, i) =>
           i === m.length - 1 && msg.role === 'assistant'
@@ -548,7 +591,9 @@ function GameInner() {
                           className={`relative group cursor-pointer transition-all ${
                             selectedNpc === npc.id ? 'scale-105' : 'hover:scale-105'
                           }`}
-                          onClick={() => setSelectedNpc(npc.id)}
+                          onClick={() => {
+                            if (!streaming) setSelectedNpc(npc.id);
+                          }}
                         >
                           <div className={`w-14 h-14 rounded-full flex items-center justify-center text-sm font-bold border-2 ${
                             selectedNpc === npc.id 
@@ -655,7 +700,7 @@ function GameInner() {
                           : 'bg-card border border-border text-foreground'
                       }`}
                     >
-                      {msg.content || (streaming && i === messages.length - 1 ? '...' : '')}
+                      {msg.content || (streaming && i === messages.length - 1 ? 'NPC 正在思考…' : '')}
                     </div>
                   </div>
                 ))}
