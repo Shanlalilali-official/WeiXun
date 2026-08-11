@@ -3,26 +3,23 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
 import { invokeLLM } from '@/lib/ai/client';
 import { SCENARIO_GENERATOR_PROMPT } from '@/lib/ai/prompts/scenario-generator';
+import { generatedScenarioSchema, scenarioGenerateRequestSchema } from '@/lib/contracts/ai';
 
 export const runtime = 'nodejs';
-
-interface GenerateRequest {
-  industry: string;
-  productCategory: string;
-  customRequirement?: string;
-}
 
 export async function POST(request: NextRequest) {
   const guard = authGuard(request);
   if (!guard.ok) return guard.response!;
 
   try {
-    const body: GenerateRequest = await request.json();
-    const { industry, productCategory, customRequirement } = body;
-
-    if (!industry || !productCategory) {
-      return NextResponse.json({ error: '行业和产品分类必填' }, { status: 400 });
+    const parsedRequest = scenarioGenerateRequestSchema.safeParse(await request.json());
+    if (!parsedRequest.success) {
+      return NextResponse.json(
+        { error: '场景生成请求字段无效', details: parsedRequest.error.flatten() },
+        { status: 400 }
+      );
     }
+    const { industry, productCategory, customRequirement } = parsedRequest.data;
 
     const prompt = SCENARIO_GENERATOR_PROMPT
       .replace(/\{\{industry\}\}/g, industry)
@@ -43,11 +40,19 @@ export async function POST(request: NextRequest) {
       const cleaned = result.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
       json = JSON.parse(cleaned);
     } catch {
-      return NextResponse.json({ error: '场景生成失败', raw: result }, { status: 500 });
+      return NextResponse.json({ error: 'AI未返回有效JSON' }, { status: 502 });
     }
 
-    return NextResponse.json({ success: true, scenario: json });
-  } catch (err) {
-    return NextResponse.json({ error: '生成失败', detail: String(err) }, { status: 500 });
+    const parsedScenario = generatedScenarioSchema.safeParse(json);
+    if (!parsedScenario.success) {
+      return NextResponse.json(
+        { error: 'AI场景数据未通过校验', details: parsedScenario.error.flatten() },
+        { status: 502 }
+      );
+    }
+
+    return NextResponse.json({ success: true, scenario: parsedScenario.data });
+  } catch {
+    return NextResponse.json({ error: '场景生成服务暂时不可用' }, { status: 500 });
   }
 }

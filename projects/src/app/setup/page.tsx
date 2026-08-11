@@ -44,6 +44,11 @@ interface SceneParams {
   competitors: string[];
 }
 
+interface GeneratedCompetitor {
+  name: string;
+  strength: string;
+}
+
 export default function SetupPage() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center">加载中...</div>}>
@@ -81,16 +86,22 @@ function SetupInner() {
     try {
       const res = await fetch('/api/scenario/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-session': localStorage.getItem('coze_session') || '',
+        },
         body: JSON.stringify({
           industry: INDUSTRIES.find(i => i.id === industry)?.name,
-          product: product === 'custom' ? customProduct : PRODUCT_CATEGORIES.find(p => p.id === product)?.name,
-          description: customDescription,
+          productCategory: product === 'custom' ? customProduct : PRODUCT_CATEGORIES.find(p => p.id === product)?.name,
+          customRequirement: customDescription || undefined,
         }),
       });
-      if (!res.ok) throw new Error('生成失败');
+      if (!res.ok) {
+        const error = await res.json().catch(() => null);
+        throw new Error(error?.error || '生成失败');
+      }
       const data = await res.json();
-      const raw = data.scene || {};
+      const raw = data.scenario;
       setScene({
         name: raw.name || raw.scenarioName || raw.projectName || 'AI 生成的政企场景',
         budget: raw.budget || 500,
@@ -111,7 +122,7 @@ function SetupInner() {
             }
           : { name: '待指派', style: '理性决策', title: '信息中心主任' },
         competitors: raw.competitors?.length
-          ? raw.competitors.map((c: any) => typeof c === 'string' ? c : (c.name || '竞品'))
+          ? raw.competitors.map((c: GeneratedCompetitor) => c.name)
           : ['华为云', '阿里云', '腾讯云'],
       });
       setStep(2);
@@ -234,11 +245,22 @@ function SetupInner() {
                         try {
                           const res = await fetch('/api/scenario/generate', {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ industry: INDUSTRIES.find(i => i.id === t.industry)?.name, product: t.product === 'custom' ? '' : t.name, template: t.id }),
+                            headers: {
+                              'Content-Type': 'application/json',
+                              'x-session': localStorage.getItem('coze_session') || '',
+                            },
+                            body: JSON.stringify({
+                              industry: INDUSTRIES.find(i => i.id === t.industry)?.name,
+                              productCategory: PRODUCT_CATEGORIES.find(p => p.id === t.product)?.name || t.name,
+                              customRequirement: `参考模板：${t.name}；${t.desc}`,
+                            }),
                           });
+                          if (!res.ok) {
+                            const error = await res.json().catch(() => null);
+                            throw new Error(error?.error || '生成失败');
+                          }
                           const data = await res.json();
-                          const raw = data.scene || {};
+                          const raw = data.scenario;
                           setScene({
                             name: t.name,
                             budget: t.budget,
@@ -257,10 +279,12 @@ function SetupInner() {
                                 }
                               : { name: '待 AI 分配', style: '理性决策', title: '信息中心主任' },
                             competitors: raw.competitors?.length
-                              ? raw.competitors.map((c: any) => typeof c === 'string' ? c : (c.name || '竞品'))
+                              ? raw.competitors.map((c: GeneratedCompetitor) => c.name)
                               : ['华为云', '阿里云', '腾讯云'],
                           });
                           setStep(2);
+                        } catch (error) {
+                          alert(error instanceof Error ? error.message : '场景生成失败，请重试');
                         } finally {
                           setGenerating(false);
                         }

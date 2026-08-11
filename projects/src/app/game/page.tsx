@@ -10,6 +10,43 @@ interface Message {
   ts: number;
 }
 
+interface CompetitorProfile {
+  company_name: string;
+  features: string;
+  more_info: string;
+  project_id: number;
+}
+
+interface NpcProfile {
+  id: number;
+  project_id: number;
+  category: string;
+  name: string;
+  title: string;
+  gender: string;
+  age: number;
+  hometown: string;
+  personality: string;
+  weakness: string;
+}
+
+interface SpeechRecognitionResultEventLike {
+  results: ArrayLike<{ 0: { transcript: string } }>;
+}
+
+interface SpeechRecognitionLike {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((event: SpeechRecognitionResultEventLike) => void) | null;
+  onend: (() => void) | null;
+  onerror: (() => void) | null;
+  start(): void;
+  stop(): void;
+}
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
 const ACTIONS = [
   { id: 'gift', name: '送礼品', icon: Gift, cost: 5 },
   { id: 'dinner', name: '请客吃饭', icon: Coffee, cost: 8 },
@@ -76,6 +113,7 @@ function GameInner() {
 
   const [showIntro, setShowIntro] = useState(true);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [gameSessionId, setGameSessionId] = useState('');
   const [input, setInput] = useState('');
   const [aiPracticeInput, setAiPracticeInput] = useState('');
   const [showAiPracticeModal, setShowAiPracticeModal] = useState(false);
@@ -85,21 +123,25 @@ function GameInner() {
   const [coins, setCoins] = useState(28);
   const [intimacy, setIntimacy] = useState(35);
   const [competitor, setCompetitor] = useState({ name: '华宇科技', bid: 540, trust: 42 });
-  const [competitors, setCompetitors] = useState<{company_name: string; features: string; more_info: string; project_id: number}[]>([]);
+  const [competitors, setCompetitors] = useState<CompetitorProfile[]>([]);
   const [loadingCompetitors, setLoadingCompetitors] = useState(true);
-  const [npcs, setNpcs] = useState<{id: number; project_id: number; category: string; name: string; title: string; gender: string; age: number; hometown: string; personality: string; weakness: string}[]>([]);
+  const [npcs, setNpcs] = useState<NpcProfile[]>([]);
   const [selectedNpc, setSelectedNpc] = useState<number | null>(null);
   const [hoveredNpc, setHoveredNpc] = useState<number | null>(null);
   const [showCompetitorModal, setShowCompetitorModal] = useState(false);
   const [npcEmotion, setNpcEmotion] = useState<'greeting' | 'thinking' | 'excited' | 'annoyed'>('greeting');
   const [showNpcImage, setShowNpcImage] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
   // 语音输入
   const toggleRecording = (target: 'input' | 'aiPractice') => {
     if (typeof window === 'undefined') return;
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const speechWindow = window as Window & {
+      SpeechRecognition?: SpeechRecognitionConstructor;
+      webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    };
+    const SpeechRecognition = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition;
     if (!SpeechRecognition) {
       alert('您的浏览器不支持语音识别，请使用 Chrome 浏览器');
       return;
@@ -116,7 +158,7 @@ function GameInner() {
     recognition.continuous = true;
     recognition.interimResults = true;
 
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: SpeechRecognitionResultEventLike) => {
       let transcript = '';
       for (let i = 0; i < event.results.length; i++) {
         transcript += event.results[i][0].transcript;
@@ -156,6 +198,12 @@ function GameInner() {
       content: scene.description || `欢迎来到 ${scene.name}。项目预算 ¥${scene.budget}万。`,
       ts: Date.now(),
     }]);
+
+    const sessionStorageKey = `game-session:${location}`;
+    const existingGameSessionId = localStorage.getItem(sessionStorageKey);
+    const nextGameSessionId = existingGameSessionId || crypto.randomUUID();
+    localStorage.setItem(sessionStorageKey, nextGameSessionId);
+    setGameSessionId(nextGameSessionId);
     
     // 加载竞品数据
     const projectId = location.replace('project-', '');
@@ -163,8 +211,8 @@ function GameInner() {
     fetch('/api/game-data/competitors')
       .then(r => r.json())
       .then(d => {
-        const data = d.data || [];
-        const filtered = data.filter((c: any) => c.project_id === parseInt(projectId));
+        const data: CompetitorProfile[] = Array.isArray(d.data) ? d.data : [];
+        const filtered = data.filter((c) => c.project_id === parseInt(projectId));
         console.log('Loaded competitors:', filtered.length, 'for project', projectId);
         setCompetitors(filtered);
         setLoadingCompetitors(false);
@@ -178,8 +226,8 @@ function GameInner() {
     fetch('/api/game-data/npcs')
       .then(r => r.json())
       .then(d => {
-        const data = d.data || [];
-        const filtered = data.filter((n: any) => n.project_id === parseInt(projectId));
+        const data: NpcProfile[] = Array.isArray(d.data) ? d.data : [];
+        const filtered = data.filter((n) => n.project_id === parseInt(projectId));
         setNpcs(filtered);
         if (filtered.length > 0) setSelectedNpc(filtered[0].id);
       })
@@ -192,6 +240,10 @@ function GameInner() {
 
   const sendMessage = async (content: string) => {
     if (!content.trim() || streaming) return;
+    if (!selectedNpc || !gameSessionId) {
+      alert('对局或NPC尚未加载完成，请稍后重试');
+      return;
+    }
     const userMsg: Message = { role: 'user', content, ts: Date.now() };
     setMessages((m) => [...m, userMsg]);
     setInput('');
@@ -206,10 +258,14 @@ function GameInner() {
     try {
       const res = await fetch('/api/chat/stream', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-session': localStorage.getItem('coze_session') || '',
+        },
         body: JSON.stringify({
-          location,
-          scene,
+          gameSessionId,
+          scenarioId: location,
+          npcId: selectedNpc,
           history: messages.concat(userMsg).map((m) => ({ role: m.role, content: m.content })),
         }),
         signal: abortRef.current.signal,
@@ -252,18 +308,24 @@ function GameInner() {
                   )
                 );
               }
-              if (json.scoreDelta) {
+              if (json.type === 'result' && json.scoreDelta) {
                 setScore((s) => Math.max(0, Math.min(100, s + json.scoreDelta)));
               }
-              if (json.intimacyDelta) {
-                setIntimacy((v) => Math.max(0, Math.min(100, v + json.intimacyDelta)));
+              if (json.type === 'result' && json.affinityDelta) {
+                setIntimacy((v) => Math.max(0, Math.min(100, v + json.affinityDelta)));
                 // 根据亲密度变化更新情绪
-                if (json.intimacyDelta > 5) {
-                  setNpcEmotion('excited');
-                } else if (json.intimacyDelta < -3) {
-                  setNpcEmotion('annoyed');
-                } else if (json.intimacyDelta < 0) {
-                  setNpcEmotion('thinking');
+                setNpcEmotion(json.emotion || 'thinking');
+              }
+              if (json.type === 'error') {
+                console.warn(json.code, json.error);
+                if (!accumulated && json.error) {
+                  setMessages((current) =>
+                    current.map((message, index) =>
+                      index === current.length - 1 && message.role === 'assistant'
+                        ? { ...message, content: `（${json.error}）` }
+                        : message
+                    )
+                  );
                 }
               }
             } catch {

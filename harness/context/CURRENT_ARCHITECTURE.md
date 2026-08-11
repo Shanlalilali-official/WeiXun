@@ -18,7 +18,11 @@ Browser
 → Coze-managed model runtime
 ```
 
-当前 NPC 对话使用 `messages` React State 保存历史；每次发送时把全部历史传给后端，后端重新加入系统提示词。没有服务端 conversation、摘要、截断、按 NPC 隔离或持久化。
+NPC 对话请求现已统一为 `gameSessionId + scenarioId + npcId + history`。API 校验应用会话，从服务端 `npc_profiles` 加载画像并注入提示词。正文通过 SSE 增量返回；模型尾部的分数、亲密度、线索和情绪使用共享 Zod 契约校验，校验失败时不更新游戏状态。
+
+当前仍由浏览器保存并回传全部 `history`，`gameSessionId`也只是浏览器生成的临时标识。尚无服务端 conversation、摘要、截断、按 NPC 隔离或持久化；这些属于工作包 C/D。
+
+场景生成前后端已统一为 `industry + productCategory + customRequirement` 请求和 `{ success, scenario }` 响应，且AI JSON必须通过共享契约。
 
 ## 目标架构原则
 
@@ -27,4 +31,3 @@ Browser
 - AI 输出采用结构化契约；确定性代码负责验证和落库。
 - 长上下文采用“结构化状态 + 滚动摘要 + 最近消息”组合。
 - 页面只展示服务端状态，不自行决定关键分数和解锁结果。
-

@@ -34,7 +34,10 @@ if ($LASTEXITCODE -ne 0 -or -not $gitRoot) {
 
 if ($gitRoot) {
     $trackedSecrets = & git -c "safe.directory=$projectRoot" -C $projectRoot ls-files | Where-Object {
-        $_ -match '(^|/)(\.env($|\.)|.*(secret|credential|api[_-]?key).*)'
+        $isEnvironmentFile = $_ -match '(^|/)\.env($|\.)'
+        $isExampleTemplate = $_ -match '(^|/)\.env\.example$'
+        $hasSecretLikeName = $_ -match '(^|/).*(secret|credential|api[_-]?key).*$'
+        ($isEnvironmentFile -and -not $isExampleTemplate) -or $hasSecretLikeName
     }
     if ($trackedSecrets) {
         $errors += "Potential secret files are tracked: $($trackedSecrets -join ', ')"
