@@ -25,7 +25,8 @@
 
 ## 工程
 
-- 当前没有 `node_modules`，尚未构建、类型检查或启动验证。
-- 原目录不是 Git 仓库，缺少可追溯版本基线。
+- 依赖安装、TypeScript、ESLint、Next生产构建、tsup打包和HTTP 200启动探测已通过。
+- pnpm 只允许 `esbuild`、`sharp`、`unrs-resolver` 执行安装脚本；`msw`保持禁用。
+- ESLint全量扫描约125秒，生产启动输出Node `url.parse()`弃用警告和一条乱码路径错误，但未阻断HTTP 200。
+- 外层Git和harness已建立，可追溯基线提交为`51365b4`。
 - 页面元数据仍包含扣子模板默认品牌文案。
-
