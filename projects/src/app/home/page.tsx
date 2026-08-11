@@ -23,11 +23,11 @@ export default function HomePage() {
     let identityData: string | null = null;
     
     // 方式1：从 localStorage 读取
-    identityData = localStorage.getItem('coze_identity');
+    identityData = localStorage.getItem('weixun_identity');
     
     // 方式2：从 cookie 读取（备份）
     if (!identityData) {
-      const match = document.cookie.match(/(?:^| )coze_identity=([^;]+)/);
+      const match = document.cookie.match(/(?:^| )weixun_identity=([^;]+)/);
       if (match) {
         identityData = decodeURIComponent(match[1]);
       }
@@ -47,10 +47,10 @@ export default function HomePage() {
   }, [router]);
 
   const handleLogout = async () => {
-    document.cookie = 'coze_session=; path=/; max-age=0';
-    document.cookie = 'coze_identity=; path=/; max-age=0';
-    localStorage.removeItem('coze_identity');
-    localStorage.removeItem('coze_session');
+    document.cookie = 'weixun_session=; path=/; max-age=0';
+    document.cookie = 'weixun_identity=; path=/; max-age=0';
+    localStorage.removeItem('weixun_identity');
+    localStorage.removeItem('weixun_session');
     router.push('/');
   };
 

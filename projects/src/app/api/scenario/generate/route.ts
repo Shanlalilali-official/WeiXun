@@ -31,7 +31,7 @@ export async function POST(request: NextRequest) {
         { role: 'system', content: prompt },
         { role: 'user', content: `行业：${industry}\n产品分类：${productCategory}\n${customRequirement ? `补充：${customRequirement}` : ''}` },
       ],
-      { temperature: 0.8, model: 'doubao-seed-2-0-pro-260215' }
+      { temperature: 0.8, maxTokens: 2000 }
     );
 
     // 尝试解析 JSON（LLM 可能包了 markdown 代码块）

@@ -87,7 +87,7 @@ function SetupInner() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-session': localStorage.getItem('coze_session') || '',
+          'x-session': localStorage.getItem('weixun_session') || '',
         },
         body: JSON.stringify({
           industry: INDUSTRIES.find(i => i.id === industry)?.name,
@@ -246,7 +246,7 @@ function SetupInner() {
                             method: 'POST',
                             headers: {
                               'Content-Type': 'application/json',
-                              'x-session': localStorage.getItem('coze_session') || '',
+                              'x-session': localStorage.getItem('weixun_session') || '',
                             },
                             body: JSON.stringify({
                               industry: INDUSTRIES.find(i => i.id === t.industry)?.name,

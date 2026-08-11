@@ -101,9 +101,9 @@ export default function StartPage() {
 
   // 读取身份（顶栏显示个人名）
   useEffect(() => {
-    let raw = localStorage.getItem('coze_identity');
+    let raw = localStorage.getItem('weixun_identity');
     if (!raw) {
-      const match = document.cookie.match(/(?:^| )coze_identity=([^;]+)/);
+      const match = document.cookie.match(/(?:^| )weixun_identity=([^;]+)/);
       if (match) raw = decodeURIComponent(match[1]);
     }
     if (raw) {

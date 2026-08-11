@@ -36,7 +36,7 @@ function ResultInner() {
       return;
     }
     fetch(`/api/game/sessions/${sessionId}`, {
-      headers: { 'x-session': localStorage.getItem('coze_session') || '' },
+      headers: { 'x-session': localStorage.getItem('weixun_session') || '' },
     })
       .then(async (response) => {
         if (!response.ok) throw new Error('无法读取本局结果');
@@ -48,7 +48,7 @@ function ResultInner() {
           try {
             const reviewResponse = await fetch(`/api/game/sessions/${sessionId}/review`, {
               method: 'POST',
-              headers: { 'x-session': localStorage.getItem('coze_session') || '' },
+              headers: { 'x-session': localStorage.getItem('weixun_session') || '' },
             });
             if (reviewResponse.ok) {
               const reviewData = await reviewResponse.json();

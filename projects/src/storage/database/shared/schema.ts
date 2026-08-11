@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm"
 
 
 export const healthCheck = pgTable("health_check", {
-	id: serial().notNull(),
+	id: serial().primaryKey().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow(),
 });
 
@@ -180,6 +180,7 @@ export const gameRuntimeStates = pgTable("game_runtime_states", {
 		foreignColumns: [gameSessions.id],
 		name: "game_runtime_states_session_id_game_sessions_id_fk"
 	}).onDelete("cascade"),
+	pgPolicy("game_runtime_states_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 export const gameEvents = pgTable("game_events", {
@@ -198,6 +199,7 @@ export const gameEvents = pgTable("game_events", {
 		foreignColumns: [gameSessions.id],
 		name: "game_events_session_id_game_sessions_id_fk"
 	}).onDelete("cascade"),
+	pgPolicy("game_events_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 export const playerAbility = pgTable("player_ability", {

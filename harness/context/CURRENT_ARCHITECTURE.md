@@ -1,44 +1,33 @@
 # 当前架构
 
-## 应用
-
-- Next.js 16 App Router
-- React 19 + TypeScript
-- Tailwind CSS 4 + shadcn/ui
-- Supabase + Drizzle ORM
-- `coze-coding-dev-sdk` 调用豆包模型
-
-## AI调用
+## 运行链路
 
 ```text
 Browser
-→ Next.js API Route
-→ src/lib/ai/client.ts
-→ LLMClient.invoke/stream
-→ Coze-managed model runtime
+  -> Next.js 页面/API Routes
+  -> 服务端游戏循环（目标、状态、上下文、记忆）
+  -> Supabase/PostgreSQL（权威状态、消息、事件）
+  -> OpenAI 兼容 AI Provider（NPC 对话、场景、复盘）
 ```
 
-NPC 对话请求现已统一为 `gameSessionId + scenarioId + npcId + history`。API 校验应用会话，从服务端 `npc_profiles` 加载画像并注入提示词。正文通过 SSE 增量返回；模型尾部的分数、亲密度、线索和情绪使用共享 Zod 契约校验，校验失败时不更新游戏状态。
+应用不依赖 Coze 运行时或 Coze SDK。`src/lib/ai/client.ts` 通过服务端 `fetch` 调用 `${AI_BASE_URL}/chat/completions`，支持普通 JSON 和 SSE 流式响应；API key 只存在于服务端环境。
 
-浏览器现在只发送本轮`message`，服务端根据应用身份加载所属`gameSessionId`，再按`npcId`读取最近12条消息和滚动摘要。每个NPC的消息、摘要、关系值和解锁状态互相隔离。达到16条未摘要消息时压缩旧消息并保留最近8条；模型调用设置输出Token上限。
+## 对话与记忆
 
-项目一权威状态保存在`game_runtime_states`，动作与关键转换写入`game_events`，对话写入`chat_messages`。所有修改使用版本号做乐观并发检查。远程迁移尚未应用，因此代码路径已完成但端到端验证处于阻塞。
+- 权威键为 `gameSessionId + npcId`。
+- 浏览器发送本轮消息，服务端加载 NPC 画像、结构化游戏状态、滚动摘要和最近 12 条消息。
+- 达到摘要阈值后压缩旧消息，保留摘要与最近窗口，避免每轮无限重发上下文。
+- 一次玩家对话通常对应一次模型调用；需要独立复盘或摘要时会产生额外调用。
+- AI 负责生成自然语言和受约束的建议值，确定性代码负责校验、计分、解锁和落库。
 
-场景生成前后端已统一为 `industry + productCategory + customRequirement` 请求和 `{ success, scenario }` 响应，且AI JSON必须通过共享契约。
-
-## 目标架构原则
-
-- 服务端 `gameSessionId + npcId` 是会话和游戏状态的权威键。
-- NPC画像、已知线索、轮次、亲密度和最近动作由服务端加载后注入提示词。
-- AI 输出采用结构化契约；确定性代码负责验证和落库。
-- 长上下文采用“结构化状态 + 滚动摘要 + 最近消息”组合。
-- 页面只展示服务端状态，不自行决定关键分数和解锁结果。
-
-## 项目一状态流
+## 项目一循环
 
 ```text
-创建对局 → 5轮playing
-  ├─ NPC对话 → 持久化消息 → AI结构化评估 → 校验 → 更新五维/关系/线索
-  ├─ 关系动作 → 服务端扣操作点 → 更新关系 → 记录事件
-  └─ 结束本轮 → 第5轮后确定性判定won/lost → 保存final_report → AI复盘
+创建对局 -> 五轮 playing
+  -> NPC 对话 / 关系动作 / 结束本轮
+  -> 服务端校验和事件记录
+  -> 第五轮确定性判定 won/lost
+  -> 保存五维结果与 AI 复盘
 ```
+
+状态存于 `game_runtime_states`，事件存于 `game_events`，消息存于 `chat_messages`。真实数据库迁移与恢复测试尚待本地 Supabase 启动后完成。

@@ -1,48 +1,45 @@
-# 本地开发与验证
+# 本地开发环境
 
-## 运行模式
-
-当前工程有两种运行环境：
-
-1. 扣子工作区：`coze dev/build/start` 提供运行环境，并由扣子托管 `LLMClient` 的模型访问凭证。
-2. 普通本地环境：可安装依赖、执行 TypeScript、ESLint 和 Next.js 构建；涉及 AI 的接口只有在具备兼容的扣子运行身份时才能真实调用。
-
-仓库中不保存模型 API Key。当前代码也没有读取 OpenAI、豆包或其他模型厂商 Key 的环境变量；`coze-coding-dev-sdk` 的 `LLMClient` 依赖扣子运行环境注入访问能力。
+项目不再依赖 Coze。应用运行需要 Node.js 20+、pnpm 9+；本地数据库需要 Docker Desktop 与 Supabase CLI；AI 使用任意兼容 OpenAI Chat Completions 的模型服务。
 
 ## 首次设置
 
-在 `projects/` 中执行：
+在 `projects/` 执行：
+
+```powershell
+pnpm install
+./scripts/setup-local.ps1
+```
+
+Windows 可用 `scoop install supabase` 安装 Supabase CLI。脚本不会覆盖已有 `.env.local`，启动数据库后会显示本地连接信息。
+
+复制并填写环境变量：
 
 ```powershell
 Copy-Item .env.example .env.local
-pnpm install --frozen-lockfile
+pnpm local:check
 ```
 
-然后只在 `.env.local` 中填写实际 Supabase 配置。不得提交 `.env.local`、服务角色密钥或真实账号。
+模型变量为 `AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL`、`AI_REQUEST_TIMEOUT_MS`。数据库变量为 `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`。真实值不得提交、写入日志或发送到浏览器。
 
-## 常用命令
+## 数据库
+
+- 配置：`projects/supabase/config.toml`
+- 迁移目录：`projects/supabase/migrations/`（完整初始结构及主键/RLS 修正按顺序执行）
+- 初始数据：`projects/supabase/seed.sql`
+- 重建命令：`pnpm supabase:reset`（会清空本地数据）
+
+当前机器尚未完成 Docker/Supabase CLI 启动验证，因此数据库纵向冒烟仍为阻塞项。
+
+## 验证
 
 ```powershell
 pnpm ts-check
 pnpm lint:build
+pnpm test:ai-provider
+pnpm test:game-state
+pnpm test:metrics
 pnpm build
-pnpm dev
 ```
 
-- 默认开发端口为 `5000`。
-- 外部托管环境通过 `DEPLOY_RUN_PORT` 指定端口，脚本会把它传给服务端的 `PORT`。
-- Windows 本地若没有 Bash，可直接执行 `pnpm next build`；`dev/build/start` 包装脚本需要 Bash。
-
-## pnpm 安装脚本策略
-
-`projects/pnpm-workspace.yaml` 只允许运行当前构建所需的 `esbuild`、`sharp` 和 `unrs-resolver` 安装脚本；测试依赖 `msw` 的安装脚本暂不允许。新增需要安装脚本的依赖必须经过审查后显式加入。
-
-## 已知限制
-
-- 没有扣子运行身份时，AI 接口无法完成真实模型调用。
-- 没有 Supabase 配置时，数据库接口不能完成端到端验证。
-- 本地 Schema 与部分 API 引用的远程表仍不一致，详见 `DATABASE_MODEL.md` 和动态问题台账。
-
-## 本期数据库迁移
-
-项目一闭环依赖`drizzle/0001_game_runtime_state.sql`。只允许在非生产Supabase先应用并完成冒烟；迁移前备份，迁移后确认两张表启用RLS且没有public读写策略。应用迁移需要服务端私密服务角色Key，本地浏览器永远不得读取该Key。
+`test:ai-provider` 使用本地 mock，不需要真实 API key；真实模型稳定性仍须在填入 key 后验证。

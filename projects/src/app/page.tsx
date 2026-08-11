@@ -100,10 +100,10 @@ export default function LoginPage() {
       // 写 cookie + localStorage + 跳首页
       const identity = data.session;
       const expires = new Date(identity.expiresAt);
-      document.cookie = `coze_session=${data.token}; path=/; expires=${expires.toUTCString()}`;
-      document.cookie = `coze_identity=${encodeURIComponent(JSON.stringify(identity))}; path=/; expires=${expires.toUTCString()}`;
-      localStorage.setItem('coze_identity', JSON.stringify(identity));
-      localStorage.setItem('coze_session', data.token);
+      document.cookie = `weixun_session=${data.token}; path=/; expires=${expires.toUTCString()}`;
+      document.cookie = `weixun_identity=${encodeURIComponent(JSON.stringify(identity))}; path=/; expires=${expires.toUTCString()}`;
+      localStorage.setItem('weixun_identity', JSON.stringify(identity));
+      localStorage.setItem('weixun_session', data.token);
 
       window.location.href = data.redirect || '/home';
     } catch (err) {
@@ -134,10 +134,10 @@ export default function LoginPage() {
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         };
         const mockToken = 'quick_' + Math.random().toString(36).slice(2);
-        document.cookie = `coze_session=${mockToken}; path=/; expires=${new Date(mockIdentity.expiresAt).toUTCString()}`;
-        document.cookie = `coze_identity=${encodeURIComponent(JSON.stringify(mockIdentity))}; path=/; expires=${new Date(mockIdentity.expiresAt).toUTCString()}`;
-        localStorage.setItem('coze_identity', JSON.stringify(mockIdentity));
-        localStorage.setItem('coze_session', mockToken);
+        document.cookie = `weixun_session=${mockToken}; path=/; expires=${new Date(mockIdentity.expiresAt).toUTCString()}`;
+        document.cookie = `weixun_identity=${encodeURIComponent(JSON.stringify(mockIdentity))}; path=/; expires=${new Date(mockIdentity.expiresAt).toUTCString()}`;
+        localStorage.setItem('weixun_identity', JSON.stringify(mockIdentity));
+        localStorage.setItem('weixun_session', mockToken);
         
         // 根据身份跳转到对应页面（使用 window.location.href 强制全页刷新，确保 cookie 生效）
         const routes: Record<string, string> = {
@@ -167,11 +167,11 @@ export default function LoginPage() {
       // 存 token + identity 到 cookie 和 localStorage
       const identity = data.session;
       const expires = new Date(identity.expiresAt);
-      document.cookie = `coze_session=${data.token}; path=/; expires=${expires.toUTCString()}`;
-      document.cookie = `coze_identity=${encodeURIComponent(JSON.stringify(identity))}; path=/; expires=${expires.toUTCString()}`;
+      document.cookie = `weixun_session=${data.token}; path=/; expires=${expires.toUTCString()}`;
+      document.cookie = `weixun_identity=${encodeURIComponent(JSON.stringify(identity))}; path=/; expires=${expires.toUTCString()}`;
       // 同时存储到 localStorage 作为备份
-      localStorage.setItem('coze_identity', JSON.stringify(identity));
-      localStorage.setItem('coze_session', data.token);
+      localStorage.setItem('weixun_identity', JSON.stringify(identity));
+      localStorage.setItem('weixun_session', data.token);
 
       // 使用 window.location.href 强制全页刷新，确保 cookie 生效
       window.location.href = data.redirect || '/home';
@@ -192,10 +192,10 @@ export default function LoginPage() {
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     };
     const mockToken = 'designer_' + Math.random().toString(36).slice(2);
-    document.cookie = `coze_session=${mockToken}; path=/; expires=${new Date(mockIdentity.expiresAt).toUTCString()}`;
-    document.cookie = `coze_identity=${encodeURIComponent(JSON.stringify(mockIdentity))}; path=/; expires=${new Date(mockIdentity.expiresAt).toUTCString()}`;
-    localStorage.setItem('coze_identity', JSON.stringify(mockIdentity));
-    localStorage.setItem('coze_session', mockToken);
+    document.cookie = `weixun_session=${mockToken}; path=/; expires=${new Date(mockIdentity.expiresAt).toUTCString()}`;
+    document.cookie = `weixun_identity=${encodeURIComponent(JSON.stringify(mockIdentity))}; path=/; expires=${new Date(mockIdentity.expiresAt).toUTCString()}`;
+    localStorage.setItem('weixun_identity', JSON.stringify(mockIdentity));
+    localStorage.setItem('weixun_session', mockToken);
     
     // 根据子身份跳转到对应页面
     const subRoutes: Record<string, string> = {
@@ -344,7 +344,7 @@ export default function LoginPage() {
           <span>·</span>
           <span>京公网安备 11010102000000 号</span>
         </div>
-        <div>© 2025 政企销售竞标博弈实训 AI 游戏 · Powered by 扣子编程</div>
+        <div>© 2025 政企销售竞标博弈实训 AI 游戏</div>
       </footer>
 
       {/* 身份选择弹窗 */}

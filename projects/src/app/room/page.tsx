@@ -36,9 +36,9 @@ export default function RoomPage() {
   const [wsConnected, setWsConnected] = useState(false);
 
   useEffect(() => {
-    let data = localStorage.getItem('coze_identity');
+    let data = localStorage.getItem('weixun_identity');
     if (!data) {
-      const match = document.cookie.match(/(?:^| )coze_identity=([^;]+)/);
+      const match = document.cookie.match(/(?:^| )weixun_identity=([^;]+)/);
       if (match) data = decodeURIComponent(match[1]);
     }
     if (!data) { router.push('/'); return; }
@@ -49,10 +49,10 @@ export default function RoomPage() {
   }, [router]);
 
   const handleLogout = () => {
-    document.cookie = 'coze_session=; path=/; max-age=0';
-    document.cookie = 'coze_identity=; path=/; max-age=0';
-    localStorage.removeItem('coze_identity');
-    localStorage.removeItem('coze_session');
+    document.cookie = 'weixun_session=; path=/; max-age=0';
+    document.cookie = 'weixun_identity=; path=/; max-age=0';
+    localStorage.removeItem('weixun_identity');
+    localStorage.removeItem('weixun_session');
     router.push('/');
   };
 

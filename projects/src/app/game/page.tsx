@@ -196,7 +196,7 @@ function GameInner() {
   useEffect(() => {
     let cancelled = false;
     const projectId = location.replace('project-', '');
-    const token = localStorage.getItem('coze_session') || '';
+    const token = localStorage.getItem('weixun_session') || '';
     const headers = { 'Content-Type': 'application/json', 'x-session': token };
     const sessionStorageKey = `game-session:${location}`;
 
@@ -270,7 +270,7 @@ function GameInner() {
 
   useEffect(() => {
     if (!gameSessionId || !selectedNpc) return;
-    const token = localStorage.getItem('coze_session') || '';
+    const token = localStorage.getItem('weixun_session') || '';
     fetch(`/api/game/sessions/${gameSessionId}/messages?npcId=${encodeURIComponent(selectedNpc)}`, {
       headers: { 'x-session': token },
     })
@@ -297,7 +297,7 @@ function GameInner() {
     if (!gameSessionId || !gameState) return;
     const projectId = location.replace('project-', '');
     fetch(`/api/game-data/npcs?project_id=${projectId}&game_session_id=${gameSessionId}`, {
-      headers: { 'x-session': localStorage.getItem('coze_session') || '' },
+      headers: { 'x-session': localStorage.getItem('weixun_session') || '' },
     })
       .then((response) => response.ok ? response.json() : Promise.reject(new Error('NPC状态刷新失败')))
       .then((data) => setNpcs(Array.isArray(data.data) ? data.data : []))
@@ -330,7 +330,7 @@ function GameInner() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-session': localStorage.getItem('coze_session') || '',
+          'x-session': localStorage.getItem('weixun_session') || '',
         },
         body: JSON.stringify({
           gameSessionId,
@@ -420,7 +420,7 @@ function GameInner() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-session': localStorage.getItem('coze_session') || '',
+        'x-session': localStorage.getItem('weixun_session') || '',
       },
       body: JSON.stringify({ npcId: selectedNpc, actionId: action.id }),
     });
@@ -437,7 +437,7 @@ function GameInner() {
     if (!gameSessionId || streaming) return;
     const response = await fetch(`/api/game/sessions/${gameSessionId}/advance`, {
       method: 'POST',
-      headers: { 'x-session': localStorage.getItem('coze_session') || '' },
+      headers: { 'x-session': localStorage.getItem('weixun_session') || '' },
     });
     const data = await response.json().catch(() => null);
     if (!response.ok) {

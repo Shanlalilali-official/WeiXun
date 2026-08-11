@@ -1,43 +1,17 @@
-# 数据库模型盘点
+# 数据库模型
 
-## 本地 Drizzle 权威文件
-
-原始本地模型有14张表。本期新增2张项目一运行表，迁移应用后共16张：
+`projects/src/storage/database/shared/schema.ts` 是当前 16 张已建模表的代码源；`projects/supabase/migrations/` 保存从该 schema 生成的完整初始迁移及后续主键/RLS 修正。
 
 | 领域 | 表 |
 |---|---|
 | 基础 | `health_check` |
-| 用户与企业 | `enterprises`、`invite_codes`、`user_identities` |
-| 内容配置 | `industries`、`product_categories`、`scenario_templates`、`decision_makers`、`project_scenarios`、`product_knowledge` |
-| 对局 | `game_sessions`、`chat_messages`、`affinity_scores`、`player_ability` |
-| 项目一运行状态（迁移待应用） | `game_runtime_states`、`game_events` |
+| 用户与企业 | `enterprises`, `invite_codes`, `user_identities` |
+| 内容配置 | `industries`, `product_categories`, `scenario_templates`, `decision_makers`, `project_scenarios`, `product_knowledge` |
+| 对局 | `game_sessions`, `chat_messages`, `affinity_scores`, `player_ability` |
+| 权威运行状态 | `game_runtime_states`, `game_events` |
 
-## API 引用但本地未建模的表
+API 还引用 10 张未进入本地 schema 的历史/延期表：`game_groups`、`coach_history`、`game_initiations`、`scenario_locks`、`game_rooms`、`enterprise_customizations`、`enterprise_history`、`competitor_profiles`、`npc_profiles`、`project_difficulties`。这些引用不能视为已验证的数据模型，后续应按实际功能逐一建模或移除。
 
-静态扫描确认以下 10 张表被 API 使用，但不在本地 Drizzle Schema 中：
+运行状态表启用 RLS 且不开放 public 读写，只允许服务端使用 `SUPABASE_SERVICE_ROLE_KEY`。现有旧表的宽松 public policy 是继承问题，正式发布前必须收紧（OPS-002）。
 
-| 表 | 使用区域 | 本期处理 |
-|---|---|---|
-| `game_groups` | 教练分组 | 延期后台能力 |
-| `coach_history` | 教练历史 | 延期后台能力 |
-| `game_initiations` | 教练/企业发起 | 延期后台能力 |
-| `scenario_locks` | 教练/企业锁定场景 | 延期后台能力 |
-| `game_rooms` | 教练房间 | 延期多人能力 |
-| `enterprise_customizations` | 企业定制 | 延期后台能力 |
-| `enterprise_history` | 企业历史 | 延期后台能力 |
-| `competitor_profiles` | 竞品配置 | 项目一闭环需要核验 |
-| `npc_profiles` | NPC 配置 | 项目一闭环需要核验 |
-| `project_difficulties` | 项目难度 | 项目一闭环需要核验 |
-
-## 当前结论
-
-- 本地 14 表只能视为“仓库模型”，不能推断等于远程 Supabase 实际结构。
-- 项目一将优先使用已有对局表，并为 NPC、竞品和难度建立明确的数据来源；不得继续无类型地假设远程表字段。
-- 在获得可用的 Supabase 开发环境后，必须执行远程模型拉取/比对，再决定补表、迁移或移除失效 API。
-- `projects/drizzle/0001_game_runtime_state.sql`已经定义本期运行状态与事件表，但本机没有任何Supabase凭证，尚未在远程应用。
-- 两张新表启用RLS且不向`public`开放策略；服务端必须使用私密的服务角色访问。
-- 后台和多人延期表继续记录，但不在本期为了“凑齐 Schema”而盲目创建。
-
-## 远程核验门槛
-
-需要非生产 Supabase URL、匿名 Key，以及执行模型同步所需的受控权限。服务角色 Key 只能放在本地私密环境，不得写入仓库、日志或客户端代码。
+本地迁移尚未实际执行；启动 Supabase 后需要运行 `pnpm supabase:reset`，再完成项目一完整纵向冒烟与故障恢复验证。
