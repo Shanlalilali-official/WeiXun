@@ -13,8 +13,8 @@
 | BASE-007 | P2 | Open | 全量 ESLint 存在 37 个历史错误 | 集中在延期后台/排行页面的 `any` 与未转义引号；本次改动文件 lint 已通过 |
 | AI-003 | P0 | Blocked | NPC 记忆持久化与刷新恢复 | 代码已实现；等待真实 DB 迁移和恢复冒烟 |
 | AI-005 | P1 | Blocked | 摘要和 Token 控制未真实验证 | 最近 12 条、滚动摘要和输出上限已实现；等待真实模型/DB |
-| AI-007 | P0 | Blocked | 真实模型结构化尾部协议稳定性未知 | Provider mock 已通过；等待用户配置 `AI_API_KEY` 后固定冒烟 |
-| DB-001 | P0 | Blocked | 完整迁移尚未在本地数据库执行 | 配置、16 表迁移、seed 已就绪；等待 Docker/Supabase CLI 启动并运行 reset |
+| AI-007 | P0 | Blocked | 真实模型结构化尾部协议稳定性未知 | 真实模型最小调用已通过；仍需 NPC/场景结构化固定冒烟 |
+| DB-001 | P0 | Resolved | 完整迁移已推送到托管开发数据库 | `health_check` 只读查询成功并读到 seed 数据 |
 | DB-002 | P1 | Open | 消息、状态、事件多次写入缺少事务原子性 | 设计 PostgreSQL RPC/事务边界与幂等重试 |
 | GAME-001 | P0 | Blocked | 五轮状态机未做 DB 纵向验证 | 纯函数/API 已实现并测试；等待 DB 冒烟 |
 | GAME-002 | P0 | Blocked | 关系动作服务端扣点未做 DB 纵向验证 | 服务端路径和纯函数测试通过；等待 DB 冒烟 |
@@ -22,7 +22,7 @@
 | GAME-006 | P0 | Blocked | 对局、动作、消息、结果恢复未完整验证 | schema、仓储、事件日志已实现；等待迁移和失败恢复验证 |
 | GAME-007 | P0 | Blocked | 结算/诊断真实联调未完成 | 确定性五维结果与 AI 复盘已实现；等待 DB/模型纵向冒烟 |
 | SCORE-002 | P1 | Blocked | C0 中 A314 引用与括号权重疑似错误 | 检测测试已确认；业务含义需公式负责人确认 |
-| ENV-002 | P1 | Blocked | 当前机器未完成 Supabase CLI/Docker 本地启动 | 仓库脚本已就绪；Windows CLI 包下载曾超时，建议 Scoop 安装后运行 setup-local.ps1 |
+| ENV-002 | P1 | Resolved | 已采用无需 Docker 的托管 Supabase 流程 | CLI 已安装、项目已关联、迁移已推送且远程查询成功 |
 
 ## 已知延期
 
@@ -60,3 +60,4 @@
 | SCORE-001 | Resolved | 用户侧统一五维评分并由服务端状态驱动 | 2026-08-11 |
 | ENV-001 | Resolved | 移除 Coze SDK、运行命令、环境变量与启动器依赖；改用通用 AI Provider | 2026-08-11 |
 | ENV-003 | Resolved | `setup-local.ps1` 的 UTF-8 中文字符串在 Windows PowerShell 5 下解析失败；已改为纯 ASCII，并支持无 Docker 的托管流程 | 2026-08-11 |
+| ENV-004 | Resolved | 环境检查原先只判断非空，不能识别错误 URL；现已校验 HTTP/HTTPS 完整 URL | 2026-08-11 |
