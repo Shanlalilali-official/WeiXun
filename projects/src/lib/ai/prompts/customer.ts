@@ -12,6 +12,12 @@ export interface CustomerPromptContext {
     age?: number | null;
     hometown?: string | null;
   };
+  round: number;
+  maxRounds: number;
+  affinity: number;
+  lastAction: string | null;
+  memorySummary?: string;
+  canRevealPersonalInterest: boolean;
 }
 
 export const GAME_STATE_MARKER = '__GAME_STATE__';
@@ -31,6 +37,13 @@ export function CUSTOMER_PROMPT(ctx: CustomerPromptContext): string {
 - 籍贯：${npc.hometown || '未提供'}
 - 所属场景：${ctx.scenarioId}
 - 对局标识：${ctx.gameSessionId}
+
+## 当前对局状态
+- 第${ctx.round}/${ctx.maxRounds}轮
+- 当前关系值：${ctx.affinity}/100
+- 上一步关系动作：${ctx.lastAction || '无'}
+- 过往对话摘要：${ctx.memorySummary || '暂无'}
+- 是否允许揭示个人关注点：${ctx.canRevealPersonalInterest ? '允许' : '不允许'}
 
 ## 你的沟通风格
 - 真实政企客户：直接、问具体问题、不绕弯子、不空谈
@@ -57,11 +70,12 @@ export function CUSTOMER_PROMPT(ctx: CustomerPromptContext): string {
 
 ## 输出协议
 只输出一行，格式必须为：
-回复正文${GAME_STATE_MARKER}{"scoreDelta":0,"affinityDelta":0,"cluesUnlocked":[],"emotion":"thinking"}
+回复正文${GAME_STATE_MARKER}{"affinityDelta":0,"dimensionDeltas":{"decisionAnalysis":0,"relationshipBuilding":0,"valuePresentation":0,"objectionHandling":0,"informationDiscovery":0},"cluesUnlocked":[],"emotion":"thinking"}
 
 - 回复正文为30-80字的角色回复，不得包含换行或协议标记。
-- scoreDelta只能是-5到5的整数；affinityDelta只能是-8到8的整数。
-- cluesUnlocked最多3项，只能填写本轮对话确实揭示的简短线索。
+- affinityDelta只能是-8到8的整数；五个dimensionDeltas只能是-3到3的整数。
+- cluesUnlocked最多2项，只能从decision_process/performance_goal/procurement_priority/personal_interest中选择。
+- 当“是否允许揭示个人关注点”为“不允许”时，回复不得明说个人关注点，cluesUnlocked也不得包含personal_interest。
 - emotion只能是greeting/thinking/excited/annoyed之一。
 - JSON之后不得输出任何内容。`;
 }

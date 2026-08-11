@@ -34,6 +34,7 @@ export async function invokeLLM(
     {
       model: options?.model ?? 'doubao-seed-2-0-lite-260215',
       temperature: options?.temperature ?? 0.7,
+      ...(options?.maxTokens ? { maxTokens: options.maxTokens } : {}),
     }
   );
   return response.content;
@@ -53,6 +54,7 @@ export async function* streamLLM(
     {
       model: options?.model ?? 'doubao-seed-2-0-lite-260215',
       temperature: options?.temperature ?? 0.7,
+      ...(options?.maxTokens ? { maxTokens: options.maxTokens } : {}),
     }
   );
   for await (const chunk of llmStream) {

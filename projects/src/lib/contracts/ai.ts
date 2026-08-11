@@ -8,14 +8,25 @@ export const chatHistoryMessageSchema = z.object({
 export const npcChatRequestSchema = z.object({
   gameSessionId: z.string().trim().min(1).max(128),
   scenarioId: z.string().trim().min(1).max(128),
-  npcId: z.union([z.string().trim().min(1).max(128), z.number().int().positive()]),
-  history: z.array(chatHistoryMessageSchema).min(1).max(40),
+  npcId: z.string().trim().min(1).max(128),
+  message: z.string().trim().min(1).max(4000),
 });
 
 export const npcTurnEvaluationSchema = z.object({
-  scoreDelta: z.number().int().min(-5).max(5),
   affinityDelta: z.number().int().min(-8).max(8),
-  cluesUnlocked: z.array(z.string().trim().min(1).max(80)).max(3),
+  dimensionDeltas: z.object({
+    decisionAnalysis: z.number().int().min(-3).max(3),
+    relationshipBuilding: z.number().int().min(-3).max(3),
+    valuePresentation: z.number().int().min(-3).max(3),
+    objectionHandling: z.number().int().min(-3).max(3),
+    informationDiscovery: z.number().int().min(-3).max(3),
+  }),
+  cluesUnlocked: z.array(z.enum([
+    'decision_process',
+    'performance_goal',
+    'procurement_priority',
+    'personal_interest',
+  ])).max(2),
   emotion: z.enum(['greeting', 'thinking', 'excited', 'annoyed']),
 });
 

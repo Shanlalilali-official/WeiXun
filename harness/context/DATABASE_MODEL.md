@@ -2,7 +2,7 @@
 
 ## 本地 Drizzle 权威文件
 
-当前本地模型位于 `projects/src/storage/database/shared/schema.ts`，共 14 张表：
+原始本地模型有14张表。本期新增2张项目一运行表，迁移应用后共16张：
 
 | 领域 | 表 |
 |---|---|
@@ -10,6 +10,7 @@
 | 用户与企业 | `enterprises`、`invite_codes`、`user_identities` |
 | 内容配置 | `industries`、`product_categories`、`scenario_templates`、`decision_makers`、`project_scenarios`、`product_knowledge` |
 | 对局 | `game_sessions`、`chat_messages`、`affinity_scores`、`player_ability` |
+| 项目一运行状态（迁移待应用） | `game_runtime_states`、`game_events` |
 
 ## API 引用但本地未建模的表
 
@@ -33,6 +34,8 @@
 - 本地 14 表只能视为“仓库模型”，不能推断等于远程 Supabase 实际结构。
 - 项目一将优先使用已有对局表，并为 NPC、竞品和难度建立明确的数据来源；不得继续无类型地假设远程表字段。
 - 在获得可用的 Supabase 开发环境后，必须执行远程模型拉取/比对，再决定补表、迁移或移除失效 API。
+- `projects/drizzle/0001_game_runtime_state.sql`已经定义本期运行状态与事件表，但本机没有任何Supabase凭证，尚未在远程应用。
+- 两张新表启用RLS且不向`public`开放策略；服务端必须使用私密的服务角色访问。
 - 后台和多人延期表继续记录，但不在本期为了“凑齐 Schema”而盲目创建。
 
 ## 远程核验门槛

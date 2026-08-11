@@ -162,6 +162,44 @@ export const chatMessages = pgTable("chat_messages", {
 	pgPolicy("chat_messages_allow_all", { as: "permissive", for: "all", to: ["public"], using: sql`true`, withCheck: sql`true`  }),
 ]);
 
+export const gameRuntimeStates = pgTable("game_runtime_states", {
+	sessionId: uuid("session_id").primaryKey().notNull(),
+	scenarioCode: varchar("scenario_code", { length: 32 }).notNull(),
+	actionPoints: integer("action_points").default(28).notNull(),
+	dimensions: jsonb().default({}).notNull(),
+	npcAffinity: jsonb("npc_affinity").default({}).notNull(),
+	unlockedNpcIds: jsonb("unlocked_npc_ids").default([]).notNull(),
+	unlockedClues: jsonb("unlocked_clues").default([]).notNull(),
+	conversationMemories: jsonb("conversation_memories").default({}).notNull(),
+	lastAction: varchar("last_action", { length: 64 }),
+	version: integer().default(1).notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+		columns: [table.sessionId],
+		foreignColumns: [gameSessions.id],
+		name: "game_runtime_states_session_id_game_sessions_id_fk"
+	}).onDelete("cascade"),
+]);
+
+export const gameEvents = pgTable("game_events", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	sessionId: uuid("session_id").notNull(),
+	npcKey: varchar("npc_key", { length: 128 }),
+	round: integer().notNull(),
+	eventType: varchar("event_type", { length: 64 }).notNull(),
+	payload: jsonb().default({}).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("game_events_session_idx").using("btree", table.sessionId.asc().nullsLast().op("uuid_ops")),
+	index("game_events_npc_idx").using("btree", table.npcKey.asc().nullsLast().op("text_ops")),
+	foreignKey({
+		columns: [table.sessionId],
+		foreignColumns: [gameSessions.id],
+		name: "game_events_session_id_game_sessions_id_fk"
+	}).onDelete("cascade"),
+]);
+
 export const playerAbility = pgTable("player_ability", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	userId: varchar("user_id", { length: 64 }).notNull(),

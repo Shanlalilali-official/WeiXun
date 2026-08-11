@@ -42,3 +42,7 @@ pnpm dev
 - 没有扣子运行身份时，AI 接口无法完成真实模型调用。
 - 没有 Supabase 配置时，数据库接口不能完成端到端验证。
 - 本地 Schema 与部分 API 引用的远程表仍不一致，详见 `DATABASE_MODEL.md` 和动态问题台账。
+
+## 本期数据库迁移
+
+项目一闭环依赖`drizzle/0001_game_runtime_state.sql`。只允许在非生产Supabase先应用并完成冒烟；迁移前备份，迁移后确认两张表启用RLS且没有public读写策略。应用迁移需要服务端私密服务角色Key，本地浏览器永远不得读取该Key。

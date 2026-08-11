@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { Sparkles, ChevronRight, ChevronLeft, Edit2, Save, Wand2, Building2 } from 'lucide-react';
 
 const INDUSTRIES = [
@@ -58,7 +58,6 @@ export default function SetupPage() {
 }
 
 function SetupInner() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const location = searchParams.get('location') || 'project-1';
   const projectId = location.replace('project-', '');
@@ -135,7 +134,7 @@ function SetupInner() {
 
   const startGame = () => {
     if (!scene) return;
-    router.push(`/game?location=custom&budget=${scene.budget}`);
+    alert('本期只开放项目一固定纵向场景；AI自定义场景可预览，但尚未进入可游玩状态。');
   };
 
   return (

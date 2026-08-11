@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Building2, Send, Gift, Coffee, Calendar, FileText, Building, Package, Video, Sparkles, ChevronRight, Target, Trophy, X, Mic, MicOff } from 'lucide-react';
+import { calculateTotalScore, type GameRuntimeState } from '@/lib/game/state';
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -18,16 +19,16 @@ interface CompetitorProfile {
 }
 
 interface NpcProfile {
-  id: number;
+  id: string;
   project_id: number;
   category: string;
   name: string;
   title: string;
   gender: string;
-  age: number;
+  age: number | null;
   hometown: string;
   personality: string;
-  weakness: string;
+  weakness: string | null;
 }
 
 interface SpeechRecognitionResultEventLike {
@@ -62,7 +63,7 @@ const SCENE_INFO: Record<string, { name: string; budget: number; leader: string;
   'project-1': { 
     name: '项目一 · 单单位内部竞标', 
     budget: 100, 
-    leader: '张主任', 
+    leader: '赵峰',
     style: '老虎型', 
     difficulty: 1,
     description: 'XX单位发布年度办公配套升级采购项目，预算固定，日常使用需求清晰。单位内部人员层级简单，近期完成管理层调整，新任分管领导刚接手相关业务。你作为外部供应商销售，仅掌握基层、采购与新任分管领导的基础人脉，项目相关决策流程仍需进一步摸清。',
@@ -114,25 +115,26 @@ function GameInner() {
   const [showIntro, setShowIntro] = useState(true);
   const [messages, setMessages] = useState<Message[]>([]);
   const [gameSessionId, setGameSessionId] = useState('');
+  const [gameState, setGameState] = useState<GameRuntimeState | null>(null);
   const [input, setInput] = useState('');
   const [aiPracticeInput, setAiPracticeInput] = useState('');
   const [showAiPracticeModal, setShowAiPracticeModal] = useState(false);
   const [streaming, setStreaming] = useState(false);
-  const [round, setRound] = useState(1);
-  const [score, setScore] = useState(50);
-  const [coins, setCoins] = useState(28);
-  const [intimacy, setIntimacy] = useState(35);
   const [competitor, setCompetitor] = useState({ name: '华宇科技', bid: 540, trust: 42 });
   const [competitors, setCompetitors] = useState<CompetitorProfile[]>([]);
   const [loadingCompetitors, setLoadingCompetitors] = useState(true);
   const [npcs, setNpcs] = useState<NpcProfile[]>([]);
-  const [selectedNpc, setSelectedNpc] = useState<number | null>(null);
+  const [selectedNpc, setSelectedNpc] = useState<string | null>(null);
   const [hoveredNpc, setHoveredNpc] = useState<number | null>(null);
   const [showCompetitorModal, setShowCompetitorModal] = useState(false);
   const [npcEmotion, setNpcEmotion] = useState<'greeting' | 'thinking' | 'excited' | 'annoyed'>('greeting');
   const [showNpcImage, setShowNpcImage] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const round = gameState?.currentRound ?? 1;
+  const score = gameState ? calculateTotalScore(gameState.dimensions) : 50;
+  const coins = gameState?.actionPoints ?? 0;
+  const intimacy = selectedNpc ? (gameState?.npcAffinity[selectedNpc] ?? 35) : 35;
 
   // 语音输入
   const toggleRecording = (target: 'input' | 'aiPractice') => {
@@ -192,47 +194,115 @@ function GameInner() {
   }, [npcEmotion]);
 
   useEffect(() => {
-    // 初始化场景
-    setMessages([{
-      role: 'assistant',
-      content: scene.description || `欢迎来到 ${scene.name}。项目预算 ¥${scene.budget}万。`,
-      ts: Date.now(),
-    }]);
-
-    const sessionStorageKey = `game-session:${location}`;
-    const existingGameSessionId = localStorage.getItem(sessionStorageKey);
-    const nextGameSessionId = existingGameSessionId || crypto.randomUUID();
-    localStorage.setItem(sessionStorageKey, nextGameSessionId);
-    setGameSessionId(nextGameSessionId);
-    
-    // 加载竞品数据
+    let cancelled = false;
     const projectId = location.replace('project-', '');
+    const token = localStorage.getItem('coze_session') || '';
+    const headers = { 'Content-Type': 'application/json', 'x-session': token };
+    const sessionStorageKey = `game-session:${location}`;
+
+    const bootstrap = async () => {
+      let id = localStorage.getItem(sessionStorageKey) || '';
+      let restored: { id: string; state: GameRuntimeState } | null = null;
+
+      if (id) {
+        const response = await fetch(`/api/game/sessions/${id}`, { headers });
+        if (response.ok) {
+          const data = await response.json();
+          restored = data.gameSession;
+        } else {
+          localStorage.removeItem(sessionStorageKey);
+          id = '';
+        }
+      }
+
+      if (!id) {
+        const response = await fetch('/api/game/sessions', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ scenarioCode: location }),
+        });
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          throw new Error(error?.error || '对局创建失败');
+        }
+        const data = await response.json();
+        restored = data.gameSession;
+        id = restored?.id || '';
+        localStorage.setItem(sessionStorageKey, id);
+      }
+
+      if (!restored || cancelled) return;
+      setGameSessionId(restored.id);
+      setGameState(restored.state);
+
+      const npcResponse = await fetch(
+        `/api/game-data/npcs?project_id=${projectId}&game_session_id=${restored.id}`,
+        { headers },
+      );
+      if (!npcResponse.ok) throw new Error('NPC加载失败');
+      const npcData = await npcResponse.json();
+      const loadedNpcs: NpcProfile[] = Array.isArray(npcData.data) ? npcData.data : [];
+      if (cancelled) return;
+      setNpcs(loadedNpcs);
+      setSelectedNpc((current) =>
+        current && loadedNpcs.some((npc) => npc.id === current) ? current : (loadedNpcs[0]?.id ?? null)
+      );
+    };
+
+    bootstrap().catch((error) => {
+      if (!cancelled) alert(error instanceof Error ? error.message : '对局初始化失败');
+    });
+
     setLoadingCompetitors(true);
-    fetch('/api/game-data/competitors')
+    fetch(`/api/game-data/competitors?project_id=${projectId}`)
       .then(r => r.json())
       .then(d => {
         const data: CompetitorProfile[] = Array.isArray(d.data) ? d.data : [];
-        const filtered = data.filter((c) => c.project_id === parseInt(projectId));
-        console.log('Loaded competitors:', filtered.length, 'for project', projectId);
-        setCompetitors(filtered);
+        setCompetitors(data);
         setLoadingCompetitors(false);
       })
       .catch(err => {
         console.error('Failed to load competitors:', err);
         setLoadingCompetitors(false);
       });
-    
-    // 加载NPC数据
-    fetch('/api/game-data/npcs')
-      .then(r => r.json())
-      .then(d => {
-        const data: NpcProfile[] = Array.isArray(d.data) ? d.data : [];
-        const filtered = data.filter((n) => n.project_id === parseInt(projectId));
-        setNpcs(filtered);
-        if (filtered.length > 0) setSelectedNpc(filtered[0].id);
-      })
-      .catch(err => console.error('Failed to load NPCs:', err));
+    return () => { cancelled = true; };
   }, [location]);
+
+  useEffect(() => {
+    if (!gameSessionId || !selectedNpc) return;
+    const token = localStorage.getItem('coze_session') || '';
+    fetch(`/api/game/sessions/${gameSessionId}/messages?npcId=${encodeURIComponent(selectedNpc)}`, {
+      headers: { 'x-session': token },
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('对话历史加载失败');
+        return response.json();
+      })
+      .then((data) => {
+        const restoredMessages: Message[] = (data.messages || []).map((message: { role: Message['role']; content: string; createdAt: string }) => ({
+          role: message.role,
+          content: message.content,
+          ts: new Date(message.createdAt).getTime(),
+        }));
+        setMessages(restoredMessages.length > 0 ? restoredMessages : [{
+          role: 'assistant',
+          content: scene.description || `欢迎来到 ${scene.name}。项目预算 ¥${scene.budget}万。`,
+          ts: Date.now(),
+        }]);
+      })
+      .catch((error) => console.error(error));
+  }, [gameSessionId, selectedNpc, scene]);
+
+  useEffect(() => {
+    if (!gameSessionId || !gameState) return;
+    const projectId = location.replace('project-', '');
+    fetch(`/api/game-data/npcs?project_id=${projectId}&game_session_id=${gameSessionId}`, {
+      headers: { 'x-session': localStorage.getItem('coze_session') || '' },
+    })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error('NPC状态刷新失败')))
+      .then((data) => setNpcs(Array.isArray(data.data) ? data.data : []))
+      .catch((error) => console.error(error));
+  }, [gameSessionId, gameState?.version, location]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -266,7 +336,7 @@ function GameInner() {
           gameSessionId,
           scenarioId: location,
           npcId: selectedNpc,
-          history: messages.concat(userMsg).map((m) => ({ role: m.role, content: m.content })),
+          message: userMsg.content,
         }),
         signal: abortRef.current.signal,
       });
@@ -308,12 +378,8 @@ function GameInner() {
                   )
                 );
               }
-              if (json.type === 'result' && json.scoreDelta) {
-                setScore((s) => Math.max(0, Math.min(100, s + json.scoreDelta)));
-              }
-              if (json.type === 'result' && json.affinityDelta) {
-                setIntimacy((v) => Math.max(0, Math.min(100, v + json.affinityDelta)));
-                // 根据亲密度变化更新情绪
+              if (json.type === 'result' && json.state) {
+                setGameState(json.state);
                 setNpcEmotion(json.emotion || 'thinking');
               }
               if (json.type === 'error') {
@@ -348,18 +414,40 @@ function GameInner() {
     }
   };
 
-  const useAction = (action: typeof ACTIONS[0]) => {
-    if (coins < action.cost) {
-      alert('操作点数不足');
+  const executeAction = async (action: typeof ACTIONS[0]) => {
+    if (!gameSessionId || !selectedNpc || streaming) return;
+    const response = await fetch(`/api/game/sessions/${gameSessionId}/actions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-session': localStorage.getItem('coze_session') || '',
+      },
+      body: JSON.stringify({ npcId: selectedNpc, actionId: action.id }),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      alert(data?.error === 'ACTION_POINTS_INSUFFICIENT' ? '操作点数不足' : '关系动作执行失败');
       return;
     }
-    setCoins((c) => c - action.cost);
-    setIntimacy((v) => Math.min(100, v + 5));
-    sendMessage(`[${action.name}] 我方准备了一份 ${action.name}，希望与您进一步交流合作。`);
+    setGameState(data.state);
+    await sendMessage(`[${action.name}] 我方希望通过这次安排进一步交流合作。`);
   };
 
-  const finishGame = () => {
-    router.push(`/result?location=${location}&score=${score}&intimacy=${intimacy}&coins=${coins}&round=${round}`);
+  const advanceGame = async () => {
+    if (!gameSessionId || streaming) return;
+    const response = await fetch(`/api/game/sessions/${gameSessionId}/advance`, {
+      method: 'POST',
+      headers: { 'x-session': localStorage.getItem('coze_session') || '' },
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      alert(data?.error || '轮次推进失败');
+      return;
+    }
+    setGameState(data.state);
+    if (data.state.status !== 'playing') {
+      router.push(`/result?sessionId=${gameSessionId}`);
+    }
   };
 
   return (
@@ -371,7 +459,7 @@ function GameInner() {
             <Building2 className="w-4 h-4 text-primary" />
             <span className="text-sm font-semibold text-foreground">{scene.name}</span>
           </div>
-          <span className="text-[10px] px-2 py-0.5 rounded bg-primary/10 text-primary">第 {round} / 8 轮</span>
+          <span className="text-[10px] px-2 py-0.5 rounded bg-primary/10 text-primary">第 {round} / {gameState?.maxRounds ?? 5} 轮</span>
           <span className="text-[10px] px-2 py-0.5 rounded bg-warning/10 text-warning">难度 ★ {scene.difficulty}</span>
         </div>
         <div className="flex items-center gap-3">
@@ -388,10 +476,10 @@ function GameInner() {
             <span className="text-foreground font-semibold">{coins}</span>
           </div>
           <button
-            onClick={finishGame}
+            onClick={advanceGame}
             className="ml-2 px-3 py-1.5 rounded bg-error text-white text-xs font-semibold hover:bg-error/90"
           >
-            结束对局
+            {round >= (gameState?.maxRounds ?? 5) ? '完成对局' : '结束本轮'}
           </button>
         </div>
       </header>
@@ -471,7 +559,7 @@ function GameInner() {
                               <div className="flex justify-between"><span className="text-muted-foreground">性格</span><span className="text-foreground">{npc.personality}</span></div>
                               <div className="mt-2 pt-2 border-t border-border">
                                 <div className="text-muted-foreground mb-1">软肋</div>
-                                <div className="text-foreground text-[9px] leading-relaxed">{npc.weakness}</div>
+                                <div className="text-foreground text-[9px] leading-relaxed">{npc.weakness || '尚未解锁'}</div>
                               </div>
                             </div>
                           </div>
@@ -578,8 +666,8 @@ function GameInner() {
                       return (
                         <button
                           key={a.id}
-                          onClick={() => sendMessage("我决定：" + a.name + "（花费 " + a.cost + " 道具）")}
-                          disabled={streaming}
+                          onClick={() => executeAction(a)}
+                          disabled={streaming || coins < a.cost}
                           className="flex flex-col items-center gap-1 p-2 rounded-lg border border-border hover:border-primary hover:bg-primary/5 transition disabled:opacity-50"
                         >
                           <Icon className="w-4 h-4 text-primary" />

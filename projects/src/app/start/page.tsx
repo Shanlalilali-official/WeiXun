@@ -34,7 +34,7 @@ const DEFAULT_PROJECTS: Hotspot[] = [
     difficultyLabel: '新手入门',
     left: '20%', top: '40%',
     type: 'side',
-    leader: { name: '张主任', style: '老虎型', title: '资深部门中层' },
+    leader: { name: '赵峰', style: '老虎型，年富力强', title: '分管业务副主任' },
     technicalDifficulties: ['人物关系链短', '信息挖掘门槛低', '适合零基础销售'],
     customerNeeds: ['办公配套升级', '预算固定', '日常使用需求清晰'],
     aiAdvice: '单位内部人员层级简单，新任分管领导刚接手业务。资深中层是最终拍板人，必须主攻资深中层。',
@@ -134,7 +134,7 @@ export default function StartPage() {
         if (d.data && d.data.length > 0) {
           // 用数据库数据更新项目名称和描述
           setProjects(prev => prev.map(p => {
-            const dbProject = d.data.find((dp: any) => dp.project_id === p.projectId);
+            const dbProject = d.data.find((dp: { project_id: number }) => dp.project_id === p.projectId);
             if (dbProject) {
               return { ...p, name: dbProject.name, aiAdvice: dbProject.description };
             }
@@ -157,6 +157,7 @@ export default function StartPage() {
 
   const handleStart = () => {
     if (!selected) return;
+    if (selected.id !== 'project-1') return;
     router.push(`/game?location=${selected.id}&budget=${selected.budget}`);
   };
 
@@ -409,9 +410,10 @@ export default function StartPage() {
                   </button>
                   <button
                     onClick={handleStart}
-                    className="flex-1 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90"
+                    disabled={selected.id !== 'project-1'}
+                    className="flex-1 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    开始攻略此目标
+                    {selected.id === 'project-1' ? '开始攻略此目标' : '本期暂未开放'}
                   </button>
                 </div>
               </div>
