@@ -5,6 +5,7 @@ $requiredFiles = @(
     'PROJECT.md',
     'AGENTS.md',
     'harness\STATE.md',
+    'harness\issues\ISSUE_REGISTER.md',
     'harness\context\PROJECT_CONTEXT.md',
     'harness\context\SOURCE_OF_TRUTH.md',
     'harness\memory\DECISIONS.md',

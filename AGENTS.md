@@ -9,13 +9,15 @@
 1. `PROJECT.md`
 2. `harness/STATE.md`
 3. `harness/plans/CURRENT_ITERATION.md`
-4. `harness/memory/DECISIONS.md`
-5. 与任务有关的 `harness/context/` 文档
+4. `harness/issues/ISSUE_REGISTER.md`
+5. `harness/memory/DECISIONS.md`
+6. 与任务有关的 `harness/context/` 文档
 
 ## 范围门
 
 - `CURRENT_ITERATION.md` 中只有标记为“已批准”的条目可以进入实现。
 - 发现新问题时先写入 `BACKLOG.md` 或 `FINDINGS.md`，不要自动扩大范围。
+- 所有确认的问题必须进入 `ISSUE_REGISTER.md`。问题只改变状态，不删除；未解决问题必须保留原因和下一步。
 - 业务资料冲突时停止依赖该规则进行实现，并在 `DECISIONS.md` 新增待决项。
 
 ## 实现要求
@@ -35,7 +37,8 @@
 2. 更新 `harness/STATE.md`。
 3. 把新决定写入 `DECISIONS.md`，把新发现写入 `FINDINGS.md`。
 4. 更新当前迭代条目状态和证据。
-5. 在 `HANDOFF.md` 留下可由下一位开发者直接继续的信息。
+5. 更新 `ISSUE_REGISTER.md` 的状态、证据、阻塞原因和最后检查日期。
+6. 在 `HANDOFF.md` 留下可由下一位开发者直接继续的信息。
 
 ## Git
 
@@ -43,4 +46,3 @@
 - 推荐类型：`chore`、`docs`、`fix`、`feat`、`refactor`、`test`。
 - 不重写他人历史，不使用破坏性重置。
 - 范围确认前只允许治理、文档、诊断和基线提交。
-

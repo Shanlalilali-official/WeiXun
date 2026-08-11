@@ -29,10 +29,10 @@
 ## 6. Remember
 
 - 更新 STATE、当前迭代、决策、发现和交接。
+- 更新 ISSUE_REGISTER；问题不得删除，Resolved 必须附验证证据，Blocked/Deferred 必须说明原因和下一步。
 - 记录验证证据和剩余风险。
 
 ## 7. Commit
 
 - 检查无密钥、无调试文件、无意外大文件。
 - 使用聚焦提交，例如 `fix(ai): align npc chat contract`。
-
