@@ -59,3 +59,4 @@
 | CONTENT-001 | Resolved | 项目一人物表与稳定 ID 统一 | 2026-08-11 |
 | SCORE-001 | Resolved | 用户侧统一五维评分并由服务端状态驱动 | 2026-08-11 |
 | ENV-001 | Resolved | 移除 Coze SDK、运行命令、环境变量与启动器依赖；改用通用 AI Provider | 2026-08-11 |
+| ENV-003 | Resolved | `setup-local.ps1` 的 UTF-8 中文字符串在 Windows PowerShell 5 下解析失败；已改为纯 ASCII，并支持无 Docker 的托管流程 | 2026-08-11 |

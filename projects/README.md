@@ -10,7 +10,7 @@
 scoop install supabase
 ```
 
-首次启动：
+首次启动。脚本检测到 Docker 时启动本地 Supabase；没有 Docker 时显示托管 Supabase 的连接步骤：
 
 ```powershell
 pnpm install
