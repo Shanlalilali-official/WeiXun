@@ -14,6 +14,7 @@ export const npcChatRequestSchema = z.object({
 
 export const npcTurnEvaluationSchema = z.object({
   affinityDelta: z.number().int().min(-8).max(8),
+  affinityReason: z.string().trim().min(1).max(120),
   dimensionDeltas: z.object({
     decisionAnalysis: z.number().int().min(-3).max(3),
     relationshipBuilding: z.number().int().min(-3).max(3),

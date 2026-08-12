@@ -11,10 +11,12 @@ import {
   type GameRuntimeState,
 } from '../src/lib/game/state';
 import type { NpcTurnEvaluation } from '../src/lib/contracts/ai';
+import { createFallbackNpcEvaluation } from '../src/lib/ai/npc-evaluation';
 
 function evaluation(overrides: Partial<NpcTurnEvaluation>): NpcTurnEvaluation {
   return {
     affinityDelta: 0,
+    affinityReason: '测试评价',
     dimensionDeltas: {
       decisionAnalysis: 0,
       relationshipBuilding: 0,
@@ -36,6 +38,21 @@ assert.equal(initial.maxRounds, 5);
 assert.equal(initial.actionPoints, 28);
 assert.equal(initial.unlockedNpcIds.length, 3);
 assert.equal(initial.unlockedNpcIds.includes('p1-minister-chen-jianguo'), false);
+
+const fallbackEvaluation = createFallbackNpcEvaluation({
+  npcId: 'p1-frontline-wang-hao',
+  npcName: '王浩',
+  npcTitle: '信息中心主任',
+  affinity: 35,
+  round: 1,
+  playerMessage: '我会把同类案例、系统对接清单和测试计划发给您。',
+  npcReply: '材料发来，我重点看对接方案和测试计划。',
+  recentConversation: [],
+  confirmedFacts: [],
+  commitments: [],
+});
+assert.equal(fallbackEvaluation.affinityDelta, 2);
+assert.match(fallbackEvaluation.affinityReason, /具体信息|材料/);
 
 const afterAction = applyRelationshipAction(initial, 'p1-frontline-wang-hao', 'tea');
 assert.equal(afterAction.actionPoints, 22);

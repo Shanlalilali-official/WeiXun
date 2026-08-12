@@ -8,6 +8,7 @@ export type InvokeOptions = {
   temperature?: number;
   maxTokens?: number;
   jsonMode?: boolean;
+  thinking?: 'enabled' | 'disabled';
 };
 
 interface AiConfig {
@@ -73,6 +74,9 @@ async function requestCompletion(
         temperature: options?.temperature ?? 0.7,
         max_tokens: options?.maxTokens,
         ...(options?.jsonMode ? { response_format: { type: 'json_object' } } : {}),
+        ...(options?.thinking && /(^|\.)deepseek\.com$/i.test(new URL(config.baseUrl).hostname)
+          ? { thinking: { type: options.thinking } }
+          : {}),
         stream,
       }),
       signal: AbortSignal.timeout(config.timeoutMs),

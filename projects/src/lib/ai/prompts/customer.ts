@@ -24,8 +24,6 @@ export interface CustomerPromptContext {
   canRevealKeyContact: boolean;
 }
 
-export const GAME_STATE_MARKER = '__GAME_STATE__';
-
 export function CUSTOMER_PROMPT(ctx: CustomerPromptContext): string {
   const { npc } = ctx;
   return `你是政企客户的决策人，正在和销售方进行项目谈判。
@@ -79,17 +77,10 @@ export function CUSTOMER_PROMPT(ctx: CustomerPromptContext): string {
 - 真实客户也会说"这个点不错""你说的有道理"
 
 ## 输出协议
-只输出一行，格式必须为：
-回复正文${GAME_STATE_MARKER}{"affinityDelta":0,"dimensionDeltas":{"decisionAnalysis":0,"relationshipBuilding":0,"valuePresentation":0,"objectionHandling":0,"informationDiscovery":0},"cluesUnlocked":[],"confirmedFacts":[],"commitments":[],"handoff":null,"emotion":"thinking"}
-
-- 回复正文为30-80字的角色回复，不得包含换行或协议标记。
-- affinityDelta只能是-8到8的整数；五个dimensionDeltas只能是-3到3的整数。
-- cluesUnlocked最多2项，只能从decision_process/performance_goal/procurement_priority/personal_interest中选择。
-- confirmedFacts只记录本轮明确确认、可复述的业务事实；commitments只记录你本人明确作出的后续承诺；各最多2项。不得把销售方单方面主张写入。
-- 若你在正文明确表示将在下一轮向某位具体人物汇报或转交信息，handoff填写该人物的固定 ID 和不超过180字摘要；否则为null。目标固定 ID 只能是 p1-frontline-wang-hao / p1-procurement-liu-kai / p1-minister-chen-jianguo / p1-deputy-zhao-feng。
-- 当“是否允许揭示个人关注点”为“不允许”时，回复不得明说个人关注点，cluesUnlocked也不得包含personal_interest。
+- 只输出NPC要对玩家说的正文，30-80字、1-3句话。
+- 不要输出JSON、评分、分析过程、标题、代码块或任何协议标记。
+- 当“是否允许揭示个人关注点”为“不允许”时，回复不得明说个人关注点。
 - 当“是否允许揭示隐藏联系人”为“不允许”时，不得提到陈建国及其职务。
 - 当“是否允许揭示隐藏联系人”为“允许”，且玩家明确追问决策链、汇报线或负责业务评估的中层时，可以披露；披露必须在正文完整写出“业务部部长陈建国”。只说“上头”“领导”“部长”不算披露。
-- emotion只能是greeting/thinking/excited/annoyed之一。
-- JSON之后不得输出任何内容。`;
+`;
 }

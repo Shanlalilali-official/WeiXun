@@ -130,10 +130,13 @@ function GameInner() {
   const [showCompetitorModal, setShowCompetitorModal] = useState(false);
   const [newlyUnlockedNpcId, setNewlyUnlockedNpcId] = useState<string | null>(null);
   const [relationshipEffect, setRelationshipEffect] = useState<{
+    kind: 'action' | 'conversation';
     baseAffinityDelta: number;
     preferenceAffinityDelta: number;
     totalAffinityDelta: number;
     aiAffinityDelta?: number;
+    aiAffinityReason?: string;
+    evaluationSource?: 'model' | 'retry' | 'fallback';
   } | null>(null);
   const [npcEmotion, setNpcEmotion] = useState<'greeting' | 'thinking' | 'excited' | 'annoyed'>('greeting');
   const [showNpcImage, setShowNpcImage] = useState(false);
@@ -379,7 +382,7 @@ function GameInner() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const sendMessage = async (content: string) => {
+  const sendMessage = async (content: string, followsRelationshipAction = false) => {
     if (!content.trim() || streaming) return;
     if (!selectedNpc || !gameSessionId) {
       alert('对局或NPC尚未加载完成，请稍后重试');
@@ -389,6 +392,7 @@ function GameInner() {
     setMessages((m) => [...m, userMsg]);
     setInput('');
     setStreaming(true);
+    if (!followsRelationshipAction) setRelationshipEffect(null);
 
     // 准备 assistant 占位
     const assistantMsg: Message = { role: 'assistant', content: '', ts: Date.now() + 1 };
@@ -479,11 +483,35 @@ function GameInner() {
                 applyServerState(json.state);
                 setNpcEmotion(json.emotion || 'thinking');
                 if (typeof json.affinityDelta === 'number') {
-                  setRelationshipEffect((current) => current
-                    ? { ...current, aiAffinityDelta: json.affinityDelta }
-                    : current
+                  setRelationshipEffect((current) => current?.kind === 'action'
+                    ? {
+                        ...current,
+                        aiAffinityDelta: json.affinityDelta,
+                        aiAffinityReason: json.affinityReason,
+                        evaluationSource: json.evaluationSource,
+                      }
+                    : {
+                        kind: 'conversation',
+                        baseAffinityDelta: 0,
+                        preferenceAffinityDelta: 0,
+                        totalAffinityDelta: 0,
+                        aiAffinityDelta: json.affinityDelta,
+                        aiAffinityReason: json.affinityReason,
+                        evaluationSource: json.evaluationSource,
+                      }
                   );
                 }
+              }
+              if (json.type === 'evaluation_started') {
+                setRelationshipEffect((current) => current?.kind === 'action'
+                  ? current
+                  : {
+                      kind: 'conversation',
+                      baseAffinityDelta: 0,
+                      preferenceAffinityDelta: 0,
+                      totalAffinityDelta: 0,
+                    }
+                );
               }
               if (json.type === 'error') {
                 console.warn(json.code, json.error);
@@ -539,8 +567,8 @@ function GameInner() {
       return;
     }
     applyServerState(data.state);
-    setRelationshipEffect(data.effect || null);
-    await sendMessage(`[${action.name}] 我方希望通过这次安排进一步交流合作。`);
+    setRelationshipEffect(data.effect ? { ...data.effect, kind: 'action' } : null);
+    await sendMessage(`[${action.name}] 我方希望通过这次安排进一步交流合作。`, true);
   };
 
   const advanceGame = async () => {
@@ -988,19 +1016,35 @@ function GameInner() {
 
       {relationshipEffect && (
         <div className="fixed bottom-5 right-5 z-40 w-72 rounded-xl border border-success/30 bg-card p-4 shadow-xl">
-          <div className="text-sm font-bold text-foreground">关系动作结果</div>
+          <div className="text-sm font-bold text-foreground">
+            {relationshipEffect.kind === 'action' ? '关系动作结果' : '本轮沟通评价'}
+          </div>
           <div className="mt-2 text-lg font-semibold text-success">
-            亲密度 {relationshipEffect.aiAffinityDelta === undefined
+            亲密度 {relationshipEffect.aiAffinityDelta === undefined && relationshipEffect.kind === 'conversation'
+              ? '评估中…'
+              : relationshipEffect.aiAffinityDelta === undefined
               ? `${relationshipEffect.totalAffinityDelta >= 0 ? '+' : ''}${relationshipEffect.totalAffinityDelta}`
               : `${relationshipEffect.totalAffinityDelta + relationshipEffect.aiAffinityDelta >= 0 ? '+' : ''}${relationshipEffect.totalAffinityDelta + relationshipEffect.aiAffinityDelta}`}
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            基础 {relationshipEffect.baseAffinityDelta >= 0 ? '+' : ''}{relationshipEffect.baseAffinityDelta}
-            {' · '}人物偏好 {relationshipEffect.preferenceAffinityDelta >= 0 ? '+' : ''}{relationshipEffect.preferenceAffinityDelta}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            本次沟通评价 {relationshipEffect.aiAffinityDelta === undefined ? '生成中…' : `${relationshipEffect.aiAffinityDelta >= 0 ? '+' : ''}${relationshipEffect.aiAffinityDelta}`}
-          </div>
+          {relationshipEffect.kind === 'action' && (
+            <div className="mt-1 text-xs text-muted-foreground">
+              基础 {relationshipEffect.baseAffinityDelta >= 0 ? '+' : ''}{relationshipEffect.baseAffinityDelta}
+              {' · '}人物偏好 {relationshipEffect.preferenceAffinityDelta >= 0 ? '+' : ''}{relationshipEffect.preferenceAffinityDelta}
+            </div>
+          )}
+          {relationshipEffect.kind === 'action' && (
+            <div className="mt-1 text-xs text-muted-foreground">
+              本次沟通评价 {relationshipEffect.aiAffinityDelta === undefined ? '生成中…' : `${relationshipEffect.aiAffinityDelta >= 0 ? '+' : ''}${relationshipEffect.aiAffinityDelta}`}
+            </div>
+          )}
+          {relationshipEffect.aiAffinityReason && (
+            <div className="mt-2 rounded-md bg-muted/60 px-2.5 py-2 text-xs text-foreground">
+              {relationshipEffect.aiAffinityReason}
+            </div>
+          )}
+          {relationshipEffect.evaluationSource === 'fallback' && (
+            <div className="mt-1 text-[10px] text-warning">本轮使用规则评分兜底</div>
+          )}
           <button onClick={() => setRelationshipEffect(null)} className="mt-3 text-xs font-semibold text-primary">知道了</button>
         </div>
       )}

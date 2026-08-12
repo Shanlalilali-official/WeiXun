@@ -39,15 +39,30 @@ async function streamChat(token: string, npcId: string, message: string) {
   const events = body
     .split(/\r?\n/)
     .filter((line) => line.startsWith('data: ') && line !== 'data: [DONE]')
-    .map((line) => JSON.parse(line.slice(6)) as { type: string; code?: string; content?: string; state?: GameRuntimeState });
+    .map((line) => JSON.parse(line.slice(6)) as {
+      type: string;
+      code?: string;
+      content?: string;
+      state?: GameRuntimeState;
+      affinityDelta?: number;
+      affinityReason?: string;
+      evaluationSource?: 'model' | 'retry' | 'fallback';
+    });
   const error = events.find((event) => event.type === 'error');
   if (error) throw new Error(`CHAT_STREAM_${error.code || 'ERROR'}`);
   assert(events.some((event) => event.type === 'delta' && event.content));
+  assert(events.some((event) => event.type === 'evaluation_started'));
   const result = events.find((event) => event.type === 'result' && event.state);
   assert(result?.state);
+  assert.equal(typeof result.affinityDelta, 'number');
+  assert(result.affinityReason);
+  assert(['model', 'retry', 'fallback'].includes(result.evaluationSource || ''));
   return {
     content: events.map((event) => event.content || '').join(''),
     state: result.state,
+    affinityDelta: result.affinityDelta,
+    affinityReason: result.affinityReason,
+    evaluationSource: result.evaluationSource,
   };
 }
 
@@ -113,6 +128,14 @@ async function main() {
   assert.match(reveal.content, /业务部部长|业务部长|陈部长/);
   assert(reveal.state.unlockedClues.includes('key_contact'));
   assert(reveal.state.unlockedNpcIds.includes('p1-minister-chen-jianguo'));
+
+  const followUp = await streamChat(
+    login.token,
+    'p1-frontline-wang-hao',
+    '我今天会把同类案例、系统对接清单和测试计划整理成正式材料发给您。',
+  );
+  assert.equal(typeof followUp.affinityDelta, 'number');
+  assert(followUp.affinityReason);
 
   const firstHistory = await jsonRequest<{ messages: unknown[] }>(
     `/api/game/sessions/${sessionId}/messages?npcId=p1-frontline-wang-hao`,

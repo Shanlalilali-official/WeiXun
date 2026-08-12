@@ -1,8 +1,9 @@
 import { NextRequest } from 'next/server';
 import { streamLLM, type ChatMessage } from '@/lib/ai/client';
-import { CUSTOMER_PROMPT, GAME_STATE_MARKER } from '@/lib/ai/prompts/customer';
+import { CUSTOMER_PROMPT } from '@/lib/ai/prompts/customer';
+import { evaluateNpcTurn } from '@/lib/ai/npc-evaluation';
 import { authGuard } from '@/lib/auth/guard';
-import { npcChatRequestSchema, npcTurnEvaluationSchema } from '@/lib/contracts/ai';
+import { npcChatRequestSchema } from '@/lib/contracts/ai';
 import { getProjectOneNpc } from '@/lib/game/project-one';
 import {
   appendGameEvent,
@@ -102,10 +103,7 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
   const readableStream = new ReadableStream({
     async start(controller) {
-      let pending = '';
-      let structured = '';
       let reply = '';
-      let markerFound = false;
 
       const emitContent = (content: string) => {
         if (!content) return;
@@ -114,97 +112,67 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        for await (const chunk of streamLLM(messages, { temperature: 0.7 })) {
-          if (markerFound) {
-            structured += chunk;
-            continue;
-          }
-          pending += chunk;
-          const markerIndex = pending.indexOf(GAME_STATE_MARKER);
-          if (markerIndex >= 0) {
-            emitContent(pending.slice(0, markerIndex));
-            structured = pending.slice(markerIndex + GAME_STATE_MARKER.length);
-            pending = '';
-            markerFound = true;
-            continue;
-          }
-          const safeLength = pending.length - (GAME_STATE_MARKER.length - 1);
-          if (safeLength > 0) {
-            emitContent(pending.slice(0, safeLength));
-            pending = pending.slice(safeLength);
-          }
-        }
+        for await (const chunk of streamLLM(messages, { temperature: 0.7, thinking: 'disabled' })) emitContent(chunk);
+        if (!reply.trim()) throw new Error('AI_PROVIDER_EMPTY_RESPONSE');
 
-        if (!markerFound) {
-          emitContent(pending);
-          await saveChatMessage({
-            sessionId: gameSessionId,
-            npcId,
-            round: gameSession.state.currentRound,
-            role: 'assistant',
-            content: reply,
-            metadata: { protocolValid: false },
-          });
-          controller.enqueue(encoder.encode(sseData({
-            type: 'error', code: 'AI_PROTOCOL_INVALID', error: 'AI响应缺少结构化状态，本轮状态未更新',
-          })));
-        } else {
-          const cleaned = structured.replace(/```(?:json)?/gi, '').trim();
-          let evaluation: unknown;
-          try {
-            evaluation = JSON.parse(cleaned);
-          } catch {
-            evaluation = null;
-          }
-          const evaluationResult = npcTurnEvaluationSchema.safeParse(evaluation);
-          if (evaluationResult.success) {
-            const previousScore = calculateTotalScore(gameSession.state.dimensions);
-            const changedState = applyNpcEvaluation(gameSession.state, npcId, evaluationResult.data, reply);
-            let state = await saveGameState(gameSessionId, changedState);
-            const scoreDelta = calculateTotalScore(state.dimensions) - previousScore;
-            await saveChatMessage({
-              sessionId: gameSessionId,
-              npcId,
-              round: state.currentRound,
-              role: 'assistant',
-              content: reply,
-              affinityDelta: evaluationResult.data.affinityDelta * gameSession.state.progressionMultiplier,
-              scoreDelta,
-              metadata: { ...evaluationResult.data, protocolValid: true },
-            });
-            await appendGameEvent(gameSessionId, state.currentRound, 'npc.turn.completed', {
-              scoreDelta,
-              affinityDelta: evaluationResult.data.affinityDelta * gameSession.state.progressionMultiplier,
-              cluesUnlocked: evaluationResult.data.cluesUnlocked,
-            }, npcId);
-            if (evaluationResult.data.handoff && /汇报|上报|转告|转达/.test(reply)) {
-              await appendGameEvent(gameSessionId, state.currentRound, 'npc.handoff.promised', evaluationResult.data.handoff, npcId);
-            }
-            try {
-              state = await refreshConversationMemory(gameSessionId, npcId, state);
-            } catch {
-              await appendGameEvent(gameSessionId, state.currentRound, 'memory.refresh.failed', {}, npcId).catch(() => undefined);
-            }
-            controller.enqueue(encoder.encode(sseData({
-              type: 'result',
-              state,
-              emotion: evaluationResult.data.emotion,
-              affinityDelta: evaluationResult.data.affinityDelta * gameSession.state.progressionMultiplier,
-            })));
-          } else {
-            await saveChatMessage({
-              sessionId: gameSessionId,
-              npcId,
-              round: gameSession.state.currentRound,
-              role: 'assistant',
-              content: reply,
-              metadata: { protocolValid: false },
-            });
-            controller.enqueue(encoder.encode(sseData({
-              type: 'error', code: 'AI_STATE_INVALID', error: 'AI状态数据未通过校验，本轮状态未更新',
-            })));
-          }
+        controller.enqueue(encoder.encode(sseData({ type: 'evaluation_started' })));
+        const assessment = await evaluateNpcTurn({
+          npcId,
+          npcName: npc.name,
+          npcTitle: npc.title,
+          affinity: gameSession.state.npcAffinity[npcId] ?? 35,
+          round: gameSession.state.currentRound,
+          playerMessage: message,
+          npcReply: reply,
+          recentConversation: recentHistory,
+          confirmedFacts: memory?.confirmedFacts ?? [],
+          commitments: memory?.commitments ?? [],
+        });
+        const evaluation = assessment.evaluation;
+        const appliedAffinityDelta = evaluation.affinityDelta * gameSession.state.progressionMultiplier;
+        const previousScore = calculateTotalScore(gameSession.state.dimensions);
+        const changedState = applyNpcEvaluation(gameSession.state, npcId, evaluation, reply);
+        let state = await saveGameState(gameSessionId, changedState);
+        const scoreDelta = calculateTotalScore(state.dimensions) - previousScore;
+        await saveChatMessage({
+          sessionId: gameSessionId,
+          npcId,
+          round: state.currentRound,
+          role: 'assistant',
+          content: reply,
+          affinityDelta: appliedAffinityDelta,
+          scoreDelta,
+          metadata: { ...evaluation, protocolValid: true, evaluationSource: assessment.source },
+        });
+        await appendGameEvent(gameSessionId, state.currentRound, 'npc.turn.completed', {
+          scoreDelta,
+          affinityDelta: appliedAffinityDelta,
+          affinityReason: evaluation.affinityReason,
+          evaluationSource: assessment.source,
+          cluesUnlocked: evaluation.cluesUnlocked,
+        }, npcId);
+        if (assessment.source === 'fallback') {
+          await appendGameEvent(gameSessionId, state.currentRound, 'npc.evaluation.fallback', {
+            affinityDelta: appliedAffinityDelta,
+            affinityReason: evaluation.affinityReason,
+          }, npcId);
         }
+        if (evaluation.handoff && /汇报|上报|转告|转达/.test(reply)) {
+          await appendGameEvent(gameSessionId, state.currentRound, 'npc.handoff.promised', evaluation.handoff, npcId);
+        }
+        try {
+          state = await refreshConversationMemory(gameSessionId, npcId, state);
+        } catch {
+          await appendGameEvent(gameSessionId, state.currentRound, 'memory.refresh.failed', {}, npcId).catch(() => undefined);
+        }
+        controller.enqueue(encoder.encode(sseData({
+          type: 'result',
+          state,
+          emotion: evaluation.emotion,
+          affinityDelta: appliedAffinityDelta,
+          affinityReason: evaluation.affinityReason,
+          evaluationSource: assessment.source,
+        })));
 
         controller.enqueue(encoder.encode(sseData({ type: 'done' })));
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
