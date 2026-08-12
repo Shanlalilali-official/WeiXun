@@ -6,6 +6,7 @@ import {
   calculateTotalScore,
   createProjectOneState,
   getRelationshipActionEffect,
+  reconcileNarrativeDiscoveries,
   type GameRuntimeState,
 } from '../src/lib/game/state';
 import type { NpcTurnEvaluation } from '../src/lib/contracts/ai';
@@ -99,6 +100,12 @@ const explicitlyRevealed = applyNpcEvaluation(relationshipUnlocked, 'p1-frontlin
 }), '业务评估先找业务部部长陈建国，他汇总意见后再往上报。');
 assert.equal(explicitlyRevealed.unlockedClues.includes('key_contact'), true);
 assert.equal(explicitlyRevealed.unlockedNpcIds.includes('p1-minister-chen-jianguo'), true);
+
+const legacyPhraseReconciled = reconcileNarrativeDiscoveries(relationshipUnlocked, [
+  '涉及内部决策链我得先跟业务部陈建国部长汇报。',
+]);
+assert.equal(legacyPhraseReconciled.unlockedClues.includes('key_contact'), true);
+assert.equal(legacyPhraseReconciled.unlockedNpcIds.includes('p1-minister-chen-jianguo'), true);
 
 const prematurePersonalClue = applyNpcEvaluation(initial, 'p1-frontline-wang-hao', evaluation({
   affinityDelta: 0,

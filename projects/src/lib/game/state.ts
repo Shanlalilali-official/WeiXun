@@ -83,8 +83,15 @@ export function normalizeProjectOneState(state: GameRuntimeState): GameRuntimeSt
   };
 }
 
-function explicitlyRevealsMinister(replyContent: string): boolean {
-  return replyContent.includes('陈建国') && /业务部部长|业务部长|陈部长/.test(replyContent);
+export function explicitlyRevealsMinister(replyContent: string): boolean {
+  if (!replyContent.includes('陈建国')) return false;
+  return /业务部.{0,8}陈建国.{0,4}部长|陈建国.{0,6}(业务部)?部长|陈部长|业务部部长/.test(replyContent);
+}
+
+export function reconcileNarrativeDiscoveries(state: GameRuntimeState, assistantReplies: string[]): GameRuntimeState {
+  if (state.unlockedClues.includes('key_contact') || !assistantReplies.some(explicitlyRevealsMinister)) return state;
+  const unlockedClues = [...state.unlockedClues, 'key_contact' as const];
+  return { ...state, unlockedClues, unlockedNpcIds: deriveUnlockedNpcIds(unlockedClues) };
 }
 
 export function createProjectOneState(): GameRuntimeState {

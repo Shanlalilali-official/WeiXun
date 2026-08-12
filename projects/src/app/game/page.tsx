@@ -154,10 +154,17 @@ function GameInner() {
         : '当前中标条件接近达成，注意保持关键关系并核对全部线索。';
   const newlyUnlockedNpc = newlyUnlockedNpcId ? getProjectOneNpc(newlyUnlockedNpcId) : null;
 
+  const showUnlockNoticeOnce = (sessionId: string, npcId: string) => {
+    const noticeKey = `npc-unlock-notified:${sessionId}:${npcId}`;
+    if (localStorage.getItem(noticeKey)) return;
+    localStorage.setItem(noticeKey, '1');
+    setNewlyUnlockedNpcId(npcId);
+  };
+
   const applyServerState = (nextState: GameRuntimeState) => {
     setGameState((previous) => {
       const newlyUnlocked = nextState.unlockedNpcIds.find((id) => !previous?.unlockedNpcIds.includes(id));
-      if (newlyUnlocked) setNewlyUnlockedNpcId(newlyUnlocked);
+      if (newlyUnlocked && gameSessionId) showUnlockNoticeOnce(gameSessionId, newlyUnlocked);
       return nextState;
     });
   };
@@ -271,6 +278,10 @@ function GameInner() {
       if (!restored || cancelled) return;
       setGameSessionId(restored.id);
       setGameState(restored.state);
+      const reconciledNpcId = restored.state.unlockedNpcIds.find(
+        (npcId) => npcId === 'p1-minister-chen-jianguo',
+      );
+      if (reconciledNpcId) showUnlockNoticeOnce(restored.id, reconciledNpcId);
 
       const npcResponse = await fetch(
         `/api/game-data/npcs?project_id=${projectId}&game_session_id=${restored.id}`,

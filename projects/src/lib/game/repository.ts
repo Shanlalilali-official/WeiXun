@@ -1,5 +1,5 @@
 import { createServerClient } from '@/storage/database/supabase-client';
-import { calculateTotalScore, createProjectOneState, normalizeProjectOneState, type GameRuntimeState } from '@/lib/game/state';
+import { calculateTotalScore, createProjectOneState, normalizeProjectOneState, reconcileNarrativeDiscoveries, type GameRuntimeState } from '@/lib/game/state';
 import type { GameReview } from '@/lib/contracts/game';
 
 export interface StoredChatMessage {
@@ -121,10 +121,22 @@ export async function getOwnedGameSession(sessionId: string, userId: string): Pr
     .eq('session_id', sessionId)
     .single();
   if (runtimeError || !runtime) throw new Error('RUNTIME_STATE_NOT_FOUND');
+  let state = toState(session, runtime as RuntimeStateRow);
+  if (!state.unlockedClues.includes('key_contact')) {
+    const { data: replies } = await supabase
+      .from('chat_messages')
+      .select('content')
+      .eq('session_id', sessionId)
+      .eq('sender', 'assistant')
+      .ilike('content', '%陈建国%')
+      .limit(20);
+    const reconciled = reconcileNarrativeDiscoveries(state, (replies ?? []).map((reply) => String(reply.content)));
+    if (reconciled !== state) state = await saveGameState(sessionId, reconciled);
+  }
   return {
     id: session.id as string,
     userId: session.user_id as string,
-    state: toState(session, runtime as RuntimeStateRow),
+    state,
   };
 }
 
