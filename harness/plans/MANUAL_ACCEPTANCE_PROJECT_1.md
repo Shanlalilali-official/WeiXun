@@ -4,16 +4,7 @@
 
 当前验收服务地址：`http://127.0.0.1:5000/`。
 
-本次交付时服务已经启动，直接在浏览器打开上述地址即可。无需安装 Docker Desktop。
-
-如果服务已停止，在 PowerShell 执行：
-
-```powershell
-cd D:\WeiXun\project_20260811_095926\projects
-pnpm dev
-```
-
-看到服务启动后保持该窗口打开，再用浏览器访问 `http://127.0.0.1:5000/`。停止服务时在 PowerShell 按 `Ctrl+C`。
+双击 `D:\WeiXun\project_20260811_095926\start-project.bat`。看到服务启动后保持该窗口打开，脚本会自动用浏览器访问 `http://127.0.0.1:5000/`。停止服务时按 `Ctrl+C` 或关闭该窗口。无需安装 Docker Desktop。
 
 ## 登录与进入项目一
 

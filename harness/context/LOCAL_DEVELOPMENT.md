@@ -1,6 +1,10 @@
 # 本地开发环境
 
-项目不再依赖 Coze。应用运行需要 Node.js 20+、pnpm 9+；本地数据库需要 Docker Desktop 与 Supabase CLI；AI 使用任意兼容 OpenAI Chat Completions 的模型服务。
+项目不再依赖 Coze。应用运行需要 Node.js 20+、pnpm 9+；当前开发流程使用托管 Supabase，不要求 Docker Desktop；AI 使用任意兼容 OpenAI Chat Completions 的模型服务。
+
+## 日常一键启动
+
+在 Windows 资源管理器中双击仓库根目录的 `start-project.bat`。脚本会复用现有生产构建，构建缺失时自动重建，并打开 `http://127.0.0.1:5000/`。服务运行期间保留命令行窗口，关闭窗口即停止服务。
 
 ## 首次设置
 
@@ -11,7 +15,7 @@ pnpm install
 ./scripts/setup-local.ps1
 ```
 
-Windows 可用 `scoop install supabase` 安装 Supabase CLI。脚本不会覆盖已有 `.env.local`，启动数据库后会显示本地连接信息。
+Windows 可用 `scoop install supabase` 安装 Supabase CLI。脚本不会覆盖已有 `.env.local`；当前托管流程使用 `supabase link` 和 `supabase db push --include-seed`，无需启动 Docker。
 
 复制并填写环境变量：
 
@@ -29,7 +33,7 @@ pnpm local:check
 - 初始数据：`projects/supabase/seed.sql`
 - 重建命令：`pnpm supabase:reset`（会清空本地数据）
 
-当前机器尚未完成 Docker/Supabase CLI 启动验证，因此数据库纵向冒烟仍为阻塞项。
+当前机器已完成 Supabase CLI 项目关联、迁移、seed 和托管数据库纵向冒烟；数据库环境不再阻塞开发。
 
 ## 验证
 
@@ -42,4 +46,4 @@ pnpm test:metrics
 pnpm build
 ```
 
-`test:ai-provider` 使用本地 mock，不需要真实 API key；真实模型稳定性仍须在填入 key 后验证。
+`test:ai-provider` 使用本地 mock，不需要真实 API key；`test:e2e` 会访问已配置的托管数据库和真实模型服务。

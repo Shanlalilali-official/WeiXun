@@ -24,6 +24,7 @@
 | GAME-007 | P0 | Resolved | 结算与 AI 诊断真实联调完成 | 真实模型复盘通过三数组结构校验并落库 |
 | SCORE-002 | P1 | Blocked | C0 中 A314 引用与括号权重疑似错误 | 检测测试已确认；业务含义需公式负责人确认 |
 | ENV-002 | P1 | Resolved | 已采用无需 Docker 的托管 Supabase 流程 | CLI 已安装、项目已关联、迁移已推送且远程查询成功 |
+| ENV-005 | P1 | Resolved | Windows 重启后缺少可发现的一键启动入口 | 根目录新增 `start-project.bat`，覆盖配置、依赖、端口和构建检查，启动后自动打开浏览器 |
 
 ## 已知延期
 
