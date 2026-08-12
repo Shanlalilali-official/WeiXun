@@ -4,6 +4,7 @@ import {
   PROJECT_ONE_INITIAL_ACTION_POINTS,
   PROJECT_ONE_MAX_ROUNDS,
   PROJECT_ONE_NPCS,
+  getProjectOneNpc,
   type ProjectOneClue,
 } from '@/lib/game/project-one';
 
@@ -21,6 +22,8 @@ export type GameDimensions = Record<GameDimension, number>;
 export interface ConversationMemory {
   summary: string;
   summarizedMessageCount: number;
+  confirmedFacts?: string[];
+  commitments?: string[];
 }
 
 export interface GameRuntimeState {
@@ -42,6 +45,12 @@ export interface RelationshipAction {
   id: string;
   cost: number;
   affinityGain: number;
+}
+
+export interface RelationshipActionEffect {
+  baseAffinityDelta: number;
+  preferenceAffinityDelta: number;
+  totalAffinityDelta: number;
 }
 
 export const RELATIONSHIP_ACTIONS: Record<string, RelationshipAction> = {
@@ -130,8 +139,15 @@ export function applyNpcEvaluation(
   if (explicitlyRevealsMinister(replyContent)) acceptedClues.push('key_contact');
   const unlockedClues = Array.from(new Set([...state.unlockedClues, ...acceptedClues]));
   const unlockedNpcIds = deriveUnlockedNpcIds(unlockedClues);
+  const memory = state.conversationMemories[npcId] ?? { summary: '', summarizedMessageCount: 0 };
+  const confirmedFacts = Array.from(new Set([...(memory.confirmedFacts ?? []), ...evaluation.confirmedFacts])).slice(-12);
+  const commitments = Array.from(new Set([...(memory.commitments ?? []), ...evaluation.commitments])).slice(-12);
+  const conversationMemories = {
+    ...state.conversationMemories,
+    [npcId]: { ...memory, confirmedFacts, commitments },
+  };
 
-  return { ...state, dimensions, npcAffinity, unlockedClues, unlockedNpcIds };
+  return { ...state, dimensions, npcAffinity, unlockedClues, unlockedNpcIds, conversationMemories };
 }
 
 export function applyRelationshipAction(
@@ -145,9 +161,10 @@ export function applyRelationshipAction(
   if (!action) throw new Error('ACTION_UNKNOWN');
   if (state.actionPoints < action.cost) throw new Error('ACTION_POINTS_INSUFFICIENT');
 
+  const effect = getRelationshipActionEffect(npcId, actionId);
   const npcAffinity = {
     ...state.npcAffinity,
-    [npcId]: clamp((state.npcAffinity[npcId] ?? 35) + action.affinityGain),
+    [npcId]: clamp((state.npcAffinity[npcId] ?? 35) + effect.totalAffinityDelta),
   };
 
   return {
@@ -156,6 +173,19 @@ export function applyRelationshipAction(
     npcAffinity,
     unlockedNpcIds: deriveUnlockedNpcIds(state.unlockedClues),
     lastAction: actionId,
+  };
+}
+
+export function getRelationshipActionEffect(npcId: string, actionId: string): RelationshipActionEffect {
+  const action = RELATIONSHIP_ACTIONS[actionId];
+  if (!action) throw new Error('ACTION_UNKNOWN');
+  const npc = getProjectOneNpc(npcId);
+  if (!npc) throw new Error('NPC_UNKNOWN');
+  const preferenceAffinityDelta = npc.actionPreferences[actionId] ?? 0;
+  return {
+    baseAffinityDelta: action.affinityGain,
+    preferenceAffinityDelta,
+    totalAffinityDelta: action.affinityGain + preferenceAffinityDelta,
   };
 }
 

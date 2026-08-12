@@ -21,6 +21,7 @@ export interface ProjectOneNpc {
   personality: string;
   weakness: string;
   initiallyVisible: boolean;
+  actionPreferences: Partial<Record<string, number>>;
 }
 
 export const PROJECT_ONE_COMPETITORS = [
@@ -46,6 +47,7 @@ export const PROJECT_ONE_NPCS: ProjectOneNpc[] = [
     personality: '四种性格之一，由场景初始化确定',
     weakness: '工作减负、绩效加分或个人业余爱好',
     initiallyVisible: true,
+    actionPreferences: { tea: 2, festival: 1, gift: -1, roadshow: 1 },
   },
   {
     id: 'p1-procurement-liu-kai',
@@ -59,6 +61,7 @@ export const PROJECT_ONE_NPCS: ProjectOneNpc[] = [
     personality: '老虎型或孔雀型，由场景初始化确定',
     weakness: '评优晋升或家庭育儿需求',
     initiallyVisible: true,
+    actionPreferences: { sample: 2, video: 1, gift: -2, dinner: -1 },
   },
   {
     id: 'p1-minister-chen-jianguo',
@@ -72,6 +75,7 @@ export const PROJECT_ONE_NPCS: ProjectOneNpc[] = [
     personality: '老虎型',
     weakness: '职称评级、行业个人口碑或子女升学',
     initiallyVisible: false,
+    actionPreferences: { roadshow: 2, visit: 2, tea: 1, gift: -3 },
   },
   {
     id: 'p1-deputy-zhao-feng',
@@ -85,6 +89,7 @@ export const PROJECT_ONE_NPCS: ProjectOneNpc[] = [
     personality: '老虎型，年富力强',
     weakness: '政绩考核与新项目落地成果',
     initiallyVisible: true,
+    actionPreferences: { roadshow: 3, visit: 2, video: 1, gift: -3, dinner: -2 },
   },
 ];
 

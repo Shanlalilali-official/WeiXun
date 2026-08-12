@@ -6,6 +6,7 @@ import { npcChatRequestSchema, npcTurnEvaluationSchema } from '@/lib/contracts/a
 import { getProjectOneNpc } from '@/lib/game/project-one';
 import {
   appendGameEvent,
+  getNpcInbox,
   getNpcConversation,
   getOwnedGameSession,
   saveChatMessage,
@@ -77,6 +78,7 @@ export async function POST(req: NextRequest) {
   }
 
   const memory = gameSession.state.conversationMemories[npcId];
+  const inbox = await getNpcInbox(gameSessionId, npcId).catch(() => []);
   const systemPrompt = CUSTOMER_PROMPT({
     gameSessionId,
     scenarioId,
@@ -86,6 +88,9 @@ export async function POST(req: NextRequest) {
     affinity: gameSession.state.npcAffinity[npcId] ?? 35,
     lastAction: gameSession.state.lastAction,
     memorySummary: memory?.summary,
+    confirmedFacts: memory?.confirmedFacts,
+    commitments: memory?.commitments,
+    inbox,
     canRevealPersonalInterest: (gameSession.state.npcAffinity[npcId] ?? 35) >= 50,
     canRevealKeyContact: (gameSession.state.npcAffinity[npcId] ?? 35) >= 50,
   });
@@ -172,12 +177,20 @@ export async function POST(req: NextRequest) {
               affinityDelta: evaluationResult.data.affinityDelta,
               cluesUnlocked: evaluationResult.data.cluesUnlocked,
             }, npcId);
+            if (evaluationResult.data.handoff && /汇报|上报|转告|转达/.test(reply)) {
+              await appendGameEvent(gameSessionId, state.currentRound, 'npc.handoff.promised', evaluationResult.data.handoff, npcId);
+            }
             try {
               state = await refreshConversationMemory(gameSessionId, npcId, state);
             } catch {
               await appendGameEvent(gameSessionId, state.currentRound, 'memory.refresh.failed', {}, npcId).catch(() => undefined);
             }
-            controller.enqueue(encoder.encode(sseData({ type: 'result', state, emotion: evaluationResult.data.emotion })));
+            controller.enqueue(encoder.encode(sseData({
+              type: 'result',
+              state,
+              emotion: evaluationResult.data.emotion,
+              affinityDelta: evaluationResult.data.affinityDelta,
+            })));
           } else {
             await saveChatMessage({
               sessionId: gameSessionId,

@@ -27,6 +27,17 @@ export const npcTurnEvaluationSchema = z.object({
     'procurement_priority',
     'personal_interest',
   ])).max(2),
+  confirmedFacts: z.array(z.string().trim().min(1).max(160)).max(2).default([]),
+  commitments: z.array(z.string().trim().min(1).max(160)).max(2).default([]),
+  handoff: z.object({
+    targetNpcId: z.enum([
+      'p1-frontline-wang-hao',
+      'p1-procurement-liu-kai',
+      'p1-minister-chen-jianguo',
+      'p1-deputy-zhao-feng',
+    ]),
+    summary: z.string().trim().min(1).max(180),
+  }).nullable().default(null),
   emotion: z.enum(['greeting', 'thinking', 'excited', 'annoyed']),
 });
 

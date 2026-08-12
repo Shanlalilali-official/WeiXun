@@ -9,6 +9,12 @@ export interface StoredChatMessage {
   createdAt: string;
 }
 
+export interface NpcInboxItem {
+  sourceNpcId: string;
+  summary: string;
+  round: number;
+}
+
 interface RuntimeStateRow {
   scenario_code: string;
   action_points: number;
@@ -184,6 +190,69 @@ export async function appendGameEvent(
     payload,
   });
   if (error) throw new Error('EVENT_APPEND_FAILED');
+}
+
+export async function deliverPendingNpcHandoffs(sessionId: string, currentRound: number) {
+  const supabase = createServerClient();
+  const { data: promised, error } = await supabase
+    .from('game_events')
+    .select('id, npc_key, round, payload')
+    .eq('session_id', sessionId)
+    .eq('event_type', 'npc.handoff.promised')
+    .lt('round', currentRound);
+  if (error) throw new Error('HANDOFF_LOAD_FAILED');
+  const { data: sent, error: sentError } = await supabase
+    .from('game_events')
+    .select('id, npc_key, round, payload')
+    .eq('session_id', sessionId)
+    .eq('event_type', 'npc.handoff.sent');
+  if (sentError) throw new Error('HANDOFF_SENT_LOAD_FAILED');
+  const sentPromiseIds = new Set((sent ?? []).map((event) => String((event.payload as Record<string, unknown>)?.sourceEventId ?? '')));
+  for (const event of promised ?? []) {
+    if (sentPromiseIds.has(String(event.id))) continue;
+    const payload = event.payload as Record<string, unknown>;
+    await appendGameEvent(sessionId, currentRound, 'npc.handoff.sent', {
+      sourceEventId: event.id,
+      sourceNpcId: event.npc_key,
+      targetNpcId: payload.targetNpcId,
+      summary: payload.summary,
+    }, String(payload.targetNpcId));
+  }
+
+  const { data: received, error: receivedError } = await supabase
+    .from('game_events')
+    .select('payload')
+    .eq('session_id', sessionId)
+    .eq('event_type', 'npc.handoff.received');
+  if (receivedError) throw new Error('HANDOFF_RECEIVED_LOAD_FAILED');
+  const receivedSentIds = new Set((received ?? []).map((event) => String((event.payload as Record<string, unknown>)?.sourceEventId ?? '')));
+  for (const event of sent ?? []) {
+    if (event.round >= currentRound || receivedSentIds.has(String(event.id))) continue;
+    const payload = event.payload as Record<string, unknown>;
+    await appendGameEvent(sessionId, currentRound, 'npc.handoff.received', {
+      sourceEventId: event.id,
+      sourceNpcId: payload.sourceNpcId ?? event.npc_key,
+      targetNpcId: payload.targetNpcId,
+      summary: payload.summary,
+    }, String(payload.targetNpcId));
+  }
+}
+
+export async function getNpcInbox(sessionId: string, npcId: string): Promise<NpcInboxItem[]> {
+  const supabase = createServerClient();
+  const { data, error } = await supabase
+    .from('game_events')
+    .select('npc_key, round, payload')
+    .eq('session_id', sessionId)
+    .eq('event_type', 'npc.handoff.received')
+    .eq('npc_key', npcId)
+    .order('created_at', { ascending: false })
+    .limit(8);
+  if (error) throw new Error('NPC_INBOX_LOAD_FAILED');
+  return (data ?? []).map((event) => {
+    const payload = event.payload as Record<string, unknown>;
+    return { sourceNpcId: String(payload.sourceNpcId ?? 'unknown'), summary: String(payload.summary ?? ''), round: Number(event.round) };
+  });
 }
 
 export async function saveChatMessage(args: {

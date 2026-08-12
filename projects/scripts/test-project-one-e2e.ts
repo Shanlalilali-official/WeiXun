@@ -84,7 +84,7 @@ async function main() {
     login.token,
   );
   assert.equal(action.state.actionPoints, 25);
-  assert.equal(action.state.npcAffinity['p1-frontline-wang-hao'], 37);
+  assert.equal(action.state.npcAffinity['p1-frontline-wang-hao'], 38);
 
   for (let index = 0; index < 7; index += 1) {
     action = await jsonRequest<{ state: GameRuntimeState }>(
@@ -94,7 +94,7 @@ async function main() {
     );
   }
   assert.equal(action.state.actionPoints, 4);
-  assert.equal(action.state.npcAffinity['p1-frontline-wang-hao'], 51);
+  assert.equal(action.state.npcAffinity['p1-frontline-wang-hao'], 59);
   assert(!action.state.unlockedNpcIds.includes('p1-minister-chen-jianguo'));
 
   let reveal = await streamChat(

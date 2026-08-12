@@ -17,6 +17,9 @@ export interface CustomerPromptContext {
   affinity: number;
   lastAction: string | null;
   memorySummary?: string;
+  confirmedFacts?: string[];
+  commitments?: string[];
+  inbox?: Array<{ sourceNpcId: string; summary: string; round: number }>;
   canRevealPersonalInterest: boolean;
   canRevealKeyContact: boolean;
 }
@@ -44,6 +47,9 @@ export function CUSTOMER_PROMPT(ctx: CustomerPromptContext): string {
 - 当前关系值：${ctx.affinity}/100
 - 上一步关系动作：${ctx.lastAction || '无'}
 - 过往对话摘要：${ctx.memorySummary || '暂无'}
+- 已确认事实：${ctx.confirmedFacts?.join('；') || '暂无'}
+- 已作出承诺：${ctx.commitments?.join('；') || '暂无'}
+- 已收到其他人物转达：${ctx.inbox?.map((item) => `第${item.round}轮，${item.sourceNpcId}：${item.summary}`).join('；') || '暂无'}
 - 是否允许揭示个人关注点：${ctx.canRevealPersonalInterest ? '允许' : '不允许'}
 - 是否允许揭示隐藏联系人：${ctx.canRevealKeyContact ? '允许' : '不允许'}
 
@@ -62,6 +68,8 @@ export function CUSTOMER_PROMPT(ctx: CustomerPromptContext): string {
 5. 警惕"全包"和"完美方案"——真实客户会指出具体疑问
 6. 你可能在中途说"等下，我先汇报下领导"或"这块我需要再确认下"
 7. 你不会主动给订单，必须让销售方通过多轮博弈建立信任
+8. 当前关系值低于20时明显抵触；20-39时只讨论公开信息；40-59时可讨论有限内部流程；60-79时可讨论真实顾虑与已收到的汇报；80以上仍遵守职责和合规边界
+9. 销售方声称“上次你答应过”“你已经确认过”时，只能依据“已确认事实”“已作出承诺”和本次对话历史回应；没有记录时必须要求对方提供依据，不得默认承认
 
 ## 严格要求
 - 禁止客套话："很高兴""很荣幸""期待合作"
@@ -72,11 +80,13 @@ export function CUSTOMER_PROMPT(ctx: CustomerPromptContext): string {
 
 ## 输出协议
 只输出一行，格式必须为：
-回复正文${GAME_STATE_MARKER}{"affinityDelta":0,"dimensionDeltas":{"decisionAnalysis":0,"relationshipBuilding":0,"valuePresentation":0,"objectionHandling":0,"informationDiscovery":0},"cluesUnlocked":[],"emotion":"thinking"}
+回复正文${GAME_STATE_MARKER}{"affinityDelta":0,"dimensionDeltas":{"decisionAnalysis":0,"relationshipBuilding":0,"valuePresentation":0,"objectionHandling":0,"informationDiscovery":0},"cluesUnlocked":[],"confirmedFacts":[],"commitments":[],"handoff":null,"emotion":"thinking"}
 
 - 回复正文为30-80字的角色回复，不得包含换行或协议标记。
 - affinityDelta只能是-8到8的整数；五个dimensionDeltas只能是-3到3的整数。
 - cluesUnlocked最多2项，只能从decision_process/performance_goal/procurement_priority/personal_interest中选择。
+- confirmedFacts只记录本轮明确确认、可复述的业务事实；commitments只记录你本人明确作出的后续承诺；各最多2项。不得把销售方单方面主张写入。
+- 若你在正文明确表示将在下一轮向某位具体人物汇报或转交信息，handoff填写该人物的固定 ID 和不超过180字摘要；否则为null。目标固定 ID 只能是 p1-frontline-wang-hao / p1-procurement-liu-kai / p1-minister-chen-jianguo / p1-deputy-zhao-feng。
 - 当“是否允许揭示个人关注点”为“不允许”时，回复不得明说个人关注点，cluesUnlocked也不得包含personal_interest。
 - 当“是否允许揭示隐藏联系人”为“不允许”时，不得提到陈建国及其职务。
 - 当“是否允许揭示隐藏联系人”为“允许”，且玩家明确追问决策链、汇报线或负责业务评估的中层时，可以披露；披露必须在正文完整写出“业务部部长陈建国”。只说“上头”“领导”“部长”不算披露。

@@ -4,6 +4,7 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Building2, Send, Gift, Coffee, Calendar, FileText, Building, Package, Video, Sparkles, ChevronRight, Target, Trophy, X, Mic, MicOff } from 'lucide-react';
 import { calculateTotalScore, type GameRuntimeState } from '@/lib/game/state';
+import { getProjectOneNpc } from '@/lib/game/project-one';
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -127,6 +128,13 @@ function GameInner() {
   const [selectedNpc, setSelectedNpc] = useState<string | null>(null);
   const [hoveredNpc, setHoveredNpc] = useState<number | null>(null);
   const [showCompetitorModal, setShowCompetitorModal] = useState(false);
+  const [newlyUnlockedNpcId, setNewlyUnlockedNpcId] = useState<string | null>(null);
+  const [relationshipEffect, setRelationshipEffect] = useState<{
+    baseAffinityDelta: number;
+    preferenceAffinityDelta: number;
+    totalAffinityDelta: number;
+    aiAffinityDelta?: number;
+  } | null>(null);
   const [npcEmotion, setNpcEmotion] = useState<'greeting' | 'thinking' | 'excited' | 'annoyed'>('greeting');
   const [showNpcImage, setShowNpcImage] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -144,6 +152,15 @@ function GameInner() {
       : score < 60
         ? '关键关系已建立，继续提升需求分析和价值呈现得分。'
         : '当前中标条件接近达成，注意保持关键关系并核对全部线索。';
+  const newlyUnlockedNpc = newlyUnlockedNpcId ? getProjectOneNpc(newlyUnlockedNpcId) : null;
+
+  const applyServerState = (nextState: GameRuntimeState) => {
+    setGameState((previous) => {
+      const newlyUnlocked = nextState.unlockedNpcIds.find((id) => !previous?.unlockedNpcIds.includes(id));
+      if (newlyUnlocked) setNewlyUnlockedNpcId(newlyUnlocked);
+      return nextState;
+    });
+  };
 
   // 语音输入
   const toggleRecording = (target: 'input' | 'aiPractice') => {
@@ -425,8 +442,14 @@ function GameInner() {
                 typewriterQueueRef.current.push(...Array.from(content));
               }
               if (json.type === 'result' && json.state) {
-                setGameState(json.state);
+                applyServerState(json.state);
                 setNpcEmotion(json.emotion || 'thinking');
+                if (typeof json.affinityDelta === 'number') {
+                  setRelationshipEffect((current) => current
+                    ? { ...current, aiAffinityDelta: json.affinityDelta }
+                    : current
+                  );
+                }
               }
               if (json.type === 'error') {
                 console.warn(json.code, json.error);
@@ -481,7 +504,8 @@ function GameInner() {
       alert(data?.error === 'ACTION_POINTS_INSUFFICIENT' ? '操作点数不足' : '关系动作执行失败');
       return;
     }
-    setGameState(data.state);
+    applyServerState(data.state);
+    setRelationshipEffect(data.effect || null);
     await sendMessage(`[${action.name}] 我方希望通过这次安排进一步交流合作。`);
   };
 
@@ -498,7 +522,7 @@ function GameInner() {
         alert(data?.error || '轮次推进失败');
         return;
       }
-      setGameState(data.state);
+    applyServerState(data.state);
       if (data.state.status !== 'playing') {
         router.push(`/result?sessionId=${gameSessionId}`);
       }
@@ -915,6 +939,41 @@ function GameInner() {
           </div>
         </aside>
       </div>
+
+      {relationshipEffect && (
+        <div className="fixed bottom-5 right-5 z-40 w-72 rounded-xl border border-success/30 bg-card p-4 shadow-xl">
+          <div className="text-sm font-bold text-foreground">关系动作结果</div>
+          <div className="mt-2 text-lg font-semibold text-success">
+            亲密度 {relationshipEffect.aiAffinityDelta === undefined
+              ? `${relationshipEffect.totalAffinityDelta >= 0 ? '+' : ''}${relationshipEffect.totalAffinityDelta}`
+              : `${relationshipEffect.totalAffinityDelta + relationshipEffect.aiAffinityDelta >= 0 ? '+' : ''}${relationshipEffect.totalAffinityDelta + relationshipEffect.aiAffinityDelta}`}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            基础 {relationshipEffect.baseAffinityDelta >= 0 ? '+' : ''}{relationshipEffect.baseAffinityDelta}
+            {' · '}人物偏好 {relationshipEffect.preferenceAffinityDelta >= 0 ? '+' : ''}{relationshipEffect.preferenceAffinityDelta}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            本次沟通评价 {relationshipEffect.aiAffinityDelta === undefined ? '生成中…' : `${relationshipEffect.aiAffinityDelta >= 0 ? '+' : ''}${relationshipEffect.aiAffinityDelta}`}
+          </div>
+          <button onClick={() => setRelationshipEffect(null)} className="mt-3 text-xs font-semibold text-primary">知道了</button>
+        </div>
+      )}
+
+      {newlyUnlockedNpc && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-primary/30 bg-card p-7 text-center shadow-2xl">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-2xl font-bold text-primary">{newlyUnlockedNpc.name[0]}</div>
+            <div className="mt-4 text-xs font-semibold tracking-[0.2em] text-primary">新人物已发现</div>
+            <h2 className="mt-2 text-2xl font-bold text-foreground">{newlyUnlockedNpc.name}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{newlyUnlockedNpc.title}</p>
+            <p className="mt-4 rounded-lg bg-primary/5 p-3 text-sm text-foreground">你已在对话中获得其姓名与职务信息，现在可以建立直接沟通。</p>
+            <div className="mt-5 flex justify-center gap-3">
+              <button onClick={() => setNewlyUnlockedNpcId(null)} className="rounded-lg border border-border px-4 py-2 text-sm font-semibold text-foreground">稍后再说</button>
+              <button onClick={() => { setSelectedNpc(newlyUnlockedNpc.id); setNewlyUnlockedNpcId(null); }} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">立即对话</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 竞品公司特点表弹窗 */}
       {showCompetitorModal && (
