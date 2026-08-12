@@ -168,13 +168,13 @@ export async function POST(req: NextRequest) {
               round: state.currentRound,
               role: 'assistant',
               content: reply,
-              affinityDelta: evaluationResult.data.affinityDelta,
+              affinityDelta: evaluationResult.data.affinityDelta * gameSession.state.progressionMultiplier,
               scoreDelta,
               metadata: { ...evaluationResult.data, protocolValid: true },
             });
             await appendGameEvent(gameSessionId, state.currentRound, 'npc.turn.completed', {
               scoreDelta,
-              affinityDelta: evaluationResult.data.affinityDelta,
+              affinityDelta: evaluationResult.data.affinityDelta * gameSession.state.progressionMultiplier,
               cluesUnlocked: evaluationResult.data.cluesUnlocked,
             }, npcId);
             if (evaluationResult.data.handoff && /汇报|上报|转告|转达/.test(reply)) {
@@ -189,7 +189,7 @@ export async function POST(req: NextRequest) {
               type: 'result',
               state,
               emotion: evaluationResult.data.emotion,
-              affinityDelta: evaluationResult.data.affinityDelta,
+              affinityDelta: evaluationResult.data.affinityDelta * gameSession.state.progressionMultiplier,
             })));
           } else {
             await saveChatMessage({

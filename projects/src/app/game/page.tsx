@@ -552,6 +552,9 @@ function GameInner() {
             <span className="text-sm font-semibold text-foreground">{scene.name}</span>
           </div>
           <span className="text-[10px] px-2 py-0.5 rounded bg-primary/10 text-primary">第 {round} / {gameState?.maxRounds ?? 5} 轮</span>
+          {gameState && gameState.progressionMultiplier > 1 && (
+            <span className="text-[10px] px-2 py-0.5 rounded bg-success/10 text-success">快速验收 ×{gameState.progressionMultiplier}</span>
+          )}
           <span className="text-[10px] px-2 py-0.5 rounded bg-warning/10 text-warning">难度 ★ {scene.difficulty}</span>
         </div>
         <div className="flex items-center gap-3">

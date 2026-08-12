@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
 import { createGameSessionRequestSchema } from '@/lib/contracts/game';
 import { createGameSession } from '@/lib/game/repository';
+import { getProgressionMultiplier } from '@/lib/game/acceptance-mode';
 
 export const runtime = 'nodejs';
 
@@ -19,6 +20,7 @@ export async function POST(request: NextRequest) {
       guard.session.userId,
       guard.session.displayName,
       parsed.data.scenarioCode,
+      getProgressionMultiplier(guard.session.userId),
     );
     return NextResponse.json({ success: true, gameSession });
   } catch (error) {

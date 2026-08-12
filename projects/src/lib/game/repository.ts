@@ -1,4 +1,5 @@
 import { createServerClient } from '@/storage/database/supabase-client';
+import { getProgressionMultiplier } from '@/lib/game/acceptance-mode';
 import { calculateTotalScore, createProjectOneState, normalizeProjectOneState, reconcileNarrativeDiscoveries, type GameRuntimeState } from '@/lib/game/state';
 import type { GameReview } from '@/lib/contracts/game';
 
@@ -39,6 +40,7 @@ function toState(session: Record<string, unknown>, runtime: RuntimeStateRow): Ga
     rawStatus === 'won' || rawStatus === 'lost' ? rawStatus : 'playing';
   return normalizeProjectOneState({
     scenarioCode: runtime.scenario_code,
+    progressionMultiplier: 1,
     currentRound: Number(session.current_round),
     maxRounds: Number(session.max_round),
     actionPoints: runtime.action_points,
@@ -53,7 +55,7 @@ function toState(session: Record<string, unknown>, runtime: RuntimeStateRow): Ga
   });
 }
 
-export async function createGameSession(userId: string, displayName: string, scenarioCode: string) {
+export async function createGameSession(userId: string, displayName: string, scenarioCode: string, progressionMultiplier = 1) {
   if (scenarioCode !== 'project-1') throw new Error('SCENARIO_NOT_SUPPORTED');
   const supabase = createServerClient();
   const { data: scenario, error: scenarioError } = await supabase
@@ -63,7 +65,7 @@ export async function createGameSession(userId: string, displayName: string, sce
     .single();
   if (scenarioError || !scenario) throw new Error('SCENARIO_NOT_CONFIGURED');
 
-  const initialState = createProjectOneState();
+  const initialState = createProjectOneState(progressionMultiplier);
   const { data: session, error: sessionError } = await supabase
     .from('game_sessions')
     .insert({
@@ -121,7 +123,10 @@ export async function getOwnedGameSession(sessionId: string, userId: string): Pr
     .eq('session_id', sessionId)
     .single();
   if (runtimeError || !runtime) throw new Error('RUNTIME_STATE_NOT_FOUND');
-  let state = toState(session, runtime as RuntimeStateRow);
+  let state = {
+    ...toState(session, runtime as RuntimeStateRow),
+    progressionMultiplier: getProgressionMultiplier(userId),
+  };
   if (!state.unlockedClues.includes('key_contact')) {
     const { data: replies } = await supabase
       .from('chat_messages')

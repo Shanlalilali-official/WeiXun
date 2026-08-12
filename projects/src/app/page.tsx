@@ -318,6 +318,9 @@ export default function LoginPage() {
                 <div className="text-[11px] text-muted-foreground text-center pt-1">
                   预制账号 <span className="font-mono text-foreground">17805156105</span> / <span className="font-mono text-foreground">qwer1234</span> 可登录任意身份
                 </div>
+                <div className="text-[11px] text-primary text-center">
+                  快速验收账号 <span className="font-mono">fast_acceptance</span> / <span className="font-mono">fastpass</span>（新对局成长 ×3）
+                </div>
               </TabsContent>
             </Tabs>
 

@@ -51,6 +51,16 @@ assert.deepEqual(getRelationshipActionEffect('p1-deputy-zhao-feng', 'gift'), {
   totalAffinityDelta: 0,
 });
 
+const fastAcceptance = createProjectOneState(3);
+const fastAction = applyRelationshipAction(fastAcceptance, 'p1-frontline-wang-hao', 'tea');
+assert.equal(fastAction.actionPoints, 22, 'quick acceptance does not discount action-point costs');
+assert.equal(fastAction.npcAffinity['p1-frontline-wang-hao'], 53, 'quick acceptance triples affinity changes');
+assert.deepEqual(getRelationshipActionEffect('p1-frontline-wang-hao', 'tea', 3), {
+  baseAffinityDelta: 12,
+  preferenceAffinityDelta: 6,
+  totalAffinityDelta: 18,
+});
+
 let relationshipUnlocked = initial;
 for (let index = 0; index < 8; index += 1) {
   relationshipUnlocked = applyRelationshipAction(
@@ -85,6 +95,13 @@ assert.equal(evaluated.unlockedNpcIds.includes('p1-minister-chen-jianguo'), fals
 assert.equal(evaluated.dimensions.decisionAnalysis, 53);
 assert.deepEqual(evaluated.conversationMemories['p1-frontline-wang-hao']?.confirmedFacts, ['技术方案与商务报价分别评审']);
 assert.deepEqual(evaluated.conversationMemories['p1-frontline-wang-hao']?.commitments, ['下周三安排方案演示']);
+
+const fastEvaluated = applyNpcEvaluation(fastAcceptance, 'p1-frontline-wang-hao', evaluation({
+  affinityDelta: 2,
+  dimensionDeltas: { decisionAnalysis: 2, relationshipBuilding: 0, valuePresentation: 0, objectionHandling: 0, informationDiscovery: 0 },
+}));
+assert.equal(fastEvaluated.npcAffinity['p1-frontline-wang-hao'], 41);
+assert.equal(fastEvaluated.dimensions.decisionAnalysis, 56, 'quick acceptance triples dimension changes');
 
 const explicitlyRevealed = applyNpcEvaluation(relationshipUnlocked, 'p1-frontline-wang-hao', evaluation({
   affinityDelta: 0,

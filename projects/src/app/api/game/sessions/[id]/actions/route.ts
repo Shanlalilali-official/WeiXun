@@ -17,7 +17,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   const { id } = await context.params;
   try {
     const gameSession = await getOwnedGameSession(id, guard.session.userId);
-    const effect = getRelationshipActionEffect(parsed.data.npcId, parsed.data.actionId);
+    const effect = getRelationshipActionEffect(parsed.data.npcId, parsed.data.actionId, gameSession.state.progressionMultiplier);
     const changedState = applyRelationshipAction(gameSession.state, parsed.data.npcId, parsed.data.actionId);
     const state = await saveGameState(id, changedState);
     await appendGameEvent(id, state.currentRound, 'relationship.action', {

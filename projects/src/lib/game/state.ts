@@ -28,6 +28,7 @@ export interface ConversationMemory {
 
 export interface GameRuntimeState {
   scenarioCode: string;
+  progressionMultiplier: number;
   currentRound: number;
   maxRounds: number;
   actionPoints: number;
@@ -79,6 +80,7 @@ function deriveUnlockedNpcIds(
 export function normalizeProjectOneState(state: GameRuntimeState): GameRuntimeState {
   return {
     ...state,
+    progressionMultiplier: state.progressionMultiplier ?? 1,
     unlockedNpcIds: deriveUnlockedNpcIds(state.unlockedClues),
   };
 }
@@ -94,9 +96,10 @@ export function reconcileNarrativeDiscoveries(state: GameRuntimeState, assistant
   return { ...state, unlockedClues, unlockedNpcIds: deriveUnlockedNpcIds(unlockedClues) };
 }
 
-export function createProjectOneState(): GameRuntimeState {
+export function createProjectOneState(progressionMultiplier = 1): GameRuntimeState {
   return {
     scenarioCode: PROJECT_ONE_CODE,
+    progressionMultiplier,
     currentRound: 1,
     maxRounds: PROJECT_ONE_MAX_ROUNDS,
     actionPoints: PROJECT_ONE_INITIAL_ACTION_POINTS,
@@ -133,12 +136,12 @@ export function applyNpcEvaluation(
 
   const dimensions = { ...state.dimensions };
   for (const key of GAME_DIMENSIONS) {
-    dimensions[key] = clamp(dimensions[key] + evaluation.dimensionDeltas[key]);
+    dimensions[key] = clamp(dimensions[key] + evaluation.dimensionDeltas[key] * state.progressionMultiplier);
   }
 
   const npcAffinity = {
     ...state.npcAffinity,
-    [npcId]: clamp((state.npcAffinity[npcId] ?? 35) + evaluation.affinityDelta),
+    [npcId]: clamp((state.npcAffinity[npcId] ?? 35) + evaluation.affinityDelta * state.progressionMultiplier),
   };
   const acceptedClues: ProjectOneClue[] = evaluation.cluesUnlocked.filter(
     (clue) => clue !== 'personal_interest' || npcAffinity[npcId] >= 50,
@@ -168,7 +171,7 @@ export function applyRelationshipAction(
   if (!action) throw new Error('ACTION_UNKNOWN');
   if (state.actionPoints < action.cost) throw new Error('ACTION_POINTS_INSUFFICIENT');
 
-  const effect = getRelationshipActionEffect(npcId, actionId);
+  const effect = getRelationshipActionEffect(npcId, actionId, state.progressionMultiplier);
   const npcAffinity = {
     ...state.npcAffinity,
     [npcId]: clamp((state.npcAffinity[npcId] ?? 35) + effect.totalAffinityDelta),
@@ -183,16 +186,16 @@ export function applyRelationshipAction(
   };
 }
 
-export function getRelationshipActionEffect(npcId: string, actionId: string): RelationshipActionEffect {
+export function getRelationshipActionEffect(npcId: string, actionId: string, progressionMultiplier = 1): RelationshipActionEffect {
   const action = RELATIONSHIP_ACTIONS[actionId];
   if (!action) throw new Error('ACTION_UNKNOWN');
   const npc = getProjectOneNpc(npcId);
   if (!npc) throw new Error('NPC_UNKNOWN');
   const preferenceAffinityDelta = npc.actionPreferences[actionId] ?? 0;
   return {
-    baseAffinityDelta: action.affinityGain,
-    preferenceAffinityDelta,
-    totalAffinityDelta: action.affinityGain + preferenceAffinityDelta,
+    baseAffinityDelta: action.affinityGain * progressionMultiplier,
+    preferenceAffinityDelta: preferenceAffinityDelta * progressionMultiplier,
+    totalAffinityDelta: (action.affinityGain + preferenceAffinityDelta) * progressionMultiplier,
   };
 }
 

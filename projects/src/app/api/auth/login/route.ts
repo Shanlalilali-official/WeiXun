@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createSession, type Role, type SubRole } from '@/lib/auth/identity';
+import { FAST_ACCEPTANCE_ACCOUNT } from '@/lib/game/acceptance-mode';
 
 export const runtime = 'nodejs';
 
@@ -49,6 +50,9 @@ export async function POST(request: NextRequest) {
       if (username && password) {
         if (password.length < 4) {
           return NextResponse.json({ error: '密码错误' }, { status: 400 });
+        }
+        if (username === FAST_ACCEPTANCE_ACCOUNT.username && password !== FAST_ACCEPTANCE_ACCOUNT.password) {
+          return NextResponse.json({ error: '快速验收账号密码错误' }, { status: 400 });
         }
         const userId = `u_${username}`;
         return NextResponse.json({ success: true, userId, needSelectRole: true });
