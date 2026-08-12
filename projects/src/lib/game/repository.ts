@@ -1,5 +1,5 @@
 import { createServerClient } from '@/storage/database/supabase-client';
-import { calculateTotalScore, createProjectOneState, type GameRuntimeState } from '@/lib/game/state';
+import { calculateTotalScore, createProjectOneState, normalizeProjectOneState, type GameRuntimeState } from '@/lib/game/state';
 import type { GameReview } from '@/lib/contracts/game';
 
 export interface StoredChatMessage {
@@ -31,7 +31,7 @@ function toState(session: Record<string, unknown>, runtime: RuntimeStateRow): Ga
   const rawStatus = String(session.status);
   const status: GameRuntimeState['status'] =
     rawStatus === 'won' || rawStatus === 'lost' ? rawStatus : 'playing';
-  return {
+  return normalizeProjectOneState({
     scenarioCode: runtime.scenario_code,
     currentRound: Number(session.current_round),
     maxRounds: Number(session.max_round),
@@ -44,7 +44,7 @@ function toState(session: Record<string, unknown>, runtime: RuntimeStateRow): Ga
     conversationMemories: runtime.conversation_memories,
     lastAction: runtime.last_action,
     version: runtime.version,
-  };
+  });
 }
 
 export async function createGameSession(userId: string, displayName: string, scenarioCode: string) {

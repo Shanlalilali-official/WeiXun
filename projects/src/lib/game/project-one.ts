@@ -6,7 +6,8 @@ export type ProjectOneClue =
   | 'decision_process'
   | 'performance_goal'
   | 'procurement_priority'
-  | 'personal_interest';
+  | 'personal_interest'
+  | 'key_contact';
 
 export interface ProjectOneNpc {
   id: string;

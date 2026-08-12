@@ -28,7 +28,7 @@ for (let index = 0; index < 8; index += 1) {
   );
 }
 assert.equal(relationshipUnlocked.npcAffinity['p1-frontline-wang-hao'], 51);
-assert.equal(relationshipUnlocked.unlockedNpcIds.includes('p1-minister-chen-jianguo'), true);
+assert.equal(relationshipUnlocked.unlockedNpcIds.includes('p1-minister-chen-jianguo'), false);
 
 assert.throws(
   () => applyRelationshipAction({ ...initial, actionPoints: 0 }, 'p1-frontline-wang-hao', 'gift'),
@@ -47,8 +47,23 @@ const evaluated = applyNpcEvaluation(initial, 'p1-frontline-wang-hao', {
   cluesUnlocked: ['decision_process'],
   emotion: 'excited',
 });
-assert.equal(evaluated.unlockedNpcIds.includes('p1-minister-chen-jianguo'), true);
+assert.equal(evaluated.unlockedNpcIds.includes('p1-minister-chen-jianguo'), false);
 assert.equal(evaluated.dimensions.decisionAnalysis, 53);
+
+const explicitlyRevealed = applyNpcEvaluation(relationshipUnlocked, 'p1-frontline-wang-hao', {
+  affinityDelta: 0,
+  dimensionDeltas: {
+    decisionAnalysis: 0,
+    relationshipBuilding: 0,
+    valuePresentation: 0,
+    objectionHandling: 0,
+    informationDiscovery: 0,
+  },
+  cluesUnlocked: ['decision_process'],
+  emotion: 'thinking',
+}, '业务评估先找业务部部长陈建国，他汇总意见后再往上报。');
+assert.equal(explicitlyRevealed.unlockedClues.includes('key_contact'), true);
+assert.equal(explicitlyRevealed.unlockedNpcIds.includes('p1-minister-chen-jianguo'), true);
 
 const prematurePersonalClue = applyNpcEvaluation(initial, 'p1-frontline-wang-hao', {
   affinityDelta: 0,
@@ -72,7 +87,7 @@ losingState = advanceRound(losingState);
 assert.equal(losingState.status, 'lost');
 
 let winningState: GameRuntimeState = {
-  ...evaluated,
+  ...explicitlyRevealed,
   dimensions: {
     decisionAnalysis: 70,
     relationshipBuilding: 70,
@@ -80,7 +95,7 @@ let winningState: GameRuntimeState = {
     objectionHandling: 70,
     informationDiscovery: 70,
   },
-  npcAffinity: { ...evaluated.npcAffinity, 'p1-minister-chen-jianguo': 50 },
+  npcAffinity: { ...explicitlyRevealed.npcAffinity, 'p1-minister-chen-jianguo': 50 },
   currentRound: 5,
 };
 winningState = advanceRound(winningState);

@@ -18,6 +18,7 @@ export interface CustomerPromptContext {
   lastAction: string | null;
   memorySummary?: string;
   canRevealPersonalInterest: boolean;
+  canRevealKeyContact: boolean;
 }
 
 export const GAME_STATE_MARKER = '__GAME_STATE__';
@@ -44,6 +45,7 @@ export function CUSTOMER_PROMPT(ctx: CustomerPromptContext): string {
 - 上一步关系动作：${ctx.lastAction || '无'}
 - 过往对话摘要：${ctx.memorySummary || '暂无'}
 - 是否允许揭示个人关注点：${ctx.canRevealPersonalInterest ? '允许' : '不允许'}
+- 是否允许揭示隐藏联系人：${ctx.canRevealKeyContact ? '允许' : '不允许'}
 
 ## 你的沟通风格
 - 真实政企客户：直接、问具体问题、不绕弯子、不空谈
@@ -76,6 +78,8 @@ export function CUSTOMER_PROMPT(ctx: CustomerPromptContext): string {
 - affinityDelta只能是-8到8的整数；五个dimensionDeltas只能是-3到3的整数。
 - cluesUnlocked最多2项，只能从decision_process/performance_goal/procurement_priority/personal_interest中选择。
 - 当“是否允许揭示个人关注点”为“不允许”时，回复不得明说个人关注点，cluesUnlocked也不得包含personal_interest。
+- 当“是否允许揭示隐藏联系人”为“不允许”时，不得提到陈建国及其职务。
+- 当“是否允许揭示隐藏联系人”为“允许”，且玩家明确追问决策链、汇报线或负责业务评估的中层时，可以披露；披露必须在正文完整写出“业务部部长陈建国”。只说“上头”“领导”“部长”不算披露。
 - emotion只能是greeting/thinking/excited/annoyed之一。
 - JSON之后不得输出任何内容。`;
 }

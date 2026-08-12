@@ -87,6 +87,7 @@ export async function POST(req: NextRequest) {
     lastAction: gameSession.state.lastAction,
     memorySummary: memory?.summary,
     canRevealPersonalInterest: (gameSession.state.npcAffinity[npcId] ?? 35) >= 50,
+    canRevealKeyContact: (gameSession.state.npcAffinity[npcId] ?? 35) >= 50,
   });
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
@@ -153,7 +154,7 @@ export async function POST(req: NextRequest) {
           const evaluationResult = npcTurnEvaluationSchema.safeParse(evaluation);
           if (evaluationResult.success) {
             const previousScore = calculateTotalScore(gameSession.state.dimensions);
-            const changedState = applyNpcEvaluation(gameSession.state, npcId, evaluationResult.data);
+            const changedState = applyNpcEvaluation(gameSession.state, npcId, evaluationResult.data, reply);
             let state = await saveGameState(gameSessionId, changedState);
             const scoreDelta = calculateTotalScore(state.dimensions) - previousScore;
             await saveChatMessage({

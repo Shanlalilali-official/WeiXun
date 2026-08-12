@@ -6,6 +6,8 @@ Windows 人工验收可直接双击仓库根目录 `start-project.bat`；服务�
 
 项目已脱离 Coze 运行时。应用使用标准 Node/Next.js、通用 OpenAI 兼容 AI Provider 和托管 Supabase。项目一真实数据库、真实模型 E2E、浏览器关键路径和生产构建均已通过；剩余问题以 `harness/issues/ISSUE_REGISTER.md` 为准。
 
+隐藏人物不能再由亲密度直接解锁：亲密度达到 50 只开放披露资格，AI 正文明确出现“业务部部长陈建国”后才写入 `key_contact` 并显示节点。不要恢复旧的亲密度直接解锁逻辑。
+
 ## 下一位执行者
 
 1. 阅读 `harness/STATE.md` 和 `harness/issues/ISSUE_REGISTER.md`。

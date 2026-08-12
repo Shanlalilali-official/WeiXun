@@ -58,18 +58,24 @@ export const RELATIONSHIP_ACTIONS: Record<string, RelationshipAction> = {
 const clamp = (value: number, min = 0, max = 100) => Math.max(min, Math.min(max, value));
 
 function deriveUnlockedNpcIds(
-  unlockedNpcIds: string[],
   unlockedClues: ProjectOneClue[],
-  npcAffinity: Record<string, number>,
 ): string[] {
-  const next = [...unlockedNpcIds];
-  const shouldUnlockMinister =
-    unlockedClues.includes('decision_process') ||
-    Object.values(npcAffinity).some((affinity) => affinity >= 50);
-  if (shouldUnlockMinister && !next.includes('p1-minister-chen-jianguo')) {
+  const next = PROJECT_ONE_NPCS.filter((npc) => npc.initiallyVisible).map((npc) => npc.id);
+  if (unlockedClues.includes('key_contact')) {
     next.push('p1-minister-chen-jianguo');
   }
   return next;
+}
+
+export function normalizeProjectOneState(state: GameRuntimeState): GameRuntimeState {
+  return {
+    ...state,
+    unlockedNpcIds: deriveUnlockedNpcIds(state.unlockedClues),
+  };
+}
+
+function explicitlyRevealsMinister(replyContent: string): boolean {
+  return replyContent.includes('陈建国') && /业务部部长|业务部长|陈部长/.test(replyContent);
 }
 
 export function createProjectOneState(): GameRuntimeState {
@@ -104,6 +110,7 @@ export function applyNpcEvaluation(
   state: GameRuntimeState,
   npcId: string,
   evaluation: NpcTurnEvaluation,
+  replyContent = '',
 ): GameRuntimeState {
   if (state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
   if (!state.unlockedNpcIds.includes(npcId)) throw new Error('NPC_LOCKED');
@@ -117,11 +124,12 @@ export function applyNpcEvaluation(
     ...state.npcAffinity,
     [npcId]: clamp((state.npcAffinity[npcId] ?? 35) + evaluation.affinityDelta),
   };
-  const acceptedClues = evaluation.cluesUnlocked.filter(
+  const acceptedClues: ProjectOneClue[] = evaluation.cluesUnlocked.filter(
     (clue) => clue !== 'personal_interest' || npcAffinity[npcId] >= 50,
   );
+  if (explicitlyRevealsMinister(replyContent)) acceptedClues.push('key_contact');
   const unlockedClues = Array.from(new Set([...state.unlockedClues, ...acceptedClues]));
-  const unlockedNpcIds = deriveUnlockedNpcIds(state.unlockedNpcIds, unlockedClues, npcAffinity);
+  const unlockedNpcIds = deriveUnlockedNpcIds(unlockedClues);
 
   return { ...state, dimensions, npcAffinity, unlockedClues, unlockedNpcIds };
 }
@@ -146,7 +154,7 @@ export function applyRelationshipAction(
     ...state,
     actionPoints: state.actionPoints - action.cost,
     npcAffinity,
-    unlockedNpcIds: deriveUnlockedNpcIds(state.unlockedNpcIds, state.unlockedClues, npcAffinity),
+    unlockedNpcIds: deriveUnlockedNpcIds(state.unlockedClues),
     lastAction: actionId,
   };
 }

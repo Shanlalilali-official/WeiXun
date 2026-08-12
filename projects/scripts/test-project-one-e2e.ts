@@ -23,7 +23,7 @@ async function jsonRequest<T>(path: string, init: RequestInit = {}, token?: stri
   return payload;
 }
 
-async function streamChat(token: string, npcId: string) {
+async function streamChat(token: string, npcId: string, message: string) {
   const response = await fetch(`${baseUrl}/api/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-session': token },
@@ -31,7 +31,7 @@ async function streamChat(token: string, npcId: string) {
       gameSessionId: sessionId,
       scenarioId: 'project-1',
       npcId,
-      message: '请介绍这个项目当前的决策流程，以及你最关注的工作目标。',
+      message,
     }),
   });
   assert.equal(response.status, 200);
@@ -39,11 +39,16 @@ async function streamChat(token: string, npcId: string) {
   const events = body
     .split(/\r?\n/)
     .filter((line) => line.startsWith('data: ') && line !== 'data: [DONE]')
-    .map((line) => JSON.parse(line.slice(6)) as { type: string; code?: string; content?: string; state?: unknown });
+    .map((line) => JSON.parse(line.slice(6)) as { type: string; code?: string; content?: string; state?: GameRuntimeState });
   const error = events.find((event) => event.type === 'error');
   if (error) throw new Error(`CHAT_STREAM_${error.code || 'ERROR'}`);
   assert(events.some((event) => event.type === 'delta' && event.content));
-  assert(events.some((event) => event.type === 'result' && event.state));
+  const result = events.find((event) => event.type === 'result' && event.state);
+  assert(result?.state);
+  return {
+    content: events.map((event) => event.content || '').join(''),
+    state: result.state,
+  };
 }
 
 async function cleanup() {
@@ -90,9 +95,24 @@ async function main() {
   }
   assert.equal(action.state.actionPoints, 4);
   assert.equal(action.state.npcAffinity['p1-frontline-wang-hao'], 51);
-  assert(action.state.unlockedNpcIds.includes('p1-minister-chen-jianguo'));
+  assert(!action.state.unlockedNpcIds.includes('p1-minister-chen-jianguo'));
 
-  await streamChat(login.token, 'p1-frontline-wang-hao');
+  let reveal = await streamChat(
+    login.token,
+    'p1-frontline-wang-hao',
+    '我们的关系已经建立了。请明确告诉我负责业务评估的中层姓名、职务，以及他在汇报流程中的位置。',
+  );
+  if (!reveal.state.unlockedNpcIds.includes('p1-minister-chen-jianguo')) {
+    reveal = await streamChat(
+      login.token,
+      'p1-frontline-wang-hao',
+      '不要只说领导或上头，请把负责业务评估的中层姓名和完整职务告诉我。',
+    );
+  }
+  assert.match(reveal.content, /陈建国/);
+  assert.match(reveal.content, /业务部部长|业务部长|陈部长/);
+  assert(reveal.state.unlockedClues.includes('key_contact'));
+  assert(reveal.state.unlockedNpcIds.includes('p1-minister-chen-jianguo'));
 
   const firstHistory = await jsonRequest<{ messages: unknown[] }>(
     `/api/game/sessions/${sessionId}/messages?npcId=p1-frontline-wang-hao`,
