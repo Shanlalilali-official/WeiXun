@@ -169,6 +169,29 @@ function GameInner() {
     });
   };
 
+  const replenishActionPoints = async () => {
+    if (!gameSessionId || !gameState || gameState.progressionMultiplier <= 1) return;
+    const rawAmount = window.prompt('输入要补充的行动点（1 - 999）', '30');
+    if (rawAmount === null) return;
+    const amount = Number(rawAmount);
+    if (!Number.isInteger(amount) || amount < 1 || amount > 999) {
+      alert('请输入 1 到 999 的整数。');
+      return;
+    }
+    const token = localStorage.getItem('weixun_session') || '';
+    const response = await fetch(`/api/game/sessions/${gameSessionId}/action-points`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-session': token },
+      body: JSON.stringify({ amount }),
+    });
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      alert(data?.error || '行动点补充失败');
+      return;
+    }
+    applyServerState(data.state);
+  };
+
   // 语音输入
   const toggleRecording = (target: 'input' | 'aiPractice') => {
     if (typeof window === 'undefined') return;
@@ -570,6 +593,15 @@ function GameInner() {
             <Sparkles className="w-3.5 h-3.5 text-warning" />
             <span className="text-foreground font-semibold">{coins}</span>
           </div>
+          {gameState && gameState.progressionMultiplier > 1 && (
+            <button
+              onClick={replenishActionPoints}
+              disabled={streaming || advancing || !gameSessionId}
+              className="rounded border border-success/30 bg-success/10 px-2 py-1 text-[10px] font-semibold text-success hover:bg-success/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              补行动点
+            </button>
+          )}
           <button
             onClick={advanceGame}
             disabled={advancing || streaming || !gameSessionId}

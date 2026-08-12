@@ -186,6 +186,12 @@ export function applyRelationshipAction(
   };
 }
 
+export function replenishActionPoints(state: GameRuntimeState, amount: number): GameRuntimeState {
+  if (state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
+  if (!Number.isInteger(amount) || amount < 1 || amount > 999) throw new Error('ACTION_POINTS_AMOUNT_INVALID');
+  return { ...state, actionPoints: state.actionPoints + amount };
+}
+
 export function getRelationshipActionEffect(npcId: string, actionId: string, progressionMultiplier = 1): RelationshipActionEffect {
   const action = RELATIONSHIP_ACTIONS[actionId];
   if (!action) throw new Error('ACTION_UNKNOWN');

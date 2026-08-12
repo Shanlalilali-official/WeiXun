@@ -3,6 +3,7 @@ import {
   advanceRound,
   applyNpcEvaluation,
   applyRelationshipAction,
+  replenishActionPoints,
   calculateTotalScore,
   createProjectOneState,
   getRelationshipActionEffect,
@@ -55,6 +56,8 @@ const fastAcceptance = createProjectOneState(3);
 const fastAction = applyRelationshipAction(fastAcceptance, 'p1-frontline-wang-hao', 'tea');
 assert.equal(fastAction.actionPoints, 22, 'quick acceptance does not discount action-point costs');
 assert.equal(fastAction.npcAffinity['p1-frontline-wang-hao'], 53, 'quick acceptance triples affinity changes');
+assert.equal(replenishActionPoints(fastAcceptance, 30).actionPoints, 58, 'quick acceptance can replenish action points');
+assert.throws(() => replenishActionPoints(fastAcceptance, 0), /ACTION_POINTS_AMOUNT_INVALID/);
 assert.deepEqual(getRelationshipActionEffect('p1-frontline-wang-hao', 'tea', 3), {
   baseAffinityDelta: 12,
   preferenceAffinityDelta: 6,
