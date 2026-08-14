@@ -13,6 +13,13 @@ function loadEnv(): void {
   if (envLoaded) return;
   dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: false, quiet: true });
   dotenv.config({ path: path.resolve(process.cwd(), '.env'), override: false, quiet: true });
+  // The custom Node entrypoint can be launched from the workspace root during
+  // desktop validation. Fall back to the application subdirectory so the
+  // server still uses the same configured Supabase project as direct scripts.
+  if (!process.env.SUPABASE_URL) {
+    dotenv.config({ path: path.resolve(process.cwd(), 'projects', '.env.local'), override: false, quiet: true });
+    dotenv.config({ path: path.resolve(process.cwd(), 'projects', '.env'), override: false, quiet: true });
+  }
   envLoaded = true;
 }
 

@@ -171,6 +171,13 @@ export const gameRuntimeStates = pgTable("game_runtime_states", {
 	unlockedNpcIds: jsonb("unlocked_npc_ids").default([]).notNull(),
 	unlockedClues: jsonb("unlocked_clues").default([]).notNull(),
 	conversationMemories: jsonb("conversation_memories").default({}).notNull(),
+	phaseStartedAt: timestamp("phase_started_at", { withTimezone: true, mode: 'string' }),
+	phaseEndsAt: timestamp("phase_ends_at", { withTimezone: true, mode: 'string' }),
+	pausedAt: timestamp("paused_at", { withTimezone: true, mode: 'string' }),
+	pausedRemainingMs: integer("paused_remaining_ms"),
+	npcContacts: jsonb("npc_contacts").default({}).notNull(),
+	activeMeeting: jsonb("active_meeting"),
+	simulationState: jsonb("simulation_state").default({}).notNull(),
 	lastAction: varchar("last_action", { length: 64 }),
 	version: integer().default(1).notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
@@ -181,6 +188,28 @@ export const gameRuntimeStates = pgTable("game_runtime_states", {
 		name: "game_runtime_states_session_id_game_sessions_id_fk"
 	}).onDelete("cascade"),
 	pgPolicy("game_runtime_states_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
+]);
+
+export const gameCommandRecords = pgTable("game_command_records", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	sessionId: uuid("session_id").notNull(),
+	commandId: varchar("command_id", { length: 128 }).notNull(),
+	commandType: varchar("command_type", { length: 64 }).notNull(),
+	status: varchar({ length: 16 }).default('pending').notNull(),
+	request: jsonb().default({}).notNull(),
+	response: jsonb(),
+	errorCode: varchar("error_code", { length: 64 }),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	unique("game_command_records_session_command_unique").on(table.sessionId, table.commandId),
+	index("game_command_records_session_idx").using("btree", table.sessionId.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+		columns: [table.sessionId],
+		foreignColumns: [gameSessions.id],
+		name: "game_command_records_session_id_game_sessions_id_fk"
+	}).onDelete("cascade"),
+	pgPolicy("game_command_records_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 export const gameEvents = pgTable("game_events", {
