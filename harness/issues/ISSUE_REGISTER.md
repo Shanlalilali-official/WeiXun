@@ -10,7 +10,7 @@
 | BASE-003 | P0 | Blocked | 本地 schema 与 API 实际用表不一致 | 已生成 17 表迁移；仍有 10 张历史 API 引用表未建模（清单见 BASE-008），需逐功能核验 |
 | BASE-004 | P0 | Resolved | 完整固定纵向冒烟已通过 | `pnpm test:e2e` 覆盖建局、对话、隔离、恢复、关系动作、五轮结算和复盘 |
 | BASE-006 | P2 | Open | ESLint 全量扫描慢 | 分析扫描范围并建立增量策略 |
-| BASE-007 | P2 | Open | 全量 ESLint 存在 29 个历史错误 | 均为 `no-explicit-any`，集中在延期后台（coach/enterprise/game-data）与排行/设计师页面；本次改动文件 lint 已通过 |
+| BASE-007 | P2 | Resolved | 全量 ESLint 存在 29 个历史错误 | 已清零：延期后台路由重写移除 19 处 + 排行/设计师页面改为具体类型 10 处；`eslint . --quiet` 0 error |
 | AI-003 | P0 | Resolved | NPC 消息持久化与刷新恢复已验证 | API 纵向测试与浏览器刷新后对话恢复均通过 |
 | AI-005 | P0 | Open | 长对话滚动摘要未接入运行链路，接入后还会丢失事实/承诺账本 | `refreshConversationMemory` 当前没有调用方；其写回 `conversationMemories[npcId]` 时未保留 `confirmedFacts`、`commitments`。需接入聊天提交后的可靠异步/同步流程，合并现有记忆字段并补长对话回归 |
 | AI-007 | P0 | Resolved | 真实模型 NPC 状态与复盘结构化协议已验证 | 发现复盘偶发 502 后增加 JSON 模式、严格约束与一次纠正重试；纵向回归通过 |
@@ -40,16 +40,16 @@
 | SCORE-002 | P1 | Blocked | C0 中 A314 引用与括号权重疑似错误 | 检测测试已确认；业务含义需公式负责人确认 |
 | ENV-002 | P1 | Resolved | 已采用无需 Docker 的托管 Supabase 流程 | CLI 已安装、项目已关联、迁移已推送且远程查询成功 |
 | ENV-005 | P1 | Resolved | Windows 重启后缺少可发现的一键启动入口 | 根目录新增 `start-project.bat`，覆盖配置、依赖、端口和构建检查，启动后自动打开浏览器 |
-| GOV-003 | P0 | Open | 7448 行改动与 10 个未跟踪路径（含 3 个迁移文件）尚未提交 | 最后提交 2026-08-12 14:52；迁移文件丢失会让托管库与代码永久不一致。下一步：按工作项分批提交，优先迁移与新增路由 |
-| AUTH-002 | P0 | Open | 认证无信任边界，可自封任意角色并接管他人存档 | `select_role` 无凭证签发任意角色 token（login/route.ts:63-89）；token 为无签名 base64（identity.ts:97-105）；18 个路由无 authGuard 且无 middleware.ts；`authGuard` 的 requiredPermission 17 处均未传。RLS 仅 3/17 表收紧，其余 permissive allow-all。下一步：签名校验 + 关闭 select_role + 全路由守卫 |
+| GOV-003 | P0 | Resolved | 7448 行改动与 10 个未跟踪路径（含 3 个迁移文件）尚未提交 | 已按工作项分 5 个 commit 提交（docs(harness)/feat(db)/feat(game)/chore(dev)/refactor(dev)），3 个迁移入库，工作区干净 |
+| AUTH-002 | P0 | Resolved | 认证无信任边界，可自封任意角色并接管他人存档 | session token 改用 HMAC-SHA256 签名，`getSession` 验签不再信任无签名 base64；`select_role` 需验签 loginToken 后按 token.userId 签发；coach/enterprise 16 路由与 game-data 写接口加 authGuard。伪造 token 与未认证访问实测 401。角色细分仍留待正式认证（AUTH-001） |
 | GAME-013 | P0 | Open | 全部随机数由客户端 commandId 播种，合规审计与邀约/礼品结果可离线枚举 | `shouldNpcRespond` 为确定性 FNV-1a（state.ts:1048），种子含客户端 commandId（1280/1499-1508/923/1553）。实测 cmd-14 使 10% 邀约通过、gift-36 使 severity-5 礼品躲过全部审计且合规扣分恒 0。下一步：改服务端不可预测种子 |
 | AI-016 | P0 | Open | 评分提示词与 Zod schema 多处不一致，是协议失败反复发生的机械原因 | riskReason 必填但提示词未提（ai.ts:55 vs npc-evaluation.ts:90）；dimensionDeltas 需英文 key 但提示词只给中文；semanticFlags 6 布尔未列；长度上限 schema 有提示词无；无 JSON 示例；parseEvaluation 丢弃 parsed.error（:301）。下一步：对齐 schema + 输出示例 + 保留错误 |
 | AI-017 | P0 | Open | 玩家文本可注入 system prompt 并绕过隐藏人物解锁门槛 | preparedItems.title 直插 system prompt（customer.ts:80）；key_contact 解锁只靠回复正则、无服务端 support≥50 门槛（state.ts:585/427-430）。下一步：转义/隔离玩家文本 + 服务端复核解锁 |
 | AI-018 | P1 | Open | AI 输出未校验即持久化并决定结算/合规 | confirmedFacts/commitments 只去重 slice(-12) 即作为权威 system text（state.ts:588-589）；publicValueEvidence 无过滤；模型 severity 直接 ×3 成合规扣分、disposition 决定 triggered/latent（state.ts:1547-1559）。下一步：确定性校验/来源核对后再入库 |
 | GAME-014 | P1 | Open | 模拟时间与合规存在多处边界缺陷 | 17:00 后分钟双重计费（state.ts:662 用 minutes 而非 regularMinutes）；晚间非正式占用白天额度（1214-1215）；18:00 边界可绕过每日一次（1235/1264）；advance_phase 第 5 轮双审计（1156+955）。下一步：逐项修复并补边界回归 |
 | SCORE-003 | P1 | Open | 结算证据单句双计分、strength 死代码 | 绩效/个人绩效正则子集使一句同时计入对公+个人两维度（state.ts:591-596）；evidence 声明为 string[] 致 strength 恒 2（ai.ts:96-97），两维度退化为条目数阶梯。下一步：修复正则互斥 + 恢复对象证据强度 |
-| BASE-008 | P1 | Open | 10 张幻影表 + 列名不匹配 + 部分路由静默吞错 | API 引用但任何迁移都不存在：game_rooms/game_groups/project_difficulties/competitor_profiles/npc_profiles/scenario_locks/game_initiations/coach_history/enterprise_history/enterprise_customizations；enterprise/players 写不存在的 username 列、coach/players 查不存在的 game_sessions 列；7 个路由吞错返回 200 空数组。下一步：按功能核验建表或删路由 |
-| ENV-006 | P1 | Open | 一键启动不检测陈旧构建 | start-project.bat:55-57 只判存在；实测 .next/BUILD_ID 为 8/13、13 个源文件更新至 8/14 12:34，双击会启动过期代码。下一步：按源文件 mtime 判陈旧并强制重建 |
+| BASE-008 | P1 | Resolved | 10 张幻影表 + 列名不匹配 + 部分路由静默吞错 | coach/enterprise 16 路由与 game-data 幻影路径统一 501「功能未实现」，不再查询未建表或回传 `error.message`；保留 npcs/competitors 的 project_id=1 真实分支（可用游戏依赖），无表名泄漏 |
+| ENV-006 | P1 | Resolved | 一键启动不检测陈旧构建 | 2026-08-14：启动器按源码/配置与 `.next/BUILD_ID`、`dist/server.js` 的 mtime 判断陈旧并强制重建；增加数据库预检、带构建号的启动健康检查及端口自动回退。生产构建通过；5000 被旧服务占用时实测自动启动到 5001，`/api/health/startup` 返回当前 buildId 与 `database=ok` |
 | UX-003 | P1 | Open | 假页面在全局主导航且存在假成功提示 | /room、/knowledge 全静态且在 app-shell 主导航；/home /ranking /coach /enterprise-admin /designer 假数据或 alert 不校验 res.ok。下一步：诚实禁用或摘除导航，后台按 BASE-008 建模 |
 
 ## 已知延期

@@ -18,9 +18,15 @@
 - AI 输出未校验即持久化（AI-018）：confirmedFacts/commitments 只去重 slice(-12) 即成为权威 system text；publicValueEvidence 无过滤；模型 severity 直接 ×3 成合规扣分。
 - 模拟时间边界缺陷（GAME-014）：17:00 后分钟双重计费、晚间非正式占用白天额度、18:00 边界可绕过“每日一次”、advance_phase 第 5 轮双审计。
 - 结算缺陷（SCORE-003）：一句同时含“绩效”与“个人绩效”时同时计入对公+个人两维度；evidence 声明为 string[] 致 strength 恒 2，两维度退化为条目数阶梯。
-- 10 张幻影表 + 列名不匹配 + 部分路由静默吞错（BASE-008）；全量 ESLint 实测 29 个 `no-explicit-any`（BASE-007）；`start-project.bat` 不检测陈旧构建（ENV-006），实测 .next/BUILD_ID 落后于 13 个源文件。
+- 10 张幻影表 + 列名不匹配 + 部分路由静默吞错（BASE-008）；全量 ESLint 实测 29 个 `no-explicit-any`（BASE-007）；`start-project.bat` 曾不检测陈旧构建（ENV-006，已于 2026-08-14 修复并实测）。
 - 台账校正：AI-010（跨 NPC 传话）与 AI-005（滚动摘要）此前标记已实现/Resolved，实际为死代码；BASE-007 错误数由 37 校正为 29；BASE-003 表数由 16 校正为 17。
 - 已确认正确的部分：读操作不推进模拟时间（D-018 落实）；行动点不会被重复扣/退；`commit_game_command` 单事务 + 版本 CAS 幂等基本可靠；2/6/5 轮次上限与 480 分钟常量一致。
+
+## 2026-08-14：项目级修复
+
+- 认证（AUTH-002）：session token 改 HMAC-SHA256 签名、`getSession` 验签不再信任无签名 base64；`select_role` 需验签 loginToken 后按 token.userId 签发；coach/enterprise 16 路由与 game-data 写接口加 authGuard。伪造 token 与未认证访问实测 401。
+- 幻影表/错误处理（BASE-008）：coach/enterprise 16 路由与 game-data 幻影路径统一 501「功能未实现」，不再查询未建表或回传 `error.message`；保留 npcs/competitors 的 project_id=1 真实分支（可用游戏依赖），无表名泄漏。
+- lint（BASE-007）：29 个 `no-explicit-any` 清零，`eslint . --quiet` 0 error。
 
 ## 2026-08-13：模拟拜访与AI客户博弈
 
@@ -63,6 +69,12 @@
 
 - 之前的验收服务由临时后台进程提供，电脑重启后不会自动恢复，因此页面无法访问是预期行为，不是数据或环境丢失。
 - 根目录 `start-project.bat` 使用仓库内既有依赖和生产构建启动；端口已运行时只打开页面，构建缺失时自动构建，不要求 Docker。
+
+## 2026-08-14：一键启动加固
+
+- 启动前增加托管数据库真实查询预检，避免页面打开后才以 `SAVE_LIST_UNAVAILABLE` 暴露基础服务不可用。
+- 以源码/关键配置 mtime 检测陈旧的 Next 与 Node 构建并自动重建；健康端点同时校验应用标识、构建号和数据库状态。
+- 默认端口被无关或旧服务占用时自动尝试后续 10 个端口。实测 5000 被旧服务占用时当前构建在 5001 启动成功；重复运行能复用同一健康构建。
 
 ## 2026-08-12：隐藏人物剧情一致性
 
