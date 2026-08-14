@@ -25,6 +25,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [loginMode, setLoginMode] = useState<'phone' | 'password'>('password');
   const [userId, setUserId] = useState('');
+  const [loginToken, setLoginToken] = useState('');
   const [showDesignerSubModal, setShowDesignerSubModal] = useState(false);
 
   // 预制账号：登录后直接默认设计师身份，跳过身份选择弹窗
@@ -76,6 +77,7 @@ export default function LoginPage() {
       }
       const data = await res.json();
       setUserId(data.userId);
+      setLoginToken(data.loginToken);
 
       // 所有账号都弹身份选择卡
       setShowIdentityModal(true);
@@ -156,7 +158,7 @@ export default function LoginPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'select_role',
-          userId,
+          loginToken,
           role: IDENTITY_TO_ROLE[selectedIdentity],
           subRole: selectedIdentity === 'player' ? subRole : undefined,
         }),

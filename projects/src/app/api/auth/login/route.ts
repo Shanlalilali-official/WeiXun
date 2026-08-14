@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createSession, type Role, type SubRole } from '@/lib/auth/identity';
+import {
+  createSession,
+  signSession,
+  signLoginProof,
+  verifyLoginProof,
+  type Role,
+  type SubRole,
+} from '@/lib/auth/identity';
 import { FAST_ACCEPTANCE_ACCOUNT } from '@/lib/game/acceptance-mode';
 
 export const runtime = 'nodejs';
@@ -12,12 +19,14 @@ interface LoginRequest {
 }
 
 interface SelectRoleRequest {
-  userId: string;
+  loginToken: string;
   role: Role;
   subRole?: SubRole;
   inviteCode?: string;
   enterpriseId?: string;
 }
+
+const VALID_ROLES: Role[] = ['platform_designer', 'enterprise_admin', 'trainer', 'player'];
 
 export async function POST(request: NextRequest) {
   try {
@@ -44,6 +53,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: true,
           userId,
+          loginToken: signLoginProof(userId),
           needSelectRole: true,
         });
       }
@@ -55,21 +65,29 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: '快速验收账号密码错误' }, { status: 400 });
         }
         const userId = `u_${username}`;
-        return NextResponse.json({ success: true, userId, needSelectRole: true });
+        return NextResponse.json({ success: true, userId, loginToken: signLoginProof(userId), needSelectRole: true });
       }
       return NextResponse.json({ error: '请输入账号密码或手机号' }, { status: 400 });
     }
 
     if (action === 'select_role') {
-      const { userId, role, subRole, inviteCode, enterpriseId } = body as SelectRoleRequest & { action: string };
+      const { loginToken, role, subRole, inviteCode, enterpriseId } = body as SelectRoleRequest & { action: string };
 
       // 玩家二级细分校验（邀请码校验暂放宽，任意非空即可）
       // if (role === 'player' && subRole === 'enterprise_employee' && !inviteCode) {
       //   return NextResponse.json({ error: '企业员工需要提供邀请码' }, { status: 400 });
       // }
 
-      const session = createSession(userId, role, subRole, enterpriseId);
-      const token = Buffer.from(JSON.stringify(session)).toString('base64');
+      const proof = verifyLoginProof(loginToken);
+      if (!proof) {
+        return NextResponse.json({ error: '登录凭证无效或已过期' }, { status: 401 });
+      }
+      if (!VALID_ROLES.includes(role)) {
+        return NextResponse.json({ error: '无效角色' }, { status: 400 });
+      }
+
+      const session = createSession(proof.userId, role, subRole, enterpriseId);
+      const token = signSession(session);
 
       // 根据角色返回对应的重定向路径
       let redirect = '/home';

@@ -1,4 +1,6 @@
 // 身份权限类型定义 + 辅助函数
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
 export type Role = 'platform_designer' | 'enterprise_admin' | 'trainer' | 'player';
 export type SubRole = 'enterprise_employee' | 'paid_individual';
 
@@ -67,8 +69,48 @@ export interface Session {
   expiresAt: number;
 }
 
-// 模拟 token 存储（生产应使用 JWT）
-const sessionStore = new Map<string, Session>();
+export interface LoginProof {
+  userId: string;
+  expiresAt: number;
+}
+
+function getSigningSecret(): string {
+  const secret =
+    process.env.SESSION_SECRET ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY;
+  if (!secret) {
+    // 仅本地开发兜底：无任何密钥时用固定值，保证 demo 可运行。
+    // 正式环境必须设置 SESSION_SECRET，否则所有签名可被伪造。
+    console.warn(
+      '[auth] 未配置 SESSION_SECRET / SUPABASE 密钥，回退到不安全的开发签名密钥。正式环境必须设置 SESSION_SECRET。',
+    );
+    return 'weixun-dev-only-insecure-secret';
+  }
+  return secret;
+}
+
+function sign(payload: unknown): string {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = createHmac('sha256', getSigningSecret()).update(encoded).digest('base64url');
+  return `${encoded}.${sig}`;
+}
+
+function verify<T>(token: string): T | null {
+  const dot = token.lastIndexOf('.');
+  if (dot < 0) return null;
+  const encoded = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expected = createHmac('sha256', getSigningSecret()).update(encoded).digest('base64url');
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expected);
+  if (sigBuf.length !== expectedBuf.length || !timingSafeEqual(sigBuf, expectedBuf)) return null;
+  try {
+    return JSON.parse(Buffer.from(encoded, 'base64url').toString('utf-8')) as T;
+  } catch {
+    return null;
+  }
+}
 
 export function createSession(userId: string, role: Role, subRole?: SubRole, enterpriseId?: string): Session {
   const config = ROLE_CONFIGS[role];
@@ -76,7 +118,7 @@ export function createSession(userId: string, role: Role, subRole?: SubRole, ent
   // 若 userId 不是 "u_<手机号>" 格式，则退化为 userId 末 4 位
   const phoneMatch = userId.match(/^u_(1[3-9]\d{9})$/);
   const tail = phoneMatch ? phoneMatch[1].slice(-4) : userId.slice(-4);
-  const session: Session = {
+  return {
     userId,
     role,
     subRole,
@@ -85,27 +127,32 @@ export function createSession(userId: string, role: Role, subRole?: SubRole, ent
     permissions: config.permissions,
     expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24h
   };
-  const token = Buffer.from(JSON.stringify(session)).toString('base64');
-  sessionStore.set(token, session);
-  return session;
+}
+
+export function signSession(session: Session): string {
+  return sign(session);
 }
 
 export function getSession(token: string | undefined): Session | null {
   if (!token) return null;
-  // 1. 先查内存（同一进程内）
-  let session = sessionStore.get(token);
-  // 2. 退化：直接 base64 decode（无状态，serverless 友好）
-  if (!session) {
-    try {
-      const decoded = JSON.parse(Buffer.from(token, "base64").toString("utf-8"));
-      if (decoded && decoded.userId && decoded.role && decoded.expiresAt > Date.now()) {
-        session = decoded as Session;
-      }
-    } catch {}
-  }
+  const session = verify<Session>(token);
   if (!session) return null;
+  if (typeof session.userId !== 'string' || typeof session.expiresAt !== 'number') return null;
   if (session.expiresAt < Date.now()) return null;
   return session;
+}
+
+export function signLoginProof(userId: string): string {
+  return sign({ userId, expiresAt: Date.now() + 5 * 60 * 1000 } satisfies LoginProof);
+}
+
+export function verifyLoginProof(token: string | undefined): LoginProof | null {
+  if (!token) return null;
+  const proof = verify<LoginProof>(token);
+  if (!proof) return null;
+  if (typeof proof.userId !== 'string' || typeof proof.expiresAt !== 'number') return null;
+  if (proof.expiresAt < Date.now()) return null;
+  return proof;
 }
 
 export function hasPermission(session: Session | null, permission: string): boolean {
