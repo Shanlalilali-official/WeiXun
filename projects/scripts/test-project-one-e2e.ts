@@ -1,13 +1,18 @@
 import assert from 'node:assert/strict';
 import dotenv from 'dotenv';
 import { createAdminClient } from '../src/storage/database/supabase-client';
-import type { GameRuntimeState } from '../src/lib/game/state';
+import type { GameAppointment, GameRuntimeState } from '../src/lib/game/state';
 
 dotenv.config({ path: '.env.local', override: false, quiet: true });
 
 const baseUrl = (process.env.E2E_BASE_URL || 'http://127.0.0.1:5000').replace(/\/+$/, '');
-const userId = `u_e2e_${Date.now()}`;
+const userId = `u_simulated_visit_e2e_${Date.now()}`;
 let sessionId = '';
+let currentState: GameRuntimeState;
+
+function makeCommandId(prefix: string) {
+  return `${prefix}-${crypto.randomUUID()}`;
+}
 
 async function jsonRequest<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
@@ -23,7 +28,53 @@ async function jsonRequest<T>(path: string, init: RequestInit = {}, token?: stri
   return payload;
 }
 
-async function streamChat(token: string, npcId: string, message: string) {
+async function command(
+  token: string,
+  type: string,
+  payload: Record<string, unknown> = {},
+  options?: { commandId?: string; expectedVersion?: number },
+) {
+  const commandId = options?.commandId ?? makeCommandId(type);
+  const expectedVersion = options?.expectedVersion ?? currentState.version;
+  const response = await jsonRequest<{
+    state: GameRuntimeState;
+    result: Record<string, unknown>;
+    replayed: boolean;
+  }>(`/api/game/sessions/${sessionId}/commands`, {
+    method: 'POST',
+    body: JSON.stringify({ commandId, expectedVersion, type, payload }),
+  }, token);
+  currentState = response.state;
+  return { ...response, commandId, expectedVersion };
+}
+
+type StreamEvent = {
+  type: string;
+  code?: string;
+  error?: string;
+  content?: string;
+  state?: GameRuntimeState;
+  deliveryStatus?: 'replied' | 'unanswered';
+  onlineAccepted?: boolean;
+  replayed?: boolean;
+};
+
+async function streamChat(
+  token: string,
+  npcId: string,
+  message: string,
+  communication: {
+    intent?: 'outreach' | 'message' | 'request_online';
+    channel?: 'email' | 'work_phone' | 'online' | 'offline';
+    contextType?: 'online' | 'short_visit' | 'formal_visit' | 'informal_visit';
+    appointmentId?: string;
+    usedPreparationIds?: string[];
+    workTopicOpenedBy?: 'none' | 'player' | 'npc';
+  } = {},
+  options?: { commandId?: string; expectedVersion?: number },
+) {
+  const commandId = options?.commandId ?? makeCommandId('chat');
+  const expectedVersion = options?.expectedVersion ?? currentState.version;
   const response = await fetch(`${baseUrl}/api/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-session': token },
@@ -32,37 +83,36 @@ async function streamChat(token: string, npcId: string, message: string) {
       scenarioId: 'project-1',
       npcId,
       message,
+      commandId,
+      expectedVersion,
+      usedPreparationIds: [],
+      ...communication,
     }),
   });
-  assert.equal(response.status, 200);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(`CHAT HTTP ${response.status}: ${payload.error || 'unknown error'}`);
+  }
   const body = await response.text();
   const events = body
     .split(/\r?\n/)
     .filter((line) => line.startsWith('data: ') && line !== 'data: [DONE]')
-    .map((line) => JSON.parse(line.slice(6)) as {
-      type: string;
-      code?: string;
-      content?: string;
-      state?: GameRuntimeState;
-      affinityDelta?: number;
-      affinityReason?: string;
-      evaluationSource?: 'model' | 'retry' | 'fallback';
-    });
+    .map((line) => JSON.parse(line.slice(6)) as StreamEvent);
   const error = events.find((event) => event.type === 'error');
-  if (error) throw new Error(`CHAT_STREAM_${error.code || 'ERROR'}`);
-  assert(events.some((event) => event.type === 'delta' && event.content));
-  assert(events.some((event) => event.type === 'evaluation_started'));
+  if (error) throw new Error(`CHAT_STREAM_${error.code || 'ERROR'}: ${error.error || ''}`);
   const result = events.find((event) => event.type === 'result' && event.state);
-  assert(result?.state);
-  assert.equal(typeof result.affinityDelta, 'number');
-  assert(result.affinityReason);
-  assert(['model', 'retry', 'fallback'].includes(result.evaluationSource || ''));
+  assert(result?.state, 'chat stream must finish with authoritative state');
+  currentState = result.state;
+  const content = events.map((event) => event.content || '').join('');
+  if (result.deliveryStatus === 'replied') assert(content.length > 0, 'a replied turn returns NPC content');
   return {
-    content: events.map((event) => event.content || '').join(''),
+    content,
     state: result.state,
-    affinityDelta: result.affinityDelta,
-    affinityReason: result.affinityReason,
-    evaluationSource: result.evaluationSource,
+    deliveryStatus: result.deliveryStatus,
+    onlineAccepted: result.onlineAccepted,
+    replayed: result.replayed,
+    commandId,
+    expectedVersion,
   };
 }
 
@@ -85,107 +135,208 @@ async function main() {
     login.token,
   );
   sessionId = created.gameSession.id;
-  const initial = created.gameSession.state;
-  assert.equal(initial.currentRound, 1);
-  assert.equal(initial.maxRounds, 5);
-  assert.equal(initial.actionPoints, 28);
-  assert.equal(initial.status, 'playing');
-  assert.equal(initial.unlockedNpcIds.length, 3);
-  assert(!initial.unlockedNpcIds.includes('p1-minister-chen-jianguo'));
+  currentState = created.gameSession.state;
+  console.log(`project-one simulated-visit e2e started: session=${sessionId}`);
+  assert.equal(currentState.currentRound, 1);
+  assert.equal(currentState.maxRounds, 5);
+  assert.equal(currentState.simulatedClockMinutes, 9 * 60);
+  assert.equal(currentState.dayAvailableMinutes, 480);
+  assert.equal(currentState.actionPoints, 28);
+  assert.equal(currentState.pausedAt, null);
 
-  let action = await jsonRequest<{ state: GameRuntimeState }>(
-    `/api/game/sessions/${sessionId}/actions`,
-    { method: 'POST', body: JSON.stringify({ npcId: 'p1-frontline-wang-hao', actionId: 'festival' }) },
-    login.token,
+  // GET and real waiting are time-neutral; the obsolete timer endpoint is gone.
+  const firstRead = await jsonRequest<{ gameSession: { state: GameRuntimeState } }>(
+    `/api/game/sessions/${sessionId}`, {}, login.token,
   );
-  assert.equal(action.state.actionPoints, 25);
-  assert.equal(action.state.npcAffinity['p1-frontline-wang-hao'], 38);
+  const secondRead = await jsonRequest<{ gameSession: { state: GameRuntimeState } }>(
+    `/api/game/sessions/${sessionId}`, {}, login.token,
+  );
+  assert.equal(firstRead.gameSession.state.simulatedClockMinutes, secondRead.gameSession.state.simulatedClockMinutes);
+  const timerResponse = await fetch(`${baseUrl}/api/game/sessions/${sessionId}/timer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-session': login.token },
+    body: JSON.stringify({ action: 'pause' }),
+  });
+  assert.equal(timerResponse.status, 410);
 
-  for (let index = 0; index < 7; index += 1) {
-    action = await jsonRequest<{ state: GameRuntimeState }>(
-      `/api/game/sessions/${sessionId}/actions`,
-      { method: 'POST', body: JSON.stringify({ npcId: 'p1-frontline-wang-hao', actionId: 'festival' }) },
-      login.token,
-    );
-  }
-  assert.equal(action.state.actionPoints, 4);
-  assert.equal(action.state.npcAffinity['p1-frontline-wang-hao'], 59);
-  assert(!action.state.unlockedNpcIds.includes('p1-minister-chen-jianguo'));
-
-  let reveal = await streamChat(
+  let outreach = await streamChat(
     login.token,
     'p1-frontline-wang-hao',
-    '我们的关系已经建立了。请明确告诉我负责业务评估的中层姓名、职务，以及他在汇报流程中的位置。',
+    '王老师您好，我负责本项目方案对接，想先了解您最关心的落地风险和现有流程。',
+    { intent: 'outreach', channel: 'work_phone' },
   );
-  if (!reveal.state.unlockedNpcIds.includes('p1-minister-chen-jianguo')) {
-    reveal = await streamChat(
+  for (let attempt = 0; outreach.deliveryStatus === 'unanswered' && attempt < 5; attempt += 1) {
+    await command(login.token, 'wait', { minutes: 30 });
+    outreach = await streamChat(
       login.token,
       'p1-frontline-wang-hao',
-      '不要只说领导或上头，请把负责业务评估的中层姓名和完整职务告诉我。',
+      '王老师您好，我已准备好同类案例、对接清单和测试计划，想和您确认项目重点。',
+      { intent: 'outreach', channel: 'work_phone' },
     );
   }
-  assert.match(reveal.content, /陈建国/);
-  assert.match(reveal.content, /业务部部长|业务部长|陈部长/);
-  assert(reveal.state.unlockedClues.includes('key_contact'));
-  assert(reveal.state.unlockedNpcIds.includes('p1-minister-chen-jianguo'));
+  assert.equal(outreach.deliveryStatus, 'replied');
+  assert.equal(currentState.npcContacts['p1-frontline-wang-hao'].status, 'connected');
+  assert(currentState.cumulativeTimeMinutes >= 15);
 
-  const followUp = await streamChat(
+  // A committed AI turn is replayable with the same operation id and never
+  // consumes time or appends state twice.
+  const replayedOutreach = await streamChat(
     login.token,
     'p1-frontline-wang-hao',
-    '我今天会把同类案例、系统对接清单和测试计划整理成正式材料发给您。',
+    outreach.content ? '此字段会被幂等记录忽略' : '重试',
+    { intent: 'outreach', channel: 'work_phone' },
+    { commandId: outreach.commandId, expectedVersion: outreach.expectedVersion },
   );
-  assert.equal(typeof followUp.affinityDelta, 'number');
-  assert(followUp.affinityReason);
+  assert.equal(replayedOutreach.replayed, true);
+  assert.equal(replayedOutreach.state.version, outreach.state.version);
+  assert.equal(replayedOutreach.state.cumulativeTimeMinutes, outreach.state.cumulativeTimeMinutes);
 
-  const firstHistory = await jsonRequest<{ messages: unknown[] }>(
-    `/api/game/sessions/${sessionId}/messages?npcId=p1-frontline-wang-hao`,
-    {},
-    login.token,
-  );
-  const secondHistory = await jsonRequest<{ messages: unknown[] }>(
-    `/api/game/sessions/${sessionId}/messages?npcId=p1-procurement-liu-kai`,
-    {},
-    login.token,
-  );
-  assert(firstHistory.messages.length >= 2);
-  assert.equal(secondHistory.messages.length, 0);
-
-  const restored = await jsonRequest<{ gameSession: { state: GameRuntimeState } }>(
-    `/api/game/sessions/${sessionId}`,
-    {},
-    login.token,
-  );
-  assert.equal(restored.gameSession.state.actionPoints, 4);
-  assert(restored.gameSession.state.unlockedNpcIds.includes('p1-minister-chen-jianguo'));
-  assert(restored.gameSession.state.version > initial.version);
-
-  let finalState = restored.gameSession.state;
-  for (let i = 0; i < 5; i += 1) {
-    const advanced = await jsonRequest<{ state: GameRuntimeState }>(
-      `/api/game/sessions/${sessionId}/advance`,
-      { method: 'POST', body: '{}' },
-      login.token,
-    );
-    finalState = advanced.state;
+  let appointment: GameAppointment | null = null;
+  for (let attempt = 0; !appointment && attempt < 8; attempt += 1) {
+    const invited = await command(login.token, 'invite', {
+      npcId: 'p1-frontline-wang-hao',
+      channel: 'work_phone',
+      invitationMethod: 'dedicated',
+      visitType: 'formal',
+      venue: '客户办公室会议室',
+      purpose: '确认业务目标、展示方案并梳理下一步',
+      scheduledRound: currentState.currentRound,
+      startMinute: 14 * 60,
+    });
+    const candidate = invited.result.appointment as GameAppointment;
+    if (candidate.status === 'countered') {
+      const accepted = await command(login.token, 'update_appointment', {
+        appointmentId: candidate.id,
+        action: 'accept_counter',
+      });
+      appointment = accepted.result.appointment as GameAppointment;
+    } else if (candidate.status === 'accepted') {
+      appointment = candidate;
+    }
   }
-  assert.equal(finalState.currentRound, 5);
-  assert(['won', 'lost'].includes(finalState.status));
+  assert(appointment, 'NPC should eventually accept or counter a formal appointment');
+  assert.equal(appointment.durationMinutes, 40);
+  assert.equal(appointment.maxTurns, 6);
+  const availableAfterReservation = currentState.dayAvailableMinutes;
+
+  const ppt = await command(login.token, 'prepare', {
+    npcId: appointment.npcId,
+    appointmentId: appointment.id,
+    preparationType: 'ppt',
+    title: '项目价值与落地方案',
+    content: '现状、对公价值、岗位减负、交付计划与风险控制',
+  });
+  const pptId = String((ppt.result.preparation as { id: string }).id);
+  const boundary = await command(login.token, 'prepare', {
+    npcId: appointment.npcId,
+    appointmentId: appointment.id,
+    preparationType: 'boundary_gift',
+    title: '私人化高价值礼品',
+    content: '场合敏感，仅用于测试高波动分支',
+  });
+  const boundaryId = String((boundary.result.preparation as { id: string }).id);
+  assert.equal(currentState.cumulativeSpentPoints, 12);
+
+  const clockBeforeTravel = currentState.simulatedClockMinutes;
+  const travelMinutes = appointment.invitationMethod === 'dedicated' ? 10 : 5;
+  const departureMinute = appointment.startMinute - travelMinutes;
+  const idleDaytimeMinutes = Math.max(0, Math.min(departureMinute, 17 * 60) - Math.max(clockBeforeTravel, 9 * 60));
+  await command(login.token, 'start_visit', { appointmentId: appointment.id, preparationIds: [] });
+  assert.equal(currentState.activeMeeting?.visitType, 'formal');
+  assert.equal(currentState.activeMeeting?.maxTurns, 6);
+  const investedAtMeetingStart = currentState.cumulativeTimeMinutes;
+
+  await command(login.token, 'follow_up', {
+    action: 'deliver_preparation',
+    npcId: appointment.npcId,
+    appointmentId: appointment.id,
+    preparationId: pptId,
+  });
+  assert(currentState.activeMeeting?.usedPreparationIds.includes(pptId));
+
+  const giftCommandId = makeCommandId('boundary-gift');
+  const giftExpectedVersion = currentState.version;
+  const firstGift = await command(login.token, 'give_gift', {
+    preparationId: boundaryId,
+    appointmentId: appointment.id,
+    setting: 'private',
+    witnesses: [],
+    exchangeRequested: false,
+  }, { commandId: giftCommandId, expectedVersion: giftExpectedVersion });
+  const riskCount = currentState.complianceRisks.length;
+  const replayedGift = await command(login.token, 'give_gift', {
+    preparationId: boundaryId,
+    appointmentId: appointment.id,
+    setting: 'private',
+    witnesses: [],
+    exchangeRequested: false,
+  }, { commandId: giftCommandId, expectedVersion: giftExpectedVersion });
+  assert.equal(replayedGift.replayed, true);
+  assert.equal(replayedGift.state.version, firstGift.state.version);
+  assert.equal(replayedGift.state.complianceRisks.length, riskCount);
+
+  const visitTurn = await streamChat(
+    login.token,
+    appointment.npcId,
+    '先结合材料确认两个问题：现有流程最大的组织风险是什么，哪类减负结果对您最有价值？',
+    {
+      intent: 'message',
+      channel: 'offline',
+      contextType: 'formal_visit',
+      appointmentId: appointment.id,
+      usedPreparationIds: [pptId],
+    },
+  );
+  assert.equal(visitTurn.deliveryStatus, 'replied');
+  assert.equal(currentState.activeMeeting?.turnCount, 1);
+  assert.equal(currentState.cumulativeTimeMinutes, investedAtMeetingStart, 'meeting turns must not charge time');
+
+  await command(login.token, 'end_visit', {
+    appointmentId: appointment.id,
+    reason: 'player',
+    summary: '确认现状、客户顾虑、我方材料和下一步负责人。',
+  });
+  assert.equal(currentState.activeMeeting, null);
+  assert.equal(currentState.cumulativeTimeMinutes, investedAtMeetingStart + 40);
+  assert.equal(currentState.appointments.find((item) => item.id === appointment?.id)?.status, 'completed');
+  assert.equal(currentState.meetingMinutes.some((item) => item.appointmentId === appointment?.id), true);
+  assert.equal(
+    currentState.dayAvailableMinutes,
+    availableAfterReservation - 30 - 10 - travelMinutes - idleDaytimeMinutes,
+    'preparation, intentional idle time and travel consume available capacity while the reserved visit is not charged twice',
+  );
+
+  const firstHistory = await jsonRequest<{ messages: Array<{ metadata?: { commandId?: string } }> }>(
+    `/api/game/sessions/${sessionId}/messages?npcId=p1-frontline-wang-hao`, {}, login.token,
+  );
+  assert(firstHistory.messages.length >= 4);
+  assert(firstHistory.messages.some((item) => item.metadata?.commandId === outreach.commandId));
+
+  // Refresh preserves exact command state and never advances the simulated day.
+  const restored = await jsonRequest<{ gameSession: { state: GameRuntimeState } }>(
+    `/api/game/sessions/${sessionId}`, {}, login.token,
+  );
+  assert.equal(restored.gameSession.state.version, currentState.version);
+  assert.equal(restored.gameSession.state.simulatedClockMinutes, currentState.simulatedClockMinutes);
+  assert.equal(restored.gameSession.state.cumulativeTimeMinutes, currentState.cumulativeTimeMinutes);
+
+  while (currentState.status === 'playing') await command(login.token, 'advance_phase');
+  assert.equal(currentState.currentRound, 5);
+  assert(['won', 'lost'].includes(currentState.status));
 
   const review = await jsonRequest<{ review: { strengths: string[]; improvements: string[]; nextActions: string[] } }>(
-    `/api/game/sessions/${sessionId}/review`,
-    { method: 'POST', body: '{}' },
-    login.token,
+    `/api/game/sessions/${sessionId}/review`, { method: 'POST', body: '{}' }, login.token,
   );
   assert(review.review.strengths.length > 0);
   assert(review.review.improvements.length > 0);
   assert(review.review.nextActions.length > 0);
 
-  console.log(`project-one e2e passed: session=${sessionId}, result=${finalState.status}`);
+  console.log(`project-one simulated-visit e2e passed: session=${sessionId}, result=${currentState.status}`);
   await cleanup();
 }
 
 main().catch(async (error) => {
-  console.error(`project-one e2e failed: session=${sessionId || 'not-created'}`);
+  console.error(`project-one simulated-visit e2e failed: session=${sessionId || 'not-created'}`);
   console.error(error instanceof Error ? error.message : error);
   await cleanup();
   process.exitCode = 1;

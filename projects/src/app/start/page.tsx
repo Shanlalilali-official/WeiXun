@@ -162,12 +162,12 @@ export default function StartPage() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: 'radial-gradient(ellipse at center, #0F172A 0%, #020617 100%)' }}>
+    <div className="min-h-screen flex flex-col bg-stage-night">
       {/* 顶部状态条 */}
-      <header className="h-[72px] bg-card border-b border-border px-6 flex items-center justify-between z-20">
+      <header className="h-[72px] topbar-glass px-6 flex items-center justify-between z-20">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg btn-primary flex items-center justify-center">
               <Building2 className="w-4 h-4 text-primary-foreground" />
             </div>
             <div>
@@ -175,24 +175,24 @@ export default function StartPage() {
               <div className="text-[10px] text-muted-foreground">四档难度 · 选择项目</div>
             </div>
           </div>
-          <div className="text-sm">
+          <div className="hidden sm:block text-sm border-l border-border pl-6">
             <div className="font-semibold text-foreground">XX市智慧政务 v3.2 · 政企竞标实训</div>
             <div className="text-[10px] text-muted-foreground">主预算 ¥580万</div>
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-warning/10 text-warning">
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full badge-warning">
             <Coins className="w-3.5 h-3.5" />
-            <span className="text-xs font-semibold">28 / 30</span>
+            <span className="text-xs font-semibold num">28 / 30</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-semibold">{meta.avatarChar}</div>
+            <div className="w-8 h-8 rounded-full btn-primary text-primary-foreground flex items-center justify-center text-xs font-semibold">{meta.avatarChar}</div>
             <div className="text-xs">
               <div className="font-semibold text-foreground">{identity?.displayName || '游客'}</div>
               <div className="text-[10px] text-muted-foreground">{meta.title} · Lv.{meta.level}</div>
             </div>
           </div>
-          <button className="text-muted-foreground hover:text-foreground">
+          <button className="text-muted-foreground hover:text-foreground p-2 hover:bg-muted rounded-lg transition-colors">
             <Settings className="w-4 h-4" />
           </button>
         </div>
@@ -205,28 +205,28 @@ export default function StartPage() {
           <img
             src="/game-map.webp"
             alt="XX市等距城市地图"
-            className="w-full h-full object-cover"
+            className="w-full h-full object-cover opacity-90"
             onError={(e) => { (e.target as HTMLImageElement).src = '/game-map.jpg'; }}
           />
-          <div className="absolute inset-0 pointer-events-none" style={{ background: 'linear-gradient(to bottom, rgba(15,23,42,0.3) 0%, transparent 30%, transparent 70%, rgba(15,23,42,0.4) 100%)' }} />
+          <div className="absolute inset-0 pointer-events-none" style={{ background: 'linear-gradient(to bottom, rgba(2,6,23,0.5) 0%, rgba(2,6,23,0.1) 30%, transparent 60%, rgba(2,6,23,0.55) 100%)' }} />
         </div>
 
         {/* 顶部信息 */}
-        <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
-          <div className="px-3 py-1.5 rounded bg-card/90 backdrop-blur text-xs">
+        <div className="absolute top-4 left-4 z-10 flex flex-col gap-2 animate-fade-up">
+          <div className="px-3 py-1.5 rounded-lg btn-glass text-xs">
             <div className="font-semibold text-foreground">XX市 · CITY MAP</div>
             <div className="text-[10px] text-muted-foreground">ISOMETRIC VIEW · 1:800</div>
           </div>
         </div>
 
-        <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 items-end">
+        <div className="absolute top-4 right-4 z-10 flex flex-col gap-2 items-end animate-fade-up">
           <button
             onClick={() => setShowBackground(!showBackground)}
-            className="w-10 h-10 rounded-lg bg-card/90 backdrop-blur flex items-center justify-center text-muted-foreground hover:text-foreground"
+            className="w-10 h-10 rounded-lg btn-glass flex items-center justify-center text-muted-foreground hover:text-foreground"
           >
             <Copy className="w-4 h-4" />
           </button>
-          <div className="px-2 py-1 rounded bg-card/90 backdrop-blur text-[10px] text-muted-foreground">NSEW</div>
+          <div className="px-2 py-1 rounded btn-glass text-[10px] text-muted-foreground font-mono">NSEW</div>
         </div>
 
         {/* Hotspot */}
@@ -234,18 +234,18 @@ export default function StartPage() {
           <button
             key={h.id}
             onClick={() => setSelected(h)}
-            className="absolute z-10 group transition-transform hover:scale-110"
+            className="absolute z-10 group"
             style={{ left: h.left, top: h.top, transform: 'translate(-50%, -50%)' }}
           >
-            <div className="relative">
+            <div className="relative transition-transform duration-200 group-hover:scale-110">
               <span className="absolute inset-0 rounded-full bg-warning/40 animate-ping" />
-              <span className="relative w-14 h-14 rounded-full bg-warning border-2 border-card flex items-center justify-center shadow-xl">
+              <span className="relative w-14 h-14 rounded-full btn-warning border-2 border-card flex items-center justify-center shadow-xl">
                 <Building2 className="w-7 h-7 text-white" />
               </span>
-              <div className="absolute left-1/2 -translate-x-1/2 -top-6 whitespace-nowrap px-2 py-0.5 rounded bg-foreground/80 text-xs text-background">
+              <div className="absolute left-1/2 -translate-x-1/2 -top-6 whitespace-nowrap px-2 py-0.5 rounded bg-foreground/90 backdrop-blur text-xs text-background font-mono">
                 ¥{h.budget}万
               </div>
-              <div className="absolute left-1/2 -translate-x-1/2 top-16 whitespace-nowrap px-3 py-1 rounded bg-card/95 backdrop-blur text-sm font-semibold text-foreground">
+              <div className="absolute left-1/2 -translate-x-1/2 top-16 whitespace-nowrap px-3 py-1 rounded-lg btn-glass text-sm font-semibold text-foreground">
                 {h.name}
               </div>
             </div>
@@ -258,42 +258,42 @@ export default function StartPage() {
         {selected && (
           <>
             <div
-              className="absolute inset-0 z-30 bg-black/20"
+              className="absolute inset-0 z-30 bg-black/40 backdrop-blur-sm"
               onClick={() => setSelected(null)}
             />
             <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
-              <div className="w-[420px] max-h-[85vh] bg-card rounded-2xl shadow-2xl flex flex-col pointer-events-auto" style={{ animation: 'modalFadeIn 200ms ease-out' }}>
+              <div className="w-[440px] max-h-[85vh] bg-card rounded-2xl shadow-2xl flex flex-col pointer-events-auto animate-modal-in">
                 {/* 头部 - 固定 */}
-                <div className="p-6 pb-4 flex-shrink-0">
+                <div className="p-6 pb-4 flex-shrink-0 border-b border-border">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${selected.type === 'main' ? 'bg-warning/10' : 'bg-primary/10'}`}>
+                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${selected.type === 'main' ? 'bg-warning/15' : 'bg-primary/10'}`}>
                         <Building2 className={`w-6 h-6 ${selected.type === 'main' ? 'text-warning' : 'text-primary'}`} />
                       </div>
                       <div>
                         <h2 className="text-lg font-bold text-foreground">{selected.name}</h2>
-                        <div className="flex items-center gap-1 mt-0.5">
+                        <div className="flex items-center gap-1 mt-1">
                           {Array.from({ length: 5 }).map((_, i) => (
-                            <Star key={i} className={`w-3 h-3 ${i < selected.difficulty ? 'text-warning fill-warning' : 'text-muted-foreground/30'}`} />
+                            <Star key={i} className={`w-3.5 h-3.5 ${i < selected.difficulty ? 'text-warning fill-warning' : 'text-muted-foreground/30'}`} />
                           ))}
-                          <span className="text-[10px] text-muted-foreground ml-1">{selected.difficultyLabel}</span>
+                          <span className="text-[11px] text-muted-foreground ml-1.5">{selected.difficultyLabel}</span>
                         </div>
                       </div>
                     </div>
-                    <button onClick={() => setSelected(null)} className="text-muted-foreground hover:text-foreground">
+                    <button onClick={() => setSelected(null)} className="text-muted-foreground hover:text-foreground p-1.5 hover:bg-muted rounded-lg transition-colors">
                       <X className="w-5 h-5" />
                     </button>
                   </div>
                 </div>
 
                 {/* 内容区 - 可滚动 */}
-                <div className="px-6 overflow-y-auto flex-1 min-h-0">
+                <div className="px-6 overflow-y-auto flex-1 min-h-0 py-4">
 
                 {/* 项目信息 */}
                 <div className="mb-4 p-4 rounded-xl bg-surface-container">
-                  <div className="text-xs text-muted-foreground mb-2">项目信息</div>
-                  <div className="space-y-1.5 text-xs">
-                    <div className="flex justify-between"><span className="text-muted-foreground">项目预算</span><span className="font-semibold text-foreground">¥{selected.budget}万</span></div>
+                  <div className="text-xs text-muted-foreground mb-3 font-medium uppercase tracking-wider">项目信息</div>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between"><span className="text-muted-foreground">项目预算</span><span className="font-semibold text-foreground num">¥{selected.budget}万</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">交付周期</span><span className="font-semibold text-foreground">5 个月</span></div>
                     <div className="flex justify-between"><span className="text-muted-foreground">参与竞品</span><span className="font-semibold text-foreground">3 家</span></div>
                   </div>
@@ -302,7 +302,7 @@ export default function StartPage() {
                 {/* 竞品公司特点表 */}
                 {competitors.filter(c => c.project_id === selected.projectId).length > 0 && (
                   <div className="mb-4 p-4 rounded-xl bg-gradient-to-br from-primary/5 to-transparent border border-primary/20">
-                    <div className="text-xs font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <div className="text-xs font-semibold text-foreground mb-3 flex items-center gap-2 uppercase tracking-wider">
                       <svg className="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
@@ -339,11 +339,11 @@ export default function StartPage() {
 
                 {/* 技术难点 */}
                 <div className="mb-4">
-                  <div className="text-xs font-semibold text-foreground mb-2">技术难点</div>
+                  <div className="text-xs font-semibold text-foreground mb-2.5 uppercase tracking-wider">技术难点</div>
                   <div className="space-y-1.5">
                     {selected.technicalDifficulties.map((t, i) => (
-                      <div key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
-                        <span className="w-1 h-1 rounded-full bg-primary mt-1.5 flex-shrink-0" />
+                      <div key={i} className="text-xs text-muted-foreground flex items-start gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 flex-shrink-0" />
                         <span>{t}</span>
                       </div>
                     ))}
@@ -352,11 +352,11 @@ export default function StartPage() {
 
                 {/* 客户诉求 */}
                 <div className="mb-4">
-                  <div className="text-xs font-semibold text-foreground mb-2">客户核心诉求</div>
+                  <div className="text-xs font-semibold text-foreground mb-2.5 uppercase tracking-wider">客户核心诉求</div>
                   <div className="space-y-1.5">
                     {selected.customerNeeds.map((c, i) => (
-                      <div key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
-                        <span className="w-1 h-1 rounded-full bg-success mt-1.5 flex-shrink-0" />
+                      <div key={i} className="text-xs text-muted-foreground flex items-start gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-success mt-1.5 flex-shrink-0" />
                         <span>{c}</span>
                       </div>
                     ))}
@@ -365,9 +365,9 @@ export default function StartPage() {
 
                 {/* 决策人 */}
                 <div className="mb-4 p-4 rounded-xl border border-border">
-                  <div className="text-xs font-semibold text-foreground mb-2">当前已知负责人</div>
+                  <div className="text-xs font-semibold text-foreground mb-3 uppercase tracking-wider">当前已知负责人</div>
                   <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center text-base font-bold text-primary">
+                    <div className="w-12 h-12 rounded-full bg-gradient-to-br from-primary/30 to-violet-500/30 flex items-center justify-center text-base font-bold text-primary">
                       {selected.leader.name[0]}
                     </div>
                     <div className="flex-1">
@@ -378,23 +378,23 @@ export default function StartPage() {
                 </div>
 
                 {/* AI 战前预估 */}
-                <div className="mb-4 p-4 rounded-xl bg-primary/5 border border-primary/20">
-                  <div className="flex items-center gap-1.5 text-xs font-semibold text-primary mb-2">
+                <div className="mb-2 p-4 rounded-xl bg-gradient-to-br from-primary/5 to-violet-500/5 border border-primary/20">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-primary mb-2 uppercase tracking-wider">
                     <Sparkles className="w-3.5 h-3.5" /> AI 战前预估
                   </div>
-                  <div className="text-[11px] text-foreground mb-3">{selected.aiAdvice}</div>
+                  <div className="text-xs text-foreground mb-3 leading-relaxed">{selected.aiAdvice}</div>
                   <div className="grid grid-cols-3 gap-2 text-center">
-                    <div>
+                    <div className="p-2 rounded-lg bg-card/60">
                       <div className="text-[10px] text-muted-foreground">预期利润率</div>
-                      <div className="text-sm font-bold text-primary">{selected.expectedProfit}%</div>
+                      <div className="text-base font-bold text-primary num">{selected.expectedProfit}%</div>
                     </div>
-                    <div>
+                    <div className="p-2 rounded-lg bg-card/60">
                       <div className="text-[10px] text-muted-foreground">胜率预估</div>
-                      <div className="text-sm font-bold text-primary">{selected.winRate}%</div>
+                      <div className="text-base font-bold text-primary num">{selected.winRate}%</div>
                     </div>
-                    <div>
+                    <div className="p-2 rounded-lg bg-card/60">
                       <div className="text-[10px] text-muted-foreground">难度系数</div>
-                      <div className="text-sm font-bold text-primary">{(selected.difficulty * 0.95).toFixed(1)}</div>
+                      <div className="text-base font-bold text-primary num">{(selected.difficulty * 0.95).toFixed(1)}</div>
                     </div>
                   </div>
                 </div>
@@ -404,14 +404,14 @@ export default function StartPage() {
                 <div className="p-6 pt-4 flex-shrink-0 border-t border-border flex gap-2">
                   <button
                     onClick={() => setSelected(null)}
-                    className="flex-1 py-2.5 rounded-lg border border-border text-sm text-foreground hover:bg-surface-container"
+                    className="flex-1 py-2.5 rounded-lg btn-glass text-sm text-foreground"
                   >
                     换个目标
                   </button>
                   <button
                     onClick={handleStart}
                     disabled={selected.id !== 'project-1'}
-                    className="flex-1 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 py-2.5 rounded-lg btn-primary text-sm font-semibold"
                   >
                     {selected.id === 'project-1' ? '开始攻略此目标' : '本期暂未开放'}
                   </button>
@@ -421,13 +421,6 @@ export default function StartPage() {
           </>
         )}
       </main>
-
-      <style jsx global>{`
-        @keyframes modalFadeIn {
-          from { opacity: 0; transform: scale(0.95); }
-          to { opacity: 1; transform: scale(1); }
-        }
-      `}</style>
     </div>
   );
 }

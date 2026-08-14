@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Wand2, Building2, Users, FileText, Save, ArrowLeft, Megaphone, UserCog, BarChart3, Copy, Plus, Trash2, Pencil, X } from 'lucide-react';
+import { Wand2, Building2, Users, FileText, Save, ArrowLeft, Megaphone, UserCog, BarChart3, Copy, Plus, Trash2, Pencil, X, LogOut, ShieldCheck } from 'lucide-react';
 import { aMetrics, bMetrics, cMetrics } from '@/lib/metrics-data';
 import { projectNames, keyPeopleByProject as keyPeopleByProjectData } from '@/lib/key-people-data';
+import { ROLE_COLOR, ROLE_LABEL } from '@/components/app-shell';
 
 interface KeyPerson {
   id: number;
@@ -175,8 +176,11 @@ export default function DesignerPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center text-muted-foreground">
-        加载中...
+      <div className="min-h-screen bg-role-designer flex items-center justify-center text-muted-foreground">
+        <div className="flex items-center gap-3">
+          <span className="w-5 h-5 border-2 border-role-designer border-t-transparent rounded-full animate-spin" />
+          加载中...
+        </div>
       </div>
     );
   }
@@ -263,40 +267,66 @@ export default function DesignerPage() {
   };
 
   return (
-    <div className="min-h-screen" style={{ background: '#F6F8FB' }}>
+    <div className="min-h-screen bg-role-designer">
       {/* 顶部导航 */}
-      <header className="h-16 bg-card border-b border-border px-8 flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <button onClick={() => router.push('/')} className="text-muted-foreground hover:text-foreground">
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <Wand2 className="w-4 h-4 text-primary-foreground" />
+      <header className="topbar-glass sticky top-0 z-20">
+        <div className="max-w-7xl mx-auto px-6 sm:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <button onClick={() => router.push('/')} className="text-muted-foreground hover:text-foreground p-2 hover:bg-muted rounded-lg transition-colors" title="返回首页">
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: ROLE_COLOR.platform_designer }}>
+                <Wand2 className="w-4 h-4 text-white" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-foreground">游戏设计师工作台</div>
+                <div className="text-[10px] text-muted-foreground">配置甲方 · 乙方 · 场景 · AI 提示词</div>
+              </div>
             </div>
-            <span className="text-base font-semibold text-foreground">游戏设计师工作台</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <div
+              className="hidden sm:flex px-2.5 py-1.5 rounded-lg text-xs font-medium items-center gap-1.5 text-white shadow-sm"
+              style={{ background: ROLE_COLOR.platform_designer }}
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>{ROLE_LABEL.platform_designer}</span>
+            </div>
+            <button
+              onClick={handleSave}
+              className="btn-primary px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5"
+            >
+              <Save className="w-4 h-4" /> 保存配置
+            </button>
+            <button
+              onClick={() => {
+                document.cookie = 'weixun_session=; path=/; max-age=0';
+                document.cookie = 'weixun_identity=; path=/; max-age=0';
+                try { localStorage.removeItem('weixun_identity'); localStorage.removeItem('weixun_session'); } catch {}
+                router.push('/');
+              }}
+              className="p-2 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground transition-colors"
+              title="退出登录"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
         </div>
-        <button
-          onClick={handleSave}
-          className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1.5 hover:bg-primary/90"
-        >
-          <Save className="w-4 h-4" /> 保存配置
-        </button>
       </header>
 
-      <main className="max-w-7xl mx-auto px-8 py-6">
+      <main className="max-w-7xl mx-auto px-6 sm:px-8 py-6">
         {/* 项目选择 */}
-        <div className="mb-6 flex items-center gap-4">
-          <span className="text-sm font-semibold text-foreground">选择项目：</span>
-          <div className="flex gap-2">
+        <div className="mb-6 flex items-center gap-4 flex-wrap animate-fade-up">
+          <span className="text-sm font-semibold text-foreground uppercase tracking-wider">选择项目：</span>
+          <div className="flex gap-2 flex-wrap">
             {projects.map(p => (
               <button
                 key={p.id}
                 onClick={() => setSelectedProject(p.id)}
-                className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
                   selectedProject === p.id
-                    ? 'bg-primary text-primary-foreground'
+                    ? 'btn-primary text-primary-foreground shadow-sm'
                     : 'bg-card text-muted-foreground hover:text-foreground border border-border'
                 }`}
               >

@@ -1,6 +1,6 @@
 import { createServerClient } from '@/storage/database/supabase-client';
 import { getProgressionMultiplier } from '@/lib/game/acceptance-mode';
-import { calculateTotalScore, createProjectOneState, normalizeProjectOneState, reconcileNarrativeDiscoveries, type GameRuntimeState } from '@/lib/game/state';
+import { createProjectOneState, getGameOutcome, normalizeProjectOneState, reconcileNarrativeDiscoveries, type GameRuntimeState } from '@/lib/game/state';
 import type { GameReview } from '@/lib/contracts/game';
 
 export interface StoredChatMessage {
@@ -8,6 +8,7 @@ export interface StoredChatMessage {
   role: 'user' | 'assistant';
   content: string;
   createdAt: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface NpcInboxItem {
@@ -24,6 +25,13 @@ interface RuntimeStateRow {
   unlocked_npc_ids: string[];
   unlocked_clues: GameRuntimeState['unlockedClues'];
   conversation_memories: GameRuntimeState['conversationMemories'];
+  phase_started_at?: string | null;
+  phase_ends_at?: string | null;
+  paused_at?: string | null;
+  paused_remaining_ms?: number | null;
+  npc_contacts?: GameRuntimeState['npcContacts'] | null;
+  active_meeting?: GameRuntimeState['activeMeeting'];
+  simulation_state?: Partial<GameRuntimeState> | null;
   last_action: string | null;
   version: number;
 }
@@ -34,11 +42,22 @@ export interface OwnedGameSession {
   state: GameRuntimeState;
 }
 
+export interface GameSaveSummary {
+  id: string;
+  scenarioCode: string;
+  currentRound: number;
+  maxRounds: number;
+  updatedAt: string;
+  startedAt: string;
+}
+
+export const MAX_ACTIVE_GAME_SAVES = 5;
+
 function toState(session: Record<string, unknown>, runtime: RuntimeStateRow): GameRuntimeState {
   const rawStatus = String(session.status);
   const status: GameRuntimeState['status'] =
     rawStatus === 'won' || rawStatus === 'lost' ? rawStatus : 'playing';
-  return normalizeProjectOneState({
+  const legacyState = {
     scenarioCode: runtime.scenario_code,
     progressionMultiplier: 1,
     currentRound: Number(session.current_round),
@@ -50,7 +69,20 @@ function toState(session: Record<string, unknown>, runtime: RuntimeStateRow): Ga
     unlockedNpcIds: runtime.unlocked_npc_ids,
     unlockedClues: runtime.unlocked_clues,
     conversationMemories: runtime.conversation_memories,
+    phaseStartedAt: runtime.phase_started_at ?? '',
+    phaseEndsAt: runtime.phase_ends_at ?? '',
+    pausedAt: runtime.paused_at ?? null,
+    pausedRemainingMs: runtime.paused_remaining_ms ?? null,
+    npcContacts: runtime.npc_contacts ?? {},
+    activeMeeting: runtime.active_meeting ?? null,
     lastAction: runtime.last_action,
+    version: runtime.version,
+  };
+  return normalizeProjectOneState({
+    ...legacyState,
+    ...(runtime.simulation_state ?? {}),
+    // The relational version is the concurrency authority even if an older JSON
+    // snapshot contains a stale value.
     version: runtime.version,
   });
 }
@@ -63,7 +95,21 @@ export async function createGameSession(userId: string, displayName: string, sce
     .select('id, difficulty')
     .eq('code', scenarioCode)
     .single();
-  if (scenarioError || !scenario) throw new Error('SCENARIO_NOT_CONFIGURED');
+  // Project one is a fixed, bundled scenario. The explicit fallback preserves
+  // playable sessions on databases where RLS temporarily hides seed rows from
+  // the server client; the UUID is the idempotent seed value in seed.sql.
+  const resolvedScenario = scenario ?? (scenarioError
+    ? { id: '10000000-0000-4000-8000-000000000001', difficulty: 1 }
+    : null);
+  if (!resolvedScenario) throw new Error('SCENARIO_NOT_CONFIGURED');
+
+  const { count: activeSaveCount, error: activeSaveCountError } = await supabase
+    .from('game_sessions')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .eq('status', 'playing');
+  if (activeSaveCountError) throw new Error('SAVE_LIST_UNAVAILABLE');
+  if ((activeSaveCount ?? 0) >= MAX_ACTIVE_GAME_SAVES) throw new Error('SAVE_LIMIT_REACHED');
 
   const initialState = createProjectOneState(progressionMultiplier);
   const { data: session, error: sessionError } = await supabase
@@ -71,18 +117,29 @@ export async function createGameSession(userId: string, displayName: string, sce
     .insert({
       user_id: userId,
       user_name: displayName,
-      scenario_id: scenario.id,
-      difficulty: scenario.difficulty,
+      scenario_id: resolvedScenario.id,
+      difficulty: resolvedScenario.difficulty,
       mode: 'ai_dialog',
       multiplayer: false,
       current_round: initialState.currentRound,
       max_round: initialState.maxRounds,
-      total_score: calculateTotalScore(initialState.dimensions),
+      total_score: Math.round(getGameOutcome(initialState).finalScore),
       status: initialState.status,
     })
     .select('id')
     .single();
-  if (sessionError || !session) throw new Error('SESSION_CREATE_FAILED');
+  if (sessionError || !session) {
+    // Keep the browser response stable, but retain the database diagnostic in
+    // the server log.  Previously every failure was flattened into
+    // SESSION_CREATE_FAILED, which made a transient database/network problem
+    // indistinguishable from an invalid scenario or a schema mismatch.
+    console.error('game session insert failed', {
+      code: sessionError?.code,
+      message: sessionError?.message,
+      details: sessionError?.details,
+    });
+    throw new Error('SESSION_CREATE_FAILED');
+  }
 
   const { error: runtimeError } = await supabase.from('game_runtime_states').insert({
     session_id: session.id,
@@ -93,11 +150,23 @@ export async function createGameSession(userId: string, displayName: string, sce
     unlocked_npc_ids: initialState.unlockedNpcIds,
     unlocked_clues: initialState.unlockedClues,
     conversation_memories: initialState.conversationMemories,
+    phase_started_at: initialState.phaseStartedAt,
+    phase_ends_at: initialState.phaseEndsAt,
+    paused_at: initialState.pausedAt,
+    paused_remaining_ms: initialState.pausedRemainingMs,
+    npc_contacts: initialState.npcContacts,
+    active_meeting: initialState.activeMeeting,
+    simulation_state: initialState,
     last_action: initialState.lastAction,
     version: initialState.version,
   });
   if (runtimeError) {
     await supabase.from('game_sessions').delete().eq('id', session.id);
+    console.error('game runtime-state insert failed', {
+      code: runtimeError.code,
+      message: runtimeError.message,
+      details: runtimeError.details,
+    });
     throw new Error('RUNTIME_STATE_CREATE_FAILED');
   }
 
@@ -105,6 +174,45 @@ export async function createGameSession(userId: string, displayName: string, sce
     scenarioCode,
   });
   return { id: session.id as string, state: initialState };
+}
+
+export async function listOwnedActiveGameSaves(userId: string, scenarioCode?: string): Promise<GameSaveSummary[]> {
+  const supabase = createServerClient();
+  let query = supabase
+    .from('game_sessions')
+    .select('id, current_round, max_round, started_at, created_at, game_runtime_states!inner(scenario_code, updated_at)')
+    .eq('user_id', userId)
+    .eq('status', 'playing')
+    .order('created_at', { ascending: false })
+    .limit(MAX_ACTIVE_GAME_SAVES);
+  if (scenarioCode) query = query.eq('game_runtime_states.scenario_code', scenarioCode);
+  const { data, error } = await query;
+  if (error) throw new Error('SAVE_LIST_UNAVAILABLE');
+  return (data ?? []).map((row) => {
+    const runtime = Array.isArray(row.game_runtime_states) ? row.game_runtime_states[0] : row.game_runtime_states;
+    return {
+      id: String(row.id),
+      scenarioCode: String(runtime?.scenario_code ?? scenarioCode ?? 'project-1'),
+      currentRound: Number(row.current_round),
+      maxRounds: Number(row.max_round),
+      updatedAt: String(runtime?.updated_at ?? row.created_at ?? row.started_at),
+      startedAt: String(row.started_at ?? row.created_at),
+    };
+  });
+}
+
+export async function deleteOwnedActiveGameSave(sessionId: string, userId: string): Promise<void> {
+  const supabase = createServerClient();
+  const { data, error } = await supabase
+    .from('game_sessions')
+    .delete()
+    .eq('id', sessionId)
+    .eq('user_id', userId)
+    .eq('status', 'playing')
+    .select('id')
+    .maybeSingle();
+  if (error) throw new Error('SAVE_DELETE_FAILED');
+  if (!data) throw new Error('SAVE_NOT_DELETABLE');
 }
 
 export async function getOwnedGameSession(sessionId: string, userId: string): Promise<OwnedGameSession> {
@@ -123,10 +231,28 @@ export async function getOwnedGameSession(sessionId: string, userId: string): Pr
     .eq('session_id', sessionId)
     .single();
   if (runtimeError || !runtime) throw new Error('RUNTIME_STATE_NOT_FOUND');
+  const needsContactMigration = !Object.keys((runtime as RuntimeStateRow).npc_contacts ?? {}).length;
   let state = {
     ...toState(session, runtime as RuntimeStateRow),
     progressionMultiplier: getProgressionMultiplier(userId),
   };
+  if (needsContactMigration) {
+    const { data: priorReplies } = await supabase
+      .from('chat_messages')
+      .select('metadata')
+      .eq('session_id', sessionId)
+      .eq('sender', 'assistant');
+    const repliedNpcIds = new Set((priorReplies ?? []).map((row) => String((row.metadata as Record<string, unknown> | null)?.npcId ?? '')).filter(Boolean));
+    state = {
+      ...state,
+      npcContacts: Object.fromEntries(Object.entries(state.npcContacts).map(([npcId, contact]) => [
+        npcId,
+        repliedNpcIds.has(npcId) ? { ...contact, status: 'online' as const } : contact,
+      ])),
+    };
+  }
+  // Reading a session is deliberately side-effect free. Simulated time advances
+  // only through an explicit command, never because a browser refreshed later.
   if (!state.unlockedClues.includes('key_contact')) {
     const { data: replies } = await supabase
       .from('chat_messages')
@@ -136,7 +262,7 @@ export async function getOwnedGameSession(sessionId: string, userId: string): Pr
       .ilike('content', '%陈建国%')
       .limit(20);
     const reconciled = reconcileNarrativeDiscoveries(state, (replies ?? []).map((reply) => String(reply.content)));
-    if (reconciled !== state) state = await saveGameState(sessionId, reconciled);
+    if (reconciled !== state) state = reconciled;
   }
   return {
     id: session.id as string,
@@ -157,6 +283,13 @@ export async function saveGameState(sessionId: string, state: GameRuntimeState):
       unlocked_npc_ids: state.unlockedNpcIds,
       unlocked_clues: state.unlockedClues,
       conversation_memories: state.conversationMemories,
+      phase_started_at: state.phaseStartedAt,
+      phase_ends_at: state.phaseEndsAt,
+      paused_at: state.pausedAt,
+      paused_remaining_ms: state.pausedRemainingMs,
+      npc_contacts: state.npcContacts,
+      active_meeting: state.activeMeeting,
+      simulation_state: { ...state, version: nextVersion },
       last_action: state.lastAction,
       version: nextVersion,
       updated_at: new Date().toISOString(),
@@ -167,7 +300,8 @@ export async function saveGameState(sessionId: string, state: GameRuntimeState):
     .single();
   if (runtimeError || !runtime) throw new Error('STATE_VERSION_CONFLICT');
 
-  const totalScore = calculateTotalScore(state.dimensions);
+  const outcome = getGameOutcome(state);
+  const totalScore = Math.round(outcome.finalScore);
   const { error: sessionError } = await supabase
     .from('game_sessions')
     .update({
@@ -183,12 +317,111 @@ export async function saveGameState(sessionId: string, state: GameRuntimeState):
         dimensions: state.dimensions,
         npcAffinity: state.npcAffinity,
         unlockedClues: state.unlockedClues,
+        outcome,
       },
       finished_at: state.status === 'playing' ? null : new Date().toISOString(),
     })
     .eq('id', sessionId);
   if (sessionError) throw new Error('SESSION_STATE_UPDATE_FAILED');
   return { ...state, version: nextVersion };
+}
+
+export interface GameCommandCommitResult {
+  state: GameRuntimeState;
+  result: Record<string, unknown>;
+  replayed: boolean;
+}
+
+export async function getCommittedGameCommand(
+  sessionId: string,
+  commandId: string,
+): Promise<GameCommandCommitResult | null> {
+  const supabase = createServerClient();
+  const { data, error } = await supabase
+    .from('game_command_records')
+    .select('status, response')
+    .eq('session_id', sessionId)
+    .eq('command_id', commandId)
+    .maybeSingle();
+  if (error) throw new Error('GAME_COMMAND_LOOKUP_FAILED');
+  if (!data || data.status !== 'completed' || !data.response) return null;
+  const response = data.response as { state?: GameRuntimeState; result?: Record<string, unknown> };
+  if (!response.state) throw new Error('GAME_COMMAND_RESPONSE_INVALID');
+  return {
+    state: normalizeProjectOneState(response.state),
+    result: response.result ?? {},
+    replayed: true,
+  };
+}
+
+/**
+ * Atomically commits a deterministic game command and its audit event. The
+ * database owns idempotency by (session_id, command_id), so retries and double
+ * clicks return the original response without charging time or points twice.
+ */
+export async function commitGameCommand(args: {
+  sessionId: string;
+  commandId: string;
+  commandType: string;
+  expectedVersion: number;
+  state: GameRuntimeState;
+  eventType: string;
+  eventPayload?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  chatMessages?: Array<{
+    round: number;
+    role: 'user' | 'assistant';
+    content: string;
+    affinityDelta?: number;
+    scoreDelta?: number;
+    metadata?: Record<string, unknown>;
+  }>;
+}): Promise<GameCommandCommitResult> {
+  const supabase = createServerClient();
+  const { data, error } = await supabase.rpc('commit_game_command', {
+    p_session_id: args.sessionId,
+    p_command_id: args.commandId,
+    p_command_type: args.commandType,
+    p_expected_version: args.expectedVersion,
+    p_state: args.state,
+    p_total_score: Math.round(getGameOutcome(args.state).finalScore),
+    p_event_type: args.eventType,
+    p_event_payload: args.eventPayload ?? {},
+    p_result: args.result ?? {},
+    p_chat_messages: args.chatMessages ?? [],
+  });
+  if (error || !data || typeof data !== 'object') {
+    const message = error?.message ?? '';
+    if (message.includes('STATE_VERSION_CONFLICT')) throw new Error('STATE_VERSION_CONFLICT');
+    if (message.includes('COMMAND_IN_PROGRESS')) throw new Error('COMMAND_IN_PROGRESS');
+    throw new Error('GAME_COMMAND_COMMIT_FAILED');
+  }
+  const envelope = data as { replayed?: boolean; response?: { state?: GameRuntimeState; result?: Record<string, unknown> } };
+  if (!envelope.response?.state) throw new Error('GAME_COMMAND_RESPONSE_INVALID');
+  return {
+    state: normalizeProjectOneState(envelope.response.state),
+    result: envelope.response.result ?? {},
+    replayed: Boolean(envelope.replayed),
+  };
+}
+
+export async function commitPhaseTransition(
+  sessionId: string,
+  state: GameRuntimeState,
+  eventType: string,
+  eventPayload: Record<string, unknown>,
+): Promise<GameRuntimeState> {
+  const supabase = createServerClient();
+  const { data, error } = await supabase.rpc('commit_game_phase_transition', {
+    p_session_id: sessionId,
+    p_expected_version: state.version,
+    p_state: state,
+    p_total_score: Math.round(getGameOutcome(state).finalScore),
+    p_event_type: eventType,
+    p_event_payload: eventPayload,
+  });
+  if (error || typeof data !== 'number') throw new Error(error?.message.includes('STATE_VERSION_CONFLICT') ? 'STATE_VERSION_CONFLICT' : 'PHASE_TRANSITION_FAILED');
+  return { ...state, version: data };
 }
 
 export async function appendGameEvent(
@@ -300,7 +533,7 @@ export async function getNpcConversation(sessionId: string, npcId: string, limit
   const supabase = createServerClient();
   const { data, error } = await supabase
     .from('chat_messages')
-    .select('id, sender, content, created_at')
+    .select('id, sender, content, created_at, metadata')
     .eq('session_id', sessionId)
     .contains('metadata', { npcId })
     .in('sender', ['user', 'assistant'])
@@ -312,6 +545,7 @@ export async function getNpcConversation(sessionId: string, npcId: string, limit
     role: message.sender as 'user' | 'assistant',
     content: String(message.content),
     createdAt: String(message.created_at),
+    metadata: (message.metadata as Record<string, unknown> | null) ?? undefined,
   }));
 }
 
@@ -336,7 +570,7 @@ export async function getNpcConversationRange(
   const supabase = createServerClient();
   const { data, error } = await supabase
     .from('chat_messages')
-    .select('id, sender, content, created_at')
+    .select('id, sender, content, created_at, metadata')
     .eq('session_id', sessionId)
     .contains('metadata', { npcId })
     .in('sender', ['user', 'assistant'])
@@ -348,6 +582,7 @@ export async function getNpcConversationRange(
     role: message.sender as 'user' | 'assistant',
     content: String(message.content),
     createdAt: String(message.created_at),
+    metadata: (message.metadata as Record<string, unknown> | null) ?? undefined,
   }));
 }
 
@@ -355,7 +590,7 @@ export async function getSessionTranscript(sessionId: string, limit = 80): Promi
   const supabase = createServerClient();
   const { data, error } = await supabase
     .from('chat_messages')
-    .select('id, sender, content, created_at')
+    .select('id, sender, content, created_at, metadata')
     .eq('session_id', sessionId)
     .in('sender', ['user', 'assistant'])
     .order('created_at', { ascending: true })
@@ -366,6 +601,7 @@ export async function getSessionTranscript(sessionId: string, limit = 80): Promi
     role: message.sender as 'user' | 'assistant',
     content: String(message.content),
     createdAt: String(message.created_at),
+    metadata: (message.metadata as Record<string, unknown> | null) ?? undefined,
   }));
 }
 
@@ -383,15 +619,14 @@ export async function getStoredReview(sessionId: string): Promise<GameReview | n
 
 export async function saveStoredReview(sessionId: string, state: GameRuntimeState, review: GameReview) {
   const supabase = createServerClient();
+  const outcome = getGameOutcome(state);
   const { error } = await supabase
     .from('game_sessions')
     .update({
       final_report: {
-        status: state.status,
-        totalScore: calculateTotalScore(state.dimensions),
-        dimensions: state.dimensions,
-        npcAffinity: state.npcAffinity,
-        unlockedClues: state.unlockedClues,
+        ...state,
+        totalScore: outcome.finalScore,
+        outcome,
         review,
       },
     })

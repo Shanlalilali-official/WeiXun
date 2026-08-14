@@ -325,8 +325,11 @@ export default function EnterpriseAdminPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center text-muted-foreground">
-        加载中...
+      <div className="min-h-screen bg-role-admin flex items-center justify-center text-muted-foreground">
+        <div className="flex items-center gap-3">
+          <span className="w-5 h-5 border-2 border-role-admin border-t-transparent rounded-full animate-spin" />
+          加载中...
+        </div>
       </div>
     );
   }
@@ -352,31 +355,36 @@ export default function EnterpriseAdminPage() {
   };
 
   return (
-    <div className="min-h-screen" style={{ background: '#F6F8FB' }}>
+    <div className="min-h-screen bg-role-admin">
       {/* Header */}
-      <header className="h-16 bg-card border-b border-border px-8 flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <button onClick={() => router.push('/')} className="text-muted-foreground hover:text-foreground">
-            <Shield className="w-5 h-5" />
-          </button>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: '#0EA5E9' }}>
-              <Shield className="w-4 h-4 text-white" />
-            </div>
-            <span className="text-foreground">企业管理员工作台</span>
-          </div>
-          <nav className="flex items-center gap-1 text-sm ml-8">
-            <button onClick={() => router.push('/designer')} className="px-3 py-1.5 text-muted-foreground hover:text-foreground rounded flex items-center gap-1.5">
-              <Wand2 className="w-3.5 h-3.5" /> 游戏设计师
+      <header className="topbar-glass sticky top-0 z-20">
+        <div className="max-w-7xl mx-auto px-6 sm:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <button onClick={() => router.push('/')} className="text-muted-foreground hover:text-foreground p-2 hover:bg-muted rounded-lg transition-colors" title="返回首页">
+              <Shield className="w-5 h-5" />
             </button>
-          </nav>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="px-2.5 py-1 rounded-full text-xs font-semibold text-white" style={{ background: '#0EA5E9' }}>企业管理员</span>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center shadow-sm" style={{ background: '#0EA5E9' }}>
+                <Shield className="w-4 h-4 text-white" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-foreground">企业管理员工作台</div>
+                <div className="text-[10px] text-muted-foreground">学员 · 进度 · 邀请码 · 报告</div>
+              </div>
+            </div>
+            <nav className="hidden md:flex items-center gap-1 text-sm ml-8">
+              <button onClick={() => router.push('/designer')} className="px-3 py-1.5 text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted transition-colors flex items-center gap-1.5">
+                <Wand2 className="w-3.5 h-3.5" /> 游戏设计师
+              </button>
+            </nav>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="hidden sm:inline-flex px-2.5 py-1.5 rounded-lg text-xs font-semibold text-white shadow-sm" style={{ background: '#0EA5E9' }}>企业管理员</span>
+          </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-8 py-6">
+      <main className="max-w-7xl mx-auto px-6 sm:px-8 py-6">
         {/* Stats */}
         <div className="grid grid-cols-4 gap-4 mb-6">
           <div className="bg-card rounded-xl border border-border px-5 py-4 flex items-center gap-4">
@@ -491,7 +499,7 @@ export default function EnterpriseAdminPage() {
                   </table>
                 </div>
               ) : (
-                <div className="text-center py-12 text-sm text-muted-foreground">暂无玩家，点击"添加玩家"开始</div>
+                <div className="text-center py-12 text-sm text-muted-foreground">暂无玩家，点击「添加玩家」开始</div>
               )}
             </div>
           )}

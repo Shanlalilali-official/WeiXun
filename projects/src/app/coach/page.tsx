@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Megaphone, Plus, Copy, Play, StopCircle, Users, BarChart3, FileText, ArrowLeft, Wand2, Building2, Eye, MessageSquare, List, Lock, Unlock, History, ChevronDown, ChevronRight, Trophy, KeyRound } from 'lucide-react';
+import { Megaphone, Plus, Copy, Play, StopCircle, Users, BarChart3, FileText, ArrowLeft, Wand2, Building2, Eye, MessageSquare, List, Lock, Unlock, History, ChevronDown, ChevronRight, Trophy, KeyRound, LogOut, ShieldCheck } from 'lucide-react';
+import { ROLE_COLOR, ROLE_LABEL } from '@/components/app-shell';
 
 interface Room {
   id: number;
@@ -247,81 +248,93 @@ export default function CoachPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center text-muted-foreground">
-        加载中...
+      <div className="min-h-screen bg-role-trainer flex items-center justify-center text-muted-foreground">
+        <div className="flex items-center gap-3">
+          <span className="w-5 h-5 border-2 border-warning border-t-transparent rounded-full animate-spin" />
+          加载中...
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen" style={{ background: '#F6F8FB' }}>
+    <div className="min-h-screen bg-role-trainer">
       {/* 顶部导航 */}
-      <header className="h-16 bg-card border-b border-border px-8 flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <button onClick={() => router.push('/')} className="text-muted-foreground hover:text-foreground">
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-warning flex items-center justify-center">
-              <Megaphone className="w-4 h-4 text-white" />
-            </div>
-            <span className="text-base font-semibold text-foreground">培训教练工作台</span>
-          </div>
-          <nav className="flex items-center gap-1 text-sm ml-8">
-            <button onClick={() => router.push('/designer')} className="px-3 py-1.5 text-muted-foreground hover:text-foreground rounded flex items-center gap-1.5">
-              <Wand2 className="w-3.5 h-3.5" /> 游戏设计师
+      <header className="topbar-glass sticky top-0 z-20">
+        <div className="max-w-7xl mx-auto px-6 sm:px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <button onClick={() => router.push('/')} className="text-muted-foreground hover:text-foreground p-2 hover:bg-muted rounded-lg transition-colors" title="返回首页">
+              <ArrowLeft className="w-5 h-5" />
             </button>
-          </nav>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg btn-warning flex items-center justify-center">
+                <Megaphone className="w-4 h-4 text-white" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-foreground">培训教练工作台</div>
+                <div className="text-[10px] text-muted-foreground">多人联机 · 实时管控</div>
+              </div>
+            </div>
+            <nav className="hidden md:flex items-center gap-1 text-sm ml-8">
+              <button onClick={() => router.push('/designer')} className="px-3 py-1.5 text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted transition-colors flex items-center gap-1.5">
+                <Wand2 className="w-3.5 h-3.5" /> 游戏设计师
+              </button>
+            </nav>
+          </div>
+          <div className="flex items-center gap-3">
+            <div
+              className="hidden sm:flex px-2.5 py-1.5 rounded-lg text-xs font-medium items-center gap-1.5 text-white shadow-sm"
+              style={{ background: ROLE_COLOR.trainer }}
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>{ROLE_LABEL.trainer}</span>
+            </div>
+            <button
+              onClick={() => {
+                document.cookie = 'weixun_session=; path=/; max-age=0';
+                document.cookie = 'weixun_identity=; path=/; max-age=0';
+                try { localStorage.removeItem('weixun_identity'); localStorage.removeItem('weixun_session'); } catch {}
+                router.push('/');
+              }}
+              className="p-2 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground transition-colors"
+              title="退出登录"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-8 py-6">
+      <main className="max-w-7xl mx-auto px-6 sm:px-8 py-6">
         {/* 统计卡片 */}
-        <div className="grid grid-cols-4 gap-4 mb-6">
-          <div className="bg-card rounded-xl border border-border px-5 py-4 flex items-center gap-4">
-            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-              <Users className="w-4 h-4 text-primary" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-foreground">{rooms.length}</div>
-              <div className="text-xs text-muted-foreground">房间总数</div>
-            </div>
-          </div>
-          <div className="bg-card rounded-xl border border-border px-5 py-4 flex items-center gap-4">
-            <div className="w-10 h-10 rounded-lg bg-success/10 flex items-center justify-center">
-              <Play className="w-4 h-4 text-success" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-foreground">{rooms.filter(r => r.status === '进行中').length}</div>
-              <div className="text-xs text-muted-foreground">进行中</div>
-            </div>
-          </div>
-          <div className="bg-card rounded-xl border border-border px-5 py-4 flex items-center gap-4">
-            <div className="w-10 h-10 rounded-lg bg-warning/10 flex items-center justify-center">
-              <List className="w-4 h-4 text-warning" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-foreground">{groups.length}</div>
-              <div className="text-xs text-muted-foreground">小组总数</div>
-            </div>
-          </div>
-          <div className="bg-card rounded-xl border border-border px-5 py-4 flex items-center gap-4">
-            <div className="w-10 h-10 rounded-lg bg-purple-500/10 flex items-center justify-center">
-              <BarChart3 className="w-4 h-4 text-purple-500" />
-            </div>
-            <div>
-              <div className="text-2xl font-bold text-foreground">{players.length}</div>
-              <div className="text-xs text-muted-foreground">玩家总数</div>
-            </div>
-          </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          {[
+            { label: '房间总数', value: rooms.length, icon: Users, color: '#2F6BFF', tintBg: 'rgba(47,107,255,0.10)' },
+            { label: '进行中', value: rooms.filter(r => r.status === '进行中').length, icon: Play, color: '#16A37B', tintBg: 'rgba(22,163,123,0.10)' },
+            { label: '小组总数', value: groups.length, icon: List, color: '#EA580C', tintBg: 'rgba(234,88,12,0.10)' },
+            { label: '玩家总数', value: players.length, icon: BarChart3, color: '#7C3AED', tintBg: 'rgba(124,58,237,0.10)' },
+          ].map((s, idx) => {
+            const Icon = s.icon;
+            return (
+              <div key={s.label} className={`card-elevated px-5 py-4 flex items-center gap-4 animate-fade-up-${Math.min(idx + 1, 3)}`}>
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: s.tintBg }}>
+                  <Icon className="w-4 h-4" style={{ color: s.color }} />
+                </div>
+                <div>
+                  <div className="text-2xl font-bold text-foreground num">{s.value}</div>
+                  <div className="text-xs text-muted-foreground">{s.label}</div>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {/* 邀请码验证 */}
         {!inviteCodeVerified && (
-          <div className="bg-card rounded-2xl border border-border p-8">
+          <div className="card-elevated p-8 animate-fade-up">
             <div className="max-w-md mx-auto text-center">
-              <div className="w-14 h-14 rounded-xl mx-auto mb-4 flex items-center justify-center" style={{ background: 'rgba(234,88,12,0.1)' }}>
-                <KeyRound className="w-6 h-6" style={{ color: '#EA580C' }} />
+              <div className="w-14 h-14 rounded-xl mx-auto mb-4 flex items-center justify-center" style={{ background: 'rgba(234,88,12,0.12)' }}>
+                <KeyRound className="w-6 h-6 text-warning" />
               </div>
               <div className="text-lg font-bold text-foreground mb-1">请输入邀请码</div>
               <div className="text-sm text-muted-foreground mb-5">企业管理员已锁定教练权限，请输入邀请码后继续操作</div>
@@ -336,14 +349,13 @@ export default function CoachPage() {
                 />
                 <button
                   onClick={handleVerifyInviteCode}
-                  className="px-5 py-2.5 rounded-lg text-white text-sm font-semibold hover:opacity-90"
-                  style={{ background: '#EA580C' }}
+                  className="px-5 py-2.5 rounded-lg btn-warning text-sm font-semibold"
                 >
                   验证
                 </button>
               </div>
               {inviteCodeError && (
-                <div className="text-xs mt-2" style={{ color: '#EA580C' }}>{inviteCodeError}</div>
+                <div className="text-xs mt-2 text-destructive">{inviteCodeError}</div>
               )}
             </div>
           </div>
@@ -352,49 +364,30 @@ export default function CoachPage() {
         {/* Tab 切换 */}
         {inviteCodeVerified && (
         <>
-        <div className="bg-card rounded-t-2xl border border-border border-b-0 px-6 flex items-center gap-8">
-          <button
-            onClick={() => setActiveTab('rooms')}
-            className={`relative py-4 text-sm font-semibold flex items-center gap-2 ${activeTab === 'rooms' ? 'text-foreground' : 'text-muted-foreground'}`}
-          >
-            <Users className="w-4 h-4" /> 房间管理
-            {activeTab === 'rooms' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-warning" />}
-          </button>
-          <button
-            onClick={() => setActiveTab('groups')}
-            className={`relative py-4 text-sm font-semibold flex items-center gap-2 ${activeTab === 'groups' ? 'text-foreground' : 'text-muted-foreground'}`}
-          >
-            <List className="w-4 h-4" /> 小组管理
-            {activeTab === 'groups' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-warning" />}
-          </button>
-          <button
-            onClick={() => setActiveTab('reports')}
-            className={`relative py-4 text-sm font-semibold flex items-center gap-2 ${activeTab === 'reports' ? 'text-foreground' : 'text-muted-foreground'}`}
-          >
-            <FileText className="w-4 h-4" /> 结算报告
-            {activeTab === 'reports' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-warning" />}
-          </button>
-          <button
-            onClick={() => setActiveTab('ranking')}
-            className={`relative py-4 text-sm font-semibold flex items-center gap-2 ${activeTab === 'ranking' ? 'text-foreground' : 'text-muted-foreground'}`}
-          >
-            <Trophy className="w-4 h-4" /> 玩家排行榜
-            {activeTab === 'ranking' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-warning" />}
-          </button>
-          <button
-            onClick={() => setActiveTab('lock')}
-            className={`relative py-4 text-sm font-semibold flex items-center gap-2 ${activeTab === 'lock' ? 'text-foreground' : 'text-muted-foreground'}`}
-          >
-            <Lock className="w-4 h-4" /> 锁定配置
-            {activeTab === 'lock' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-warning" />}
-          </button>
-          <button
-            onClick={() => setActiveTab('history')}
-            className={`relative py-4 text-sm font-semibold flex items-center gap-2 ${activeTab === 'history' ? 'text-foreground' : 'text-muted-foreground'}`}
-          >
-            <History className="w-4 h-4" /> 历史记录
-            {activeTab === 'history' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-warning" />}
-          </button>
+        <div className="bg-card rounded-t-2xl border border-border border-b-0 px-6 flex items-center gap-1 sticky top-16 z-10 backdrop-blur overflow-x-auto">
+          {[
+            { id: 'rooms', label: '房间管理', icon: Users },
+            { id: 'groups', label: '小组管理', icon: List },
+            { id: 'reports', label: '结算报告', icon: FileText },
+            { id: 'ranking', label: '玩家排行榜', icon: Trophy },
+            { id: 'lock', label: '锁定配置', icon: Lock },
+            { id: 'history', label: '历史记录', icon: History },
+          ].map((t) => {
+            const Icon = t.icon;
+            const active = activeTab === t.id;
+            return (
+              <button
+                key={t.id}
+                onClick={() => setActiveTab(t.id as typeof activeTab)}
+                className={`relative py-4 px-4 text-sm font-semibold flex items-center gap-2 whitespace-nowrap transition-colors ${
+                  active ? 'text-warning' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Icon className="w-4 h-4" /> {t.label}
+                {active && <div className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full bg-warning" />}
+              </button>
+            );
+          })}
         </div>
 
         <div className="bg-card rounded-b-2xl border border-border border-t-0 p-6">
@@ -406,13 +399,13 @@ export default function CoachPage() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setShowInitiateModal(true)}
-                    className="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold flex items-center gap-1 hover:bg-primary/90"
+                    className="px-3 py-1.5 rounded-lg btn-primary text-xs font-semibold flex items-center gap-1"
                   >
                     <Play className="w-3.5 h-3.5" /> 发起对局
                   </button>
                   <button
                     onClick={() => setShowCreateRoom(true)}
-                    className="px-3 py-1.5 rounded-lg bg-warning text-white text-xs font-semibold flex items-center gap-1 hover:bg-warning/90"
+                    className="px-3 py-1.5 rounded-lg btn-warning text-xs font-semibold flex items-center gap-1"
                   >
                     <Plus className="w-3.5 h-3.5" /> 创建房间
                   </button>
@@ -433,13 +426,13 @@ export default function CoachPage() {
                     </thead>
                     <tbody>
                       {rooms.map((room) => (
-                        <tr key={room.id} className="border-b border-border hover:bg-surface-container/50">
-                          <td className="px-4 py-3 font-mono font-semibold text-foreground">{room.room_code}</td>
+                        <tr key={room.id} className="border-b border-border hover:bg-surface-container/50 transition-colors">
+                          <td className="px-4 py-3 font-mono font-semibold text-foreground num">{room.room_code}</td>
                           <td className="px-4 py-3">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              room.status === '未开始' ? 'bg-muted text-muted-foreground' :
-                              room.status === '进行中' ? 'bg-success/10 text-success' :
-                              'bg-destructive/10 text-destructive'
+                            <span className={`badge ${
+                              room.status === '未开始' ? 'badge-muted' :
+                              room.status === '进行中' ? 'badge-success' :
+                              'badge-danger'
                             }`}>
                               {room.status}
                             </span>
@@ -455,15 +448,15 @@ export default function CoachPage() {
                               <option value="free">自由模式</option>
                             </select>
                           </td>
-                          <td className="px-4 py-3 text-foreground">{room.current_players}/{room.max_players}</td>
-                          <td className="px-4 py-3 text-muted-foreground">
+                          <td className="px-4 py-3 text-foreground num">{room.current_players}/{room.max_players}</td>
+                          <td className="px-4 py-3 text-muted-foreground num">
                             {new Date(room.created_at).toLocaleDateString('zh-CN')}
                           </td>
                           <td className="px-4 py-3 text-right">
                             <div className="flex items-center justify-end gap-2">
                               <button
                                 onClick={() => handleCopyCode(room.room_code)}
-                                className="text-primary hover:text-primary/80"
+                                className="p-1.5 hover:bg-primary/10 rounded text-primary transition-colors"
                                 title="复制邀请码"
                               >
                                 <Copy className="w-4 h-4" />
@@ -471,7 +464,7 @@ export default function CoachPage() {
                               {room.status === '未开始' && (
                                 <button
                                   onClick={() => handleStartGame(room.id)}
-                                  className="text-success hover:text-success/80"
+                                  className="p-1.5 hover:bg-success/10 rounded text-success transition-colors"
                                   title="开始对局"
                                 >
                                   <Play className="w-4 h-4" />
@@ -480,7 +473,7 @@ export default function CoachPage() {
                               {room.status === '进行中' && (
                                 <button
                                   onClick={() => handleEndGame(room.id)}
-                                  className="text-destructive hover:text-destructive/80"
+                                  className="p-1.5 hover:bg-destructive/10 rounded text-destructive transition-colors"
                                   title="结束对局"
                                 >
                                   <StopCircle className="w-4 h-4" />
@@ -494,8 +487,8 @@ export default function CoachPage() {
                   </table>
                 </div>
               ) : (
-                <div className="text-center py-12 text-sm text-muted-foreground">
-                  暂无房间，点击"创建房间"或"发起对局"开始
+                <div className="text-center py-16 text-sm text-muted-foreground">
+                  暂无房间，点击「创建房间」或「发起对局」开始
                 </div>
               )}
             </div>
@@ -518,7 +511,7 @@ export default function CoachPage() {
                     </thead>
                     <tbody>
                       {groups.map((group) => (
-                        <tr key={group.id} className="border-b border-border hover:bg-surface-container/50">
+                        <tr key={group.id} className="border-b border-border hover:bg-surface-container/50 transition-colors">
                           <td className="px-4 py-3 font-semibold text-foreground">{group.group_name}</td>
                           <td className="px-4 py-3 text-foreground">{group.players.join(', ')}</td>
                           <td className="px-4 py-3">
@@ -535,10 +528,10 @@ export default function CoachPage() {
                             </select>
                           </td>
                           <td className="px-4 py-3">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              group.status === '未开始' ? 'bg-muted text-muted-foreground' :
-                              group.status === '进行中' ? 'bg-success/10 text-success' :
-                              'bg-primary/10 text-primary'
+                            <span className={`badge ${
+                              group.status === '未开始' ? 'badge-muted' :
+                              group.status === '进行中' ? 'badge-success' :
+                              'badge-primary'
                             }`}>
                               {group.status}
                             </span>
@@ -549,7 +542,7 @@ export default function CoachPage() {
                   </table>
                 </div>
               ) : (
-                <div className="text-center py-12 text-sm text-muted-foreground">
+                <div className="text-center py-16 text-sm text-muted-foreground">
                   暂无小组数据
                 </div>
               )}
@@ -575,22 +568,22 @@ export default function CoachPage() {
                     </thead>
                     <tbody>
                       {players.map((player) => (
-                        <tr key={player.id} className="border-b border-border hover:bg-surface-container/50">
+                        <tr key={player.id} className="border-b border-border hover:bg-surface-container/50 transition-colors">
                           <td className="px-4 py-3 font-semibold text-foreground">{player.username}</td>
-                          <td className="px-4 py-3 font-mono text-xs text-foreground">{player.room_code}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-foreground num">{player.room_code}</td>
                           <td className="px-4 py-3 text-foreground">{player.group_name}</td>
                           <td className="px-4 py-3">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              player.status === '未开始' ? 'bg-muted text-muted-foreground' :
-                              player.status === '进行中' ? 'bg-success/10 text-success' :
-                              'bg-primary/10 text-primary'
+                            <span className={`badge ${
+                              player.status === '未开始' ? 'badge-muted' :
+                              player.status === '进行中' ? 'badge-success' :
+                              'badge-primary'
                             }`}>
                               {player.status}
                             </span>
                           </td>
-                          <td className="px-4 py-3 font-semibold text-foreground">{player.score}</td>
+                          <td className="px-4 py-3 font-semibold text-foreground num">{player.score}</td>
                           <td className="px-4 py-3 text-right">
-                            <button className="text-primary hover:text-primary/80" title="查看详细报告">
+                            <button className="p-1.5 hover:bg-primary/10 rounded text-primary transition-colors" title="查看详细报告">
                               <Eye className="w-4 h-4" />
                             </button>
                           </td>
@@ -600,7 +593,7 @@ export default function CoachPage() {
                   </table>
                 </div>
               ) : (
-                <div className="text-center py-12 text-sm text-muted-foreground">
+                <div className="text-center py-16 text-sm text-muted-foreground">
                   暂无玩家数据
                 </div>
               )}
@@ -627,13 +620,13 @@ export default function CoachPage() {
                   <table className="w-full">
                     <thead>
                       <tr className="bg-surface-container/50 border-b border-border">
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground w-16">排名</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">玩家</th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground">综合得分</th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground">亲密度</th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground">策略分</th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground">表达分</th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground">对局数</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground w-16 uppercase tracking-wider">排名</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">玩家</th>
+                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider">综合得分</th>
+                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider">亲密度</th>
+                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider">策略分</th>
+                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider">表达分</th>
+                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider">对局数</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -644,16 +637,16 @@ export default function CoachPage() {
                         const expression = (65 + ((player.id * 9 + 11) % 35)).toFixed(1);
                         const games = 3 + ((player.id * 5 + 2) % 8);
                         return (
-                        <tr key={player.id} className={`border-b border-border last:border-b-0 ${index < 3 ? 'bg-warning/5' : ''}`}>
+                        <tr key={player.id} className={`border-b border-border last:border-b-0 hover:bg-surface-container/50 transition-colors ${index < 3 ? 'bg-warning/5' : ''}`}>
                           <td className="px-4 py-3">
                             {index === 0 && <span className="text-lg font-bold" style={{ color: '#FFD700' }}>🥇</span>}
                             {index === 1 && <span className="text-lg font-bold" style={{ color: '#C0C0C0' }}>🥈</span>}
                             {index === 2 && <span className="text-lg font-bold" style={{ color: '#CD7F32' }}>🥉</span>}
-                            {index >= 3 && <span className="text-sm font-semibold text-muted-foreground">{index + 1}</span>}
+                            {index >= 3 && <span className="text-sm font-semibold text-muted-foreground num">{index + 1}</span>}
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
-                              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: '#EA580C' }}>
+                              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: ROLE_COLOR.trainer }}>
                                 {player.username.charAt(0)}
                               </div>
                               <div>
@@ -663,19 +656,19 @@ export default function CoachPage() {
                             </div>
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <span className="text-sm font-bold text-foreground">{score}</span>
+                            <span className="text-sm font-bold text-foreground num">{score}</span>
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <span className="text-sm font-semibold text-success">{affinity}</span>
+                            <span className="text-sm font-semibold text-success num">{affinity}</span>
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <span className="text-sm font-semibold text-foreground">{strategy}</span>
+                            <span className="text-sm font-semibold text-foreground num">{strategy}</span>
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <span className="text-sm font-semibold text-foreground">{expression}</span>
+                            <span className="text-sm font-semibold text-foreground num">{expression}</span>
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <span className="text-sm font-semibold text-foreground">{games}</span>
+                            <span className="text-sm font-semibold text-foreground num">{games}</span>
                           </td>
                         </tr>
                         );
@@ -684,7 +677,7 @@ export default function CoachPage() {
                   </table>
                 </div>
               ) : (
-                <div className="text-center py-12 text-sm text-muted-foreground">暂无玩家数据</div>
+                <div className="text-center py-16 text-sm text-muted-foreground">暂无玩家数据</div>
               )}
             </div>
           )}
@@ -695,7 +688,7 @@ export default function CoachPage() {
               <div className="flex items-center justify-between mb-4">
                 <div className="text-sm font-semibold text-foreground">锁定甲乙方业务/场景</div>
                 {lockConfig.is_locked && (
-                  <span className="px-2 py-1 rounded bg-success/10 text-success text-xs font-bold flex items-center gap-1">
+                  <span className="badge badge-success">
                     <Lock className="w-3 h-3" /> 已锁定
                   </span>
                 )}
@@ -738,14 +731,15 @@ export default function CoachPage() {
                   {lockConfig.is_locked ? (
                     <button
                       onClick={handleUnlock}
-                      className="px-4 py-2 rounded-lg bg-destructive text-white text-sm font-semibold flex items-center gap-1.5 hover:bg-destructive/90"
+                      className="px-4 py-2 rounded-lg btn-primary text-sm font-semibold flex items-center gap-1.5"
+                      style={{ background: 'linear-gradient(135deg, #DC2626 0%, #EF4444 100%)' }}
                     >
                       <Unlock className="w-4 h-4" /> 解除锁定
                     </button>
                   ) : (
                     <button
                       onClick={handleSaveLock}
-                      className="px-4 py-2 rounded-lg bg-warning text-white text-sm font-semibold flex items-center gap-1.5 hover:bg-warning/90"
+                      className="px-4 py-2 rounded-lg btn-warning text-sm font-semibold flex items-center gap-1.5"
                     >
                       <Lock className="w-4 h-4" /> 保存并锁定
                     </button>
@@ -762,27 +756,27 @@ export default function CoachPage() {
               {history.length > 0 ? (
                 <div className="space-y-2">
                   {history.map((item) => (
-                    <div key={item.id} className="rounded-xl border border-border overflow-hidden">
-                      <div 
-                        className="px-4 py-3 bg-surface-container/50 flex items-center justify-between cursor-pointer hover:bg-surface-container"
+                    <div key={item.id} className="rounded-xl border border-border overflow-hidden hover:border-primary/30 transition-colors">
+                      <div
+                        className="px-4 py-3 bg-surface-container/50 flex items-center justify-between cursor-pointer hover:bg-surface-container transition-colors"
                         onClick={() => setExpandedHistory(expandedHistory === item.id ? null : item.id)}
                       >
-                        <div className="flex items-center gap-4">
-                          <span className="font-mono text-sm font-semibold text-foreground">{item.room_code}</span>
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            item.status === '未开始' ? 'bg-muted text-muted-foreground' :
-                            item.status === '进行中' ? 'bg-success/10 text-success' :
-                            'bg-primary/10 text-primary'
+                        <div className="flex items-center gap-4 flex-wrap">
+                          <span className="font-mono text-sm font-semibold text-foreground num">{item.room_code}</span>
+                          <span className={`badge ${
+                            item.status === '未开始' ? 'badge-muted' :
+                            item.status === '进行中' ? 'badge-success' :
+                            'badge-primary'
                           }`}>
                             {item.status}
                           </span>
                           <span className="text-xs text-muted-foreground">{item.game_mode === 'overview' ? '概述模式' : item.game_mode === 'dialogue' ? '对话模式' : '自由模式'}</span>
                           <span className="text-xs text-muted-foreground">{item.player_count} 名玩家</span>
-                          <span className="text-xs text-muted-foreground">{new Date(item.initiated_at).toLocaleDateString('zh-CN')}</span>
+                          <span className="text-xs text-muted-foreground num">{new Date(item.initiated_at).toLocaleDateString('zh-CN')}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           {item.can_view_reports && (
-                            <span className="px-2 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-bold">可查看报告</span>
+                            <span className="badge badge-primary">可查看报告</span>
                           )}
                           {expandedHistory === item.id ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
                         </div>
@@ -791,7 +785,7 @@ export default function CoachPage() {
                         <div className="px-4 py-3 border-t border-border">
                           <div className="text-xs font-semibold text-foreground mb-2">玩家报告列表</div>
                           <div className="text-xs text-muted-foreground">
-                            点击"结算报告"标签页查看该房间的详细报告
+                            点击「结算报告」标签页查看该房间的详细报告
                           </div>
                         </div>
                       )}
@@ -799,7 +793,7 @@ export default function CoachPage() {
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-12 text-sm text-muted-foreground">
+                <div className="text-center py-16 text-sm text-muted-foreground">
                   暂无历史记录
                 </div>
               )}
@@ -812,33 +806,33 @@ export default function CoachPage() {
 
       {/* 创建房间弹窗 */}
       {showCreateRoom && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowCreateRoom(false)}>
-          <div className="bg-card rounded-2xl p-6 w-[400px] shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm" onClick={() => setShowCreateRoom(false)}>
+          <div className="bg-card rounded-2xl border border-border p-6 w-[400px] shadow-2xl animate-modal-in" onClick={(e) => e.stopPropagation()}>
             <div className="text-base font-bold text-foreground mb-4">创建房间</div>
             <div className="space-y-3 mb-4">
-              <div className="p-3 rounded-lg bg-surface-container/50 border border-border">
+              <div className="p-3 rounded-lg bg-surface-container border border-border">
                 <div className="text-xs text-muted-foreground mb-1">最大小组数</div>
-                <div className="text-lg font-bold text-foreground">33 个小组</div>
+                <div className="text-lg font-bold text-foreground num">33 个小组</div>
               </div>
-              <div className="p-3 rounded-lg bg-surface-container/50 border border-border">
+              <div className="p-3 rounded-lg bg-surface-container border border-border">
                 <div className="text-xs text-muted-foreground mb-1">每组人数</div>
-                <div className="text-lg font-bold text-foreground">3 人/组</div>
+                <div className="text-lg font-bold text-foreground num">3 人/组</div>
               </div>
-              <div className="p-3 rounded-lg bg-surface-container/50 border border-border">
+              <div className="p-3 rounded-lg bg-surface-container border border-border">
                 <div className="text-xs text-muted-foreground mb-1">总容纳人数</div>
-                <div className="text-lg font-bold text-foreground">99 人</div>
+                <div className="text-lg font-bold text-foreground num">99 人</div>
               </div>
             </div>
             <div className="flex items-center justify-end gap-2">
               <button
                 onClick={() => setShowCreateRoom(false)}
-                className="px-4 py-2 rounded-lg border border-border text-sm text-foreground hover:bg-surface-container"
+                className="px-4 py-2 rounded-lg btn-glass text-sm text-foreground"
               >
                 取消
               </button>
               <button
                 onClick={handleCreateRoom}
-                className="px-4 py-2 rounded-lg bg-warning text-white text-sm font-semibold flex items-center gap-1.5 hover:bg-warning/90"
+                className="px-4 py-2 rounded-lg btn-warning text-sm font-semibold flex items-center gap-1.5"
               >
                 <Plus className="w-4 h-4" /> 确认创建
               </button>
@@ -849,8 +843,8 @@ export default function CoachPage() {
 
       {/* 发起对局弹窗 */}
       {showInitiateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowInitiateModal(false)}>
-          <div className="bg-card rounded-2xl p-6 w-[450px] shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm" onClick={() => setShowInitiateModal(false)}>
+          <div className="bg-card rounded-2xl border border-border p-6 w-[450px] shadow-2xl animate-modal-in" onClick={(e) => e.stopPropagation()}>
             <div className="text-base font-bold text-foreground mb-4">发起对局</div>
             <div className="space-y-4 mb-4">
               <div>
@@ -869,13 +863,13 @@ export default function CoachPage() {
             <div className="flex items-center justify-end gap-2">
               <button
                 onClick={() => setShowInitiateModal(false)}
-                className="px-4 py-2 rounded-lg border border-border text-sm text-foreground hover:bg-surface-container"
+                className="px-4 py-2 rounded-lg btn-glass text-sm text-foreground"
               >
                 取消
               </button>
               <button
                 onClick={handleInitiateGame}
-                className="px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold flex items-center gap-1.5 hover:bg-primary/90"
+                className="px-4 py-2 rounded-lg btn-primary text-sm font-semibold flex items-center gap-1.5"
               >
                 <Play className="w-4 h-4" /> 确认发起
               </button>

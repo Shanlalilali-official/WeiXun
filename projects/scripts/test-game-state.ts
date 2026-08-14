@@ -1,19 +1,33 @@
 import assert from 'node:assert/strict';
-import {
-  advanceRound,
-  applyNpcEvaluation,
-  applyRelationshipAction,
-  replenishActionPoints,
-  calculateTotalScore,
-  createProjectOneState,
-  getRelationshipActionEffect,
-  reconcileNarrativeDiscoveries,
-  type GameRuntimeState,
-} from '../src/lib/game/state';
 import type { NpcTurnEvaluation } from '../src/lib/contracts/ai';
 import { createFallbackNpcEvaluation } from '../src/lib/ai/npc-evaluation';
+import { gameCommandSchema, type GameCommand } from '../src/lib/contracts/game';
+import {
+  advanceRound,
+  applyIndirectImpression,
+  applyNpcEvaluation,
+  calculateTotalScore,
+  consumeGameTime,
+  createProjectOneState,
+  executeGameCommand,
+  getGameOutcome,
+  normalizeProjectOneState,
+  reconcileExpiredPhases,
+  recordMeetingTurn,
+  shouldNpcRespond,
+  submitGame,
+  type ExecuteGameCommandResult,
+  type GameAppointment,
+  type GameRuntimeState,
+  type VisitType,
+} from '../src/lib/game/state';
+import {
+  PROJECT_ONE_DAY_START_MINUTE,
+  PROJECT_ONE_STANDARD_DAY_MINUTES,
+  PROJECT_ONE_VISIT_RULES,
+} from '../src/lib/game/project-one';
 
-function evaluation(overrides: Partial<NpcTurnEvaluation>): NpcTurnEvaluation {
+function evaluation(overrides: Partial<NpcTurnEvaluation> = {}): NpcTurnEvaluation {
   return {
     affinityDelta: 0,
     affinityReason: '测试评价',
@@ -33,152 +47,476 @@ function evaluation(overrides: Partial<NpcTurnEvaluation>): NpcTurnEvaluation {
   };
 }
 
-const initial = createProjectOneState();
-assert.equal(initial.maxRounds, 5);
-assert.equal(initial.actionPoints, 28);
-assert.equal(initial.unlockedNpcIds.length, 3);
-assert.equal(initial.unlockedNpcIds.includes('p1-minister-chen-jianguo'), false);
+function run(state: GameRuntimeState, raw: Omit<GameCommand, 'expectedVersion'>): ExecuteGameCommandResult {
+  const command = gameCommandSchema.parse({ ...raw, expectedVersion: state.version });
+  const executed = executeGameCommand(state, command);
+  return { ...executed, state: { ...executed.state, version: state.version + 1 } };
+}
 
-const fallbackEvaluation = createFallbackNpcEvaluation({
-  npcId: 'p1-frontline-wang-hao',
-  npcName: '王浩',
-  npcTitle: '信息中心主任',
-  affinity: 35,
-  round: 1,
-  playerMessage: '我会把同类案例、系统对接清单和测试计划发给您。',
-  npcReply: '材料发来，我重点看对接方案和测试计划。',
+function findAcceptedInvite(
+  state: GameRuntimeState,
+  visitType: VisitType,
+  startMinute: number,
+  prefix: string,
+): ExecuteGameCommandResult {
+  for (let index = 0; index < 300; index += 1) {
+    const attempt = run(state, {
+      commandId: `${prefix}-${index}`,
+      type: 'invite',
+      payload: {
+        npcId: 'p1-frontline-wang-hao',
+        channel: 'work_phone',
+        invitationMethod: visitType === 'short' ? 'drop_in' : 'dedicated',
+        visitType,
+        venue: visitType === 'informal' ? '咖啡厅' : '办公室',
+        purpose: '确认项目安排',
+        scheduledRound: state.currentRound,
+        startMinute,
+      },
+    });
+    const appointment = (attempt.result.appointment as GameAppointment);
+    if (appointment.status === 'accepted') return attempt;
+  }
+  throw new Error(`Unable to find deterministic accepted invitation for ${visitType}`);
+}
+
+// New games use a simulated day and are independent of wall-clock input.
+const initialAtA = createProjectOneState(1, Date.parse('2020-01-01T00:00:00Z'));
+const initialAtB = createProjectOneState(1, Date.parse('2035-01-01T00:00:00Z'));
+assert.equal(initialAtA.currentRound, 1);
+assert.equal(initialAtA.maxRounds, 5);
+assert.equal(initialAtA.simulatedClockMinutes, PROJECT_ONE_DAY_START_MINUTE);
+assert.equal(initialAtA.dayAvailableMinutes, PROJECT_ONE_STANDARD_DAY_MINUTES);
+assert.equal(initialAtA.actionPoints, 28);
+assert.equal(initialAtA.phaseStartedAt, initialAtB.phaseStartedAt);
+assert.equal(initialAtA.phaseEndsAt, initialAtB.phaseEndsAt);
+assert.equal(initialAtA.pausedAt, null);
+assert.equal(reconcileExpiredPhases(initialAtA, Number.MAX_SAFE_INTEGER), initialAtA);
+
+// Legacy rows migrate to the new state without reading Date.now().
+const legacy = normalizeProjectOneState({
+  scenarioCode: 'project-1',
+  currentRound: 3,
+  maxRounds: 5,
+  actionPoints: 12,
+  status: 'playing',
+  dimensions: initialAtA.dimensions,
+  npcAffinity: { ...initialAtA.npcAffinity, 'p1-frontline-wang-hao': 47 },
+  unlockedClues: [],
+  conversationMemories: {},
+  lastAction: null,
+  version: 7,
+});
+assert.equal(legacy.simulatedClockMinutes, 9 * 60);
+assert.equal(legacy.dayAvailableMinutes, 480);
+assert.equal(legacy.npcAttitudes['p1-frontline-wang-hao'].support, 47);
+assert.equal(legacy.npcAffinity['p1-frontline-wang-hao'], 47);
+
+// Online channels consume 5/10/15 simulated minutes only after a command succeeds.
+let state = run(initialAtA, {
+  commandId: 'contact-wang',
+  type: 'contact',
+  payload: { npcId: 'p1-frontline-wang-hao', channel: 'work_phone' },
+}).state;
+assert.equal(state.simulatedClockMinutes, 9 * 60 + 15);
+assert.equal(state.dayAvailableMinutes, 480 - 15);
+assert.equal(state.cumulativeTimeMinutes, 15);
+assert.equal(state.npcContacts['p1-frontline-wang-hao'].hasReplied, true);
+
+// A formal appointment reserves 40 minutes; conversation turns do not consume time.
+const invited = findAcceptedInvite(state, 'formal', 11 * 60, 'formal-invite');
+state = invited.state;
+const formal = invited.result.appointment as GameAppointment;
+assert.equal(formal.durationMinutes, 40);
+assert.equal(formal.maxTurns, 6);
+assert.equal(state.dayAvailableMinutes, 480 - 15 - 15 - 40, 'invitation communication and reservation are both reflected');
+const prepared = run(state, {
+  commandId: 'prepare-ppt',
+  type: 'prepare',
+  payload: {
+    npcId: formal.npcId,
+    appointmentId: formal.id,
+    preparationType: 'ppt',
+    title: '项目方案',
+    content: '客户现状、组织价值、风险和下一步',
+  },
+});
+state = prepared.state;
+assert.equal(state.actionPoints, 24);
+assert.equal(state.cumulativeSpentPoints, 4);
+const pptId = String((prepared.result.preparation as { id: string }).id);
+const started = run(state, {
+  commandId: 'start-formal',
+  type: 'start_visit',
+  payload: { appointmentId: formal.id, preparationIds: [pptId] },
+});
+state = started.state;
+assert.equal(state.actionPoints, 24, 'invitation posture does not consume time or action points');
+assert.equal(state.activeMeeting?.visitType, 'formal');
+assert.equal(state.activeMeeting?.maxTurns, 6);
+const timeAtMeetingStart = state.cumulativeTimeMinutes;
+for (let index = 0; index < 5; index += 1) state = recordMeetingTurn(state);
+assert.equal(state.activeMeeting?.turnCount, 5);
+assert.equal(state.cumulativeTimeMinutes, timeAtMeetingStart, 'turns are content capacity, not time slices');
+state = recordMeetingTurn(state);
+assert.equal(state.activeMeeting, null);
+assert.equal(state.cumulativeTimeMinutes, timeAtMeetingStart + 40);
+assert.equal(state.appointments.find((item) => item.id === formal.id)?.status, 'completed');
+assert.equal(state.notifications.some((item) => item.kind === 'follow_up' && !item.isRead), true);
+assert.equal(state.meetingMinutes.length, 1);
+assert.equal(state.meetingMinutes[0].appointmentId, formal.id);
+assert.equal(state.meetingMinutes[0].visitType, 'formal');
+assert.equal(state.meetingMinutes[0].nextStepRound, 1);
+assert.equal(state.meetingMinutes[0].nextStepMinute, 12 * 60 + 10);
+assert.equal(Array.isArray(state.meetingMinutes[0].confirmedItems), true);
+assert.equal(state.meetingMinutes[0].playerCommitments.length > 0, true);
+assert.match(state.meetingMinutes[0].owner, /我方销售/);
+
+// Waiting advances the visible schedule without counting as invested work, and
+// skipped daytime opportunities cannot be recovered later.
+const waitedOneHour = run(initialAtA, {
+  commandId: 'wait-one-hour',
+  type: 'wait',
+  payload: { minutes: 60 },
+}).state;
+assert.equal(waitedOneHour.simulatedClockMinutes, 10 * 60);
+assert.equal(waitedOneHour.dayAvailableMinutes, 420);
+assert.equal(waitedOneHour.cumulativeTimeMinutes, 0);
+
+const waitedPastDeparture = run(invited.state, {
+  commandId: 'wait-past-departure',
+  type: 'wait',
+  payload: { minutes: 95 },
+}).state;
+assert.equal(waitedPastDeparture.appointments.find((item) => item.id === formal.id)?.status, 'missed');
+assert.equal(waitedPastDeparture.dayAvailableMinutes, 355, 'released reservation does not restore already skipped daytime');
+assert.equal(waitedPastDeparture.notifications.some((item) => item.id === `missed:${formal.id}`), true);
+
+// Overtime follows the simulated clock, is billed by each started 30-minute
+// block, and still reduces the compact "today available" capacity.
+let overtimeState = consumeGameTime({
+  ...initialAtA,
+  simulatedClockMinutes: 16 * 60 + 50,
+}, 20);
+assert.equal(overtimeState.simulatedClockMinutes, 17 * 60 + 10);
+assert.equal(overtimeState.overtimeMinutes, 10);
+assert.equal(overtimeState.actionPoints, 27);
+assert.equal(overtimeState.dayAvailableMinutes, 460);
+overtimeState = consumeGameTime(overtimeState, 25);
+assert.equal(overtimeState.overtimeMinutes, 35);
+assert.equal(overtimeState.actionPoints, 26, 'crossing into a second started overtime block costs one more point');
+
+// A normal action cannot silently run through an accepted appointment.
+assert.throws(() => consumeGameTime(invited.state, 91), /APPOINTMENT_CONFLICT/);
+assert.throws(() => run(state, {
+  commandId: 'invalid-late-formal',
+  type: 'invite',
+  payload: {
+    npcId: 'p1-frontline-wang-hao',
+    channel: 'work_phone',
+    invitationMethod: 'dedicated',
+    visitType: 'formal',
+    venue: '会议室',
+    purpose: '讨论项目方案',
+    scheduledRound: state.currentRound,
+    startMinute: 18 * 60 + 30,
+  },
+}), /APPOINTMENT_TIME_INVALID/);
+
+// Visit type rules are exact and no longer share a six-turn meeting limit.
+assert.deepEqual(PROJECT_ONE_VISIT_RULES.short, { durationMinutes: 5, maxTurns: 2 });
+assert.deepEqual(PROJECT_ONE_VISIT_RULES.formal, { durationMinutes: 40, maxTurns: 6 });
+assert.deepEqual(PROJECT_ONE_VISIT_RULES.informal, { durationMinutes: 60, maxTurns: 5 });
+
+for (const [visitType, startMinute] of [['short', 11 * 60], ['informal', 18 * 60]] as const) {
+  let visitState = run(initialAtA, {
+    commandId: `contact-${visitType}`,
+    type: 'contact',
+    payload: { npcId: 'p1-frontline-wang-hao', channel: 'work_phone' },
+  }).state;
+  const accepted = findAcceptedInvite(visitState, visitType, startMinute, `${visitType}-invite`);
+  visitState = accepted.state;
+  const appointment = accepted.result.appointment as GameAppointment;
+  assert.equal(appointment.durationMinutes, PROJECT_ONE_VISIT_RULES[visitType].durationMinutes);
+  assert.equal(appointment.maxTurns, PROJECT_ONE_VISIT_RULES[visitType].maxTurns);
+  visitState = run(visitState, {
+    commandId: `start-${visitType}`,
+    type: 'start_visit',
+    payload: { appointmentId: appointment.id, preparationIds: [] },
+  }).state;
+  if (visitType === 'informal') {
+    assert.equal(visitState.overtimeMinutes, 0, 'evening informal travel and meeting are overtime-exempt');
+    assert.equal(visitState.actionPoints, 22, 'coffee costs six points; invitation posture adds no travel cost');
+    assert.equal(visitState.dayAvailableMinutes, 0, 'unused daytime expires when leaving for an evening engagement');
+  }
+  const investedBeforeTurns = visitState.cumulativeTimeMinutes;
+  for (let turn = 0; turn < appointment.maxTurns; turn += 1) visitState = recordMeetingTurn(visitState);
+  assert.equal(visitState.activeMeeting, null);
+  assert.equal(visitState.cumulativeTimeMinutes, investedBeforeTurns + appointment.durationMinutes);
+}
+
+// A migrated online contact remains eligible even if its old snapshot lacks
+// the explicit hasReplied flag.
+const migratedOnline = {
+  ...initialAtA,
+  npcContacts: {
+    ...initialAtA.npcContacts,
+    'p1-frontline-wang-hao': {
+      ...initialAtA.npcContacts['p1-frontline-wang-hao'],
+      status: 'online' as const,
+      hasReplied: false,
+    },
+  },
+};
+assert.doesNotThrow(() => run(migratedOnline, {
+  commandId: 'migrated-online-invite',
+  type: 'invite',
+  payload: {
+    npcId: 'p1-frontline-wang-hao', channel: 'online', invitationMethod: 'dedicated',
+    visitType: 'formal', venue: '会议室', purpose: '历史联系人续约', scheduledRound: 1, startMinute: 12 * 60,
+  },
+}));
+
+const acceptedEvening: GameAppointment = {
+  id: 'evening-one', npcId: 'p1-frontline-wang-hao', invitationMethod: 'dedicated', visitType: 'informal',
+  venue: '餐厅', purpose: '晚餐', scheduledRound: 1, startMinute: 18 * 60, durationMinutes: 60,
+  maxTurns: 5, status: 'accepted', conditions: [], reservedMinutes: 60, workTopicOpenedBy: null,
+  invitationCommandId: 'evening-one',
+};
+const counteredEvening: GameAppointment = {
+  ...acceptedEvening,
+  id: 'evening-two', startMinute: 20 * 60, status: 'countered', reservedMinutes: 0, invitationCommandId: 'evening-two',
+};
+assert.throws(() => run({
+  ...initialAtA,
+  appointments: [acceptedEvening, counteredEvening],
+  dayAvailableMinutes: 420,
+}, {
+  commandId: 'accept-second-evening',
+  type: 'update_appointment',
+  payload: { appointmentId: counteredEvening.id, action: 'accept_counter' },
+}), /EVENING_VISIT_LIMIT_REACHED/);
+
+// AI controls person-specific attitude deltas while deterministic code clamps and mirrors support.
+const evaluated = applyNpcEvaluation(initialAtA, 'p1-frontline-wang-hao', evaluation({
+  affinityDelta: 1,
+  pleasureDelta: -7,
+  supportDelta: 4,
+  affinityReason: '负面信息虽然失礼，但随后提供了可核验解决方案',
+  dimensionDeltas: {
+    decisionAnalysis: 3,
+    relationshipBuilding: -1,
+    valuePresentation: 2,
+    objectionHandling: 1,
+    informationDiscovery: 2,
+  },
+  publicValueEvidence: ['客户认可方案能降低交付风险'],
+  personalBenefitEvidence: ['王浩确认该流程能减少重复录入工作'],
+}));
+assert.equal(evaluated.npcAttitudes['p1-frontline-wang-hao'].pleasantness, 43);
+assert.equal(evaluated.npcAttitudes['p1-frontline-wang-hao'].support, 39);
+assert.equal(evaluated.npcAffinity['p1-frontline-wang-hao'], 39);
+assert.equal(evaluated.outcomeEvidence.publicValue.length, 1);
+assert.equal(evaluated.outcomeEvidence.personalBenefit.length, 1);
+assert.equal(calculateTotalScore(evaluated.dimensions), 51);
+
+// Indirect impressions propagate once, at 50% before meeting, without cyclical reapplication.
+const indirectlyChanged = applyIndirectImpression(initialAtA, 'p1-procurement-liu-kai', 8, '方案准备充分', 'p1-frontline-wang-hao', 'handoff-1');
+assert.equal(indirectlyChanged.npcAttitudes['p1-procurement-liu-kai'].unmetImpression, 3);
+assert.deepEqual(
+  applyIndirectImpression(indirectlyChanged, 'p1-procurement-liu-kai', 8, '方案准备充分', 'p1-frontline-wang-hao', 'handoff-1'),
+  indirectlyChanged,
+);
+
+// Boundary gifts have a genuinely higher upside and also create delayed risk.
+let giftState = run(initialAtA, {
+  commandId: 'contact-gift-target',
+  type: 'contact',
+  payload: { npcId: 'p1-frontline-wang-hao', channel: 'work_phone' },
+}).state;
+const giftInvite = findAcceptedInvite(giftState, 'formal', 15 * 60, 'gift-visit');
+giftState = giftInvite.state;
+const giftAppointment = giftInvite.result.appointment as GameAppointment;
+const boundaryOne = run(giftState, {
+  commandId: 'prepare-boundary-one',
+  type: 'prepare',
+  payload: { npcId: giftAppointment.npcId, appointmentId: giftAppointment.id, preparationType: 'boundary_gift', title: '私人化高价值礼品', content: '' },
+});
+giftState = boundaryOne.state;
+const boundaryOneId = String((boundaryOne.result.preparation as { id: string }).id);
+const boundaryTwo = run(giftState, {
+  commandId: 'prepare-boundary-two',
+  type: 'prepare',
+  payload: { npcId: giftAppointment.npcId, appointmentId: giftAppointment.id, preparationType: 'boundary_gift', title: '第二份边界礼品', content: '' },
+});
+giftState = boundaryTwo.state;
+const boundaryTwoId = String((boundaryTwo.result.preparation as { id: string }).id);
+giftState = run(giftState, {
+  commandId: 'start-gift-visit',
+  type: 'start_visit',
+  payload: { appointmentId: giftAppointment.id, preparationIds: [] },
+}).state;
+let acceptedBoundary: ExecuteGameCommandResult | null = null;
+for (let index = 0; index < 500; index += 1) {
+  const attempt = run(giftState, {
+    commandId: `give-boundary-${index}`,
+    type: 'give_gift',
+    payload: { preparationId: boundaryOneId, appointmentId: giftAppointment.id, setting: 'private', witnesses: [], exchangeRequested: false },
+  });
+  if (attempt.result.disposition === 'delighted_acceptance' || attempt.result.disposition === 'cautious_acceptance') {
+    acceptedBoundary = attempt;
+    break;
+  }
+}
+assert(acceptedBoundary, 'a deterministic seed must expose the high-upside branch');
+giftState = acceptedBoundary.state;
+const giftHistory = giftState.npcAttitudes[giftAppointment.npcId].history.at(-1);
+assert((giftHistory?.pleasantnessDelta ?? 0) >= 5, 'boundary gift upside exceeds courtesy-gift range');
+assert.equal(giftState.complianceRisks.length, 1);
+assert.equal(giftState.complianceRisks[0].status, 'latent');
+
+const explicitExchange = run(giftState, {
+  commandId: 'explicit-gift-exchange',
+  type: 'give_gift',
+  payload: { preparationId: boundaryTwoId, appointmentId: giftAppointment.id, setting: 'private', witnesses: [], exchangeRequested: true },
+});
+assert.equal(explicitExchange.result.disposition, 'reported');
+assert.equal(explicitExchange.state.complianceRisks.at(-1)?.status, 'triggered');
+assert((explicitExchange.state.complianceRisks.at(-1)?.penalty ?? 0) > 0);
+
+// Trusted server-side AI assessments are clamped and cannot turn a rejection
+// into hidden positive gains. The raw deltas are not returned to the client.
+const aiGiftOverride = executeGameCommand(giftState, gameCommandSchema.parse({
+  commandId: 'ai-gift-rejection',
+  expectedVersion: giftState.version,
+  type: 'give_gift',
+  payload: { preparationId: boundaryTwoId, appointmentId: giftAppointment.id, setting: 'public', witnesses: [], exchangeRequested: false },
+}), {
+  giftEvaluation: {
+    disposition: 'firm_rejection',
+    pleasureDelta: 999,
+    supportDelta: 999,
+    severity: 99,
+    reason: '人物认为礼品不合时宜',
+    riskReason: '公开场合引发合规关注',
+    npcResponse: '这份礼物我不能收。',
+    source: 'model',
+  },
+});
+assert.equal(aiGiftOverride.result.disposition, 'firm_rejection');
+assert.equal(aiGiftOverride.result.message, '这份礼物我不能收。');
+assert.equal(aiGiftOverride.result.evaluationSource, 'model');
+assert.equal('pleasantnessDelta' in aiGiftOverride.result, false);
+assert((aiGiftOverride.state.npcAttitudes[giftAppointment.npcId].history.at(-1)?.pleasantnessDelta ?? 1) <= 0);
+assert.equal(aiGiftOverride.state.complianceRisks.at(-1)?.severity, 5);
+assert.equal(aiGiftOverride.eventPayload.reason, '人物认为礼品不合时宜');
+assert.equal(aiGiftOverride.eventPayload.source, 'model');
+
+// Mixed result formula combines capability, verified value and weighted support, then subtracts risk.
+const strongEvidence = {
+  publicValue: [
+    { id: 'pub-1', npcId: 'p1-deputy-zhao-feng', statement: '降低组织风险', strength: 5, source: 'ai_confirmed' as const, confirmedRound: 5 },
+    { id: 'pub-2', npcId: 'p1-minister-chen-jianguo', statement: '项目可落地', strength: 5, source: 'material' as const, confirmedRound: 5 },
+  ],
+  personalBenefit: [
+    { id: 'per-1', npcId: 'p1-frontline-wang-hao', statement: '减少重复工作', strength: 5, source: 'ai_confirmed' as const, confirmedRound: 5 },
+    { id: 'per-2', npcId: 'p1-procurement-liu-kai', statement: '提升专业声誉', strength: 5, source: 'ai_confirmed' as const, confirmedRound: 5 },
+  ],
+};
+const highDimensions = Object.fromEntries(Object.keys(initialAtA.dimensions).map((key) => [key, 100])) as GameRuntimeState['dimensions'];
+const highAttitudes = Object.fromEntries(Object.entries(initialAtA.npcAttitudes).map(([npcId, attitude]) => [npcId, { ...attitude, support: 80 }]));
+const outcomeState: GameRuntimeState = {
+  ...initialAtA,
+  dimensions: highDimensions,
+  npcAttitudes: highAttitudes,
+  npcAffinity: Object.fromEntries(Object.keys(highAttitudes).map((npcId) => [npcId, 80])),
+  outcomeEvidence: strongEvidence,
+};
+const outcome = getGameOutcome(outcomeState);
+assert.equal(outcome.fiveDimensionScore, 100);
+assert.equal(outcome.publicValueScore, 100);
+assert.equal(outcome.personalBenefitScore, 100);
+assert.equal(outcome.decisionChainSupportScore, 80);
+assert.equal(outcome.baseScore, 98);
+assert.equal(outcome.finalScore, 98);
+assert.equal(outcome.won, true);
+
+const penalized = getGameOutcome({
+  ...outcomeState,
+  complianceRisks: [{
+    id: 'triggered-risk', npcId: 'p1-frontline-wang-hao', preparationId: null, kind: 'report', severity: 5,
+    status: 'triggered', penalty: 20, reason: '已上报', createdRound: 5, triggerRound: 5, outcome: 'reported',
+  }],
+});
+assert.equal(penalized.compliancePenalty, 20);
+assert.equal(penalized.finalScore, 78);
+assert.equal(submitGame(outcomeState).status, 'won');
+assert.equal(submitGame(initialAtA).status, 'lost', 'submission is always allowed; insufficient preparation loses instead of throwing');
+
+// Phase progression is manual, replenishes points, and the fifth transition settles once.
+const spent = { ...initialAtA, actionPoints: 3, simulatedClockMinutes: 16 * 60, dayAvailableMinutes: 20 };
+const nextDay = advanceRound(spent, Date.parse('2099-01-01T00:00:00Z'));
+assert.equal(nextDay.currentRound, 2);
+assert.equal(nextDay.actionPoints, 11);
+assert.equal(nextDay.simulatedClockMinutes, 9 * 60);
+assert.equal(nextDay.dayAvailableMinutes, 480);
+let finalDay = outcomeState;
+for (let index = 1; index < 5; index += 1) finalDay = advanceRound(finalDay);
+assert.equal(finalDay.currentRound, 5);
+assert.equal(finalDay.status, 'playing');
+finalDay = advanceRound(finalDay);
+assert.equal(finalDay.status, 'won');
+
+// Command schemas reject invalid hours and deterministic helpers are stable.
+assert.equal(gameCommandSchema.safeParse({
+  commandId: 'invalid', expectedVersion: 1, type: 'invite',
+  payload: { npcId: 'x', channel: 'online', invitationMethod: 'dedicated', visitType: 'short', venue: '路边', purpose: '沟通', scheduledRound: 1, startMinute: 100 },
+}).success, false);
+assert.equal(shouldNpcRespond('stable-seed', 50), shouldNpcRespond('stable-seed', 50));
+
+const evaluationContext = {
+  npcId: 'p1-procurement-liu-kai',
+  npcName: '刘凯',
+  npcTitle: '采购专员',
+  npcPersonality: '谨慎、重视流程',
+  npcCategory: '一线',
+  npcConcern: '评优晋升与职业安全',
+  affinity: 45,
+  pleasure: 50,
+  support: 45,
+  round: 3,
   recentConversation: [],
   confirmedFacts: [],
   commitments: [],
-});
-assert.equal(fallbackEvaluation.affinityDelta, 2);
-assert.match(fallbackEvaluation.affinityReason, /具体信息|材料/);
-
-const afterAction = applyRelationshipAction(initial, 'p1-frontline-wang-hao', 'tea');
-assert.equal(afterAction.actionPoints, 22);
-assert.equal(afterAction.npcAffinity['p1-frontline-wang-hao'], 41);
-assert.equal(initial.actionPoints, 28, 'reducer must not mutate input state');
-assert.deepEqual(getRelationshipActionEffect('p1-frontline-wang-hao', 'tea'), {
-  baseAffinityDelta: 4,
-  preferenceAffinityDelta: 2,
-  totalAffinityDelta: 6,
-});
-assert.deepEqual(getRelationshipActionEffect('p1-deputy-zhao-feng', 'gift'), {
-  baseAffinityDelta: 3,
-  preferenceAffinityDelta: -3,
-  totalAffinityDelta: 0,
-});
-
-const fastAcceptance = createProjectOneState(3);
-const fastAction = applyRelationshipAction(fastAcceptance, 'p1-frontline-wang-hao', 'tea');
-assert.equal(fastAction.actionPoints, 22, 'quick acceptance does not discount action-point costs');
-assert.equal(fastAction.npcAffinity['p1-frontline-wang-hao'], 53, 'quick acceptance triples affinity changes');
-assert.equal(replenishActionPoints(fastAcceptance, 30).actionPoints, 58, 'quick acceptance can replenish action points');
-assert.throws(() => replenishActionPoints(fastAcceptance, 0), /ACTION_POINTS_AMOUNT_INVALID/);
-assert.deepEqual(getRelationshipActionEffect('p1-frontline-wang-hao', 'tea', 3), {
-  baseAffinityDelta: 12,
-  preferenceAffinityDelta: 6,
-  totalAffinityDelta: 18,
-});
-
-let relationshipUnlocked = initial;
-for (let index = 0; index < 8; index += 1) {
-  relationshipUnlocked = applyRelationshipAction(
-    relationshipUnlocked,
-    'p1-frontline-wang-hao',
-    'festival',
-  );
-}
-assert.equal(relationshipUnlocked.npcAffinity['p1-frontline-wang-hao'], 59);
-assert.equal(relationshipUnlocked.unlockedNpcIds.includes('p1-minister-chen-jianguo'), false);
-
-assert.throws(
-  () => applyRelationshipAction({ ...initial, actionPoints: 0 }, 'p1-frontline-wang-hao', 'gift'),
-  /ACTION_POINTS_INSUFFICIENT/,
-);
-
-const evaluated = applyNpcEvaluation(initial, 'p1-frontline-wang-hao', evaluation({
-  affinityDelta: 8,
-  dimensionDeltas: {
-    decisionAnalysis: 3,
-    relationshipBuilding: 2,
-    valuePresentation: 1,
-    objectionHandling: 0,
-    informationDiscovery: 3,
-  },
-  cluesUnlocked: ['decision_process'],
-  confirmedFacts: ['技术方案与商务报价分别评审'],
-  commitments: ['下周三安排方案演示'],
-  emotion: 'excited',
-}));
-assert.equal(evaluated.unlockedNpcIds.includes('p1-minister-chen-jianguo'), false);
-assert.equal(evaluated.dimensions.decisionAnalysis, 53);
-assert.deepEqual(evaluated.conversationMemories['p1-frontline-wang-hao']?.confirmedFacts, ['技术方案与商务报价分别评审']);
-assert.deepEqual(evaluated.conversationMemories['p1-frontline-wang-hao']?.commitments, ['下周三安排方案演示']);
-
-const fastEvaluated = applyNpcEvaluation(fastAcceptance, 'p1-frontline-wang-hao', evaluation({
-  affinityDelta: 2,
-  dimensionDeltas: { decisionAnalysis: 2, relationshipBuilding: 0, valuePresentation: 0, objectionHandling: 0, informationDiscovery: 0 },
-}));
-assert.equal(fastEvaluated.npcAffinity['p1-frontline-wang-hao'], 41);
-assert.equal(fastEvaluated.dimensions.decisionAnalysis, 56, 'quick acceptance triples dimension changes');
-
-const explicitlyRevealed = applyNpcEvaluation(relationshipUnlocked, 'p1-frontline-wang-hao', evaluation({
-  affinityDelta: 0,
-  dimensionDeltas: {
-    decisionAnalysis: 0,
-    relationshipBuilding: 0,
-    valuePresentation: 0,
-    objectionHandling: 0,
-    informationDiscovery: 0,
-  },
-  cluesUnlocked: ['decision_process'],
-  emotion: 'thinking',
-}), '业务评估先找业务部部长陈建国，他汇总意见后再往上报。');
-assert.equal(explicitlyRevealed.unlockedClues.includes('key_contact'), true);
-assert.equal(explicitlyRevealed.unlockedNpcIds.includes('p1-minister-chen-jianguo'), true);
-
-const legacyPhraseReconciled = reconcileNarrativeDiscoveries(relationshipUnlocked, [
-  '涉及内部决策链我得先跟业务部陈建国部长汇报。',
-]);
-assert.equal(legacyPhraseReconciled.unlockedClues.includes('key_contact'), true);
-assert.equal(legacyPhraseReconciled.unlockedNpcIds.includes('p1-minister-chen-jianguo'), true);
-
-const prematurePersonalClue = applyNpcEvaluation(initial, 'p1-frontline-wang-hao', evaluation({
-  affinityDelta: 0,
-  dimensionDeltas: {
-    decisionAnalysis: 0,
-    relationshipBuilding: 0,
-    valuePresentation: 0,
-    objectionHandling: 0,
-    informationDiscovery: 0,
-  },
-  cluesUnlocked: ['personal_interest'],
-  emotion: 'thinking',
-}));
-assert.equal(prematurePersonalClue.unlockedClues.includes('personal_interest'), false);
-
-let losingState = initial;
-for (let index = 0; index < 4; index += 1) losingState = advanceRound(losingState);
-assert.equal(losingState.currentRound, 5);
-assert.equal(losingState.status, 'playing');
-losingState = advanceRound(losingState);
-assert.equal(losingState.status, 'lost');
-
-let winningState: GameRuntimeState = {
-  ...explicitlyRevealed,
-  dimensions: {
-    decisionAnalysis: 70,
-    relationshipBuilding: 70,
-    valuePresentation: 70,
-    objectionHandling: 70,
-    informationDiscovery: 70,
-  },
-  npcAffinity: { ...explicitlyRevealed.npcAffinity, 'p1-minister-chen-jianguo': 50 },
-  currentRound: 5,
 };
-winningState = advanceRound(winningState);
-assert.equal(winningState.status, 'won');
-assert.equal(calculateTotalScore(winningState.dimensions), 70);
+const unsupportedRumor = createFallbackNpcEvaluation({
+  ...evaluationContext,
+  playerMessage: '听说贵公司最近出了很多问题，形势也不太好。',
+  npcReply: '这种没有来源的话不要随便说。',
+});
+assert.equal(unsupportedRumor.semanticFlags?.negativeInformationType, 'unsupported_rumor');
+assert((unsupportedRumor.pleasureDelta ?? 0) < 0);
+
+const compliantGift = createFallbackNpcEvaluation({
+  ...evaluationContext,
+  giftContext: { giftType: 'compliant' },
+  playerMessage: '这是一份公开、低价值的会议伴手礼。',
+  npcReply: '谢谢，这份心意我收下。',
+});
+const boundaryGift = createFallbackNpcEvaluation({
+  ...evaluationContext,
+  giftContext: { giftType: 'boundary', isPublic: false },
+  playerMessage: '这是按您兴趣私人定制的高价值礼品。',
+  npcReply: '谢谢，正好是我喜欢的，我收下了。',
+});
+assert((boundaryGift.pleasureDelta ?? 0) > (compliantGift.pleasureDelta ?? 0), 'boundary gifts expose a higher upside branch');
+const explicitBribe = createFallbackNpcEvaluation({
+  ...evaluationContext,
+  playerMessage: '我给您现金回扣，只要帮我保证中标。',
+  npcReply: '这属于违规利益交换，我会向合规部门上报。',
+});
+assert.equal(explicitBribe.semanticFlags?.explicitQuidProQuo, true);
+assert((explicitBribe.supportDelta ?? 0) <= -8);
+assert.equal(explicitBribe.giftAssessment?.outcome, 'refused_and_reported');
 
 console.log('game-state tests passed');

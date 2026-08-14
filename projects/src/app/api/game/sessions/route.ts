@@ -1,10 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
 import { createGameSessionRequestSchema } from '@/lib/contracts/game';
-import { createGameSession } from '@/lib/game/repository';
+import { createGameSession, listOwnedActiveGameSaves, MAX_ACTIVE_GAME_SAVES } from '@/lib/game/repository';
 import { getProgressionMultiplier } from '@/lib/game/acceptance-mode';
 
 export const runtime = 'nodejs';
+
+export async function GET(request: NextRequest) {
+  const guard = authGuard(request);
+  if (!guard.ok || !guard.session) return guard.response!;
+  const scenarioCode = request.nextUrl.searchParams.get('scenarioCode') || undefined;
+  try {
+    const saves = await listOwnedActiveGameSaves(guard.session.userId, scenarioCode);
+    return NextResponse.json({ success: true, saves, maxSaves: MAX_ACTIVE_GAME_SAVES });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'SAVE_LIST_UNAVAILABLE';
+    return NextResponse.json({ error: code }, { status: 503 });
+  }
+}
 
 export async function POST(request: NextRequest) {
   const guard = authGuard(request);
@@ -25,7 +38,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, gameSession });
   } catch (error) {
     const code = error instanceof Error ? error.message : 'SESSION_CREATE_FAILED';
-    const status = code === 'SCENARIO_NOT_CONFIGURED' ? 409 : 503;
+    const status = code === 'SCENARIO_NOT_CONFIGURED' || code === 'SAVE_LIMIT_REACHED' ? 409 : 503;
     return NextResponse.json({ error: code }, { status });
   }
 }

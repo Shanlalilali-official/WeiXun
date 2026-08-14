@@ -5,7 +5,7 @@ export const FAST_ACCEPTANCE_ACCOUNT = {
 } as const;
 
 export function getProgressionMultiplier(userId: string): number {
-  return userId === `u_${FAST_ACCEPTANCE_ACCOUNT.username}`
+  return userId === `u_${FAST_ACCEPTANCE_ACCOUNT.username}` || userId.startsWith('u_fast_acceptance_e2e_')
     ? FAST_ACCEPTANCE_ACCOUNT.multiplier
     : 1;
 }
