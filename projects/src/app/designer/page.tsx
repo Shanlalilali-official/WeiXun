@@ -16,7 +16,6 @@ interface KeyPerson {
   hometown: string;
   personality: string;
   weakness: string;
-  [key: string]: any;
 }
 
 interface ProjectConfig {
@@ -37,6 +36,29 @@ interface Competitor {
   company_name: string;
   features: string;
   more_info: string;
+}
+
+interface ProjectApiItem {
+  project_id: number;
+  name?: string;
+  budget?: number;
+  description?: string;
+  products?: string;
+  ai_prompt?: string;
+  success_criteria?: string;
+  scoring_standard?: string;
+}
+
+interface NpcApiItem {
+  project_id: number;
+  id: number;
+  name?: string;
+  title?: string;
+  gender?: string;
+  age?: number;
+  hometown?: string;
+  personality?: string;
+  weakness?: string;
 }
 
 export default function DesignerPage() {
@@ -117,7 +139,7 @@ export default function DesignerPage() {
       .then(r => r.json())
       .then(d => {
         if (d.data) {
-          setProjects(d.data.map((p: any) => ({
+          setProjects(d.data.map((p: ProjectApiItem) => ({
             id: p.project_id,
             name: p.name,
             budget: p.budget || 100,
@@ -144,7 +166,7 @@ export default function DesignerPage() {
       .then(d => {
         if (d.data) {
           const personsByProject: Record<number, KeyPerson[]> = {};
-          d.data.forEach((npc: any) => {
+          d.data.forEach((npc: NpcApiItem) => {
             if (!personsByProject[npc.project_id]) personsByProject[npc.project_id] = [];
             personsByProject[npc.project_id].push({
               id: npc.id,

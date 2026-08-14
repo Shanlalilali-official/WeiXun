@@ -89,7 +89,7 @@ export default function MetricsPage() {
     setMetrics([...metrics, newMetric]);
   };
 
-  const updateMetric = (id: number, field: keyof Metric, value: any) => {
+  const updateMetric = <K extends keyof Metric>(id: number, field: K, value: Metric[K]) => {
     setMetrics(metrics.map(m => m.id === id ? { ...m, [field]: value } : m));
   };
 

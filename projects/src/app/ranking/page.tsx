@@ -7,6 +7,25 @@ import { AppShell } from '@/components/app-shell';
 
 interface RoomPlayer { rank: number; name: string; enterprise: string; role: string; score: number; bid: number; margin: number; approval: number; duration: string; isMe?: boolean; }
 interface PlatformPlayer { rank: number; name: string; region: string; enterprise: string; level: number; score: number; wins: number; winRate: number; streak: number; lastActive: string; }
+interface RoomSummary { avgScore: number | null; maxScore: number | null; bidRate: number; avgMargin: number; }
+interface RankingApiItem {
+  player_id?: string | number;
+  player_name?: string;
+  enterprise?: string;
+  role?: string;
+  total_score?: number;
+  bid_amount?: number;
+  profit_margin?: number;
+  approval_rate?: number;
+  duration?: string;
+  region?: string;
+  level?: number;
+  best_score?: number;
+  total_wins?: number;
+  win_rate?: number;
+  win_streak?: number;
+  last_active?: string;
+}
 
 export default function RankingPage() {
   return (
@@ -21,8 +40,8 @@ function RankingInner() {
   const router = useRouter();
   const initialTab = params.get('tab') === 'platform' ? 'platform' : 'room';
   const [tab, setTab] = useState<'room' | 'platform'>(initialTab);
-  const [roomData, setRoomData] = useState<{ me: any; roomPlayers: RoomPlayer[]; roomSummary: any } | null>(null);
-  const [platformData, setPlatformData] = useState<{ me: any; platformPlayers: PlatformPlayer[] } | null>(null);
+  const [roomData, setRoomData] = useState<{ me: null; roomPlayers: RoomPlayer[]; roomSummary: RoomSummary | null } | null>(null);
+  const [platformData, setPlatformData] = useState<{ me: null; platformPlayers: PlatformPlayer[] } | null>(null);
   const [timeRange, setTimeRange] = useState('all');
   const [track, setTrack] = useState('all');
   const [loading, setLoading] = useState(true);
@@ -35,7 +54,7 @@ function RankingInner() {
         if (tab === 'room') {
           setRoomData({
             me: null,
-            roomPlayers: (data.items || []).map((item: any, idx: number) => ({
+            roomPlayers: (data.items || []).map((item: RankingApiItem, idx: number) => ({
               rank: idx + 1,
               name: item.player_name || `玩家${item.player_id || idx + 1}`,
               enterprise: item.enterprise || '未知企业',
@@ -52,7 +71,7 @@ function RankingInner() {
         } else {
           setPlatformData({
             me: null,
-            platformPlayers: (data.items || []).map((item: any, idx: number) => ({
+            platformPlayers: (data.items || []).map((item: RankingApiItem, idx: number) => ({
               rank: idx + 1,
               name: item.player_name || `玩家${item.player_id || idx + 1}`,
               region: item.region || '未知',
@@ -106,7 +125,7 @@ function RankingInner() {
         ].map((t) => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id as any)}
+            onClick={() => setTab(t.id as 'room' | 'platform')}
             className={`relative py-4 px-4 text-sm font-semibold transition-colors ${
               tab === t.id ? 'text-primary' : 'text-muted-foreground hover:text-foreground'
             }`}
