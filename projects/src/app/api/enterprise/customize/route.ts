@@ -1,70 +1,21 @@
-import { NextResponse } from 'next/server';
-import { createServerClient } from '@/storage/database/supabase-client';
+import { NextRequest, NextResponse } from 'next/server';
+import { authGuard } from '@/lib/auth/guard';
 
-export async function GET() {
-  try {
-    const supabase = createServerClient();
-    const { data: customizations, error } = await supabase
-      .from('enterprise_customizations')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-
-    return NextResponse.json({ customizations: customizations || [] });
-  } catch (error) {
-    console.error('Failed to fetch customizations:', error);
-    return NextResponse.json({ customizations: [] });
-  }
+// 延期后台功能（定制内容）：对应数据表尚未建模，先干净降级，避免向客户端泄漏内部错误。
+export async function GET(request: NextRequest) {
+  const g = authGuard(request);
+  if (!g.ok) return g.response;
+  return NextResponse.json({ error: '功能未实现' }, { status: 501 });
 }
 
-export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-    const { type, name, description, details, created_by } = body;
-
-    const supabase = createServerClient();
-    const { data, error } = await supabase
-      .from('enterprise_customizations')
-      .insert({
-        type,
-        name,
-        description,
-        details,
-        created_by,
-      })
-      .select()
-      .single();
-
-    if (error) throw error;
-
-    return NextResponse.json({ success: true, customization: data });
-  } catch (error) {
-    console.error('Failed to create customization:', error);
-    return NextResponse.json({ error: 'Failed to create customization' }, { status: 500 });
-  }
+export async function POST(request: NextRequest) {
+  const g = authGuard(request);
+  if (!g.ok) return g.response;
+  return NextResponse.json({ error: '功能未实现' }, { status: 501 });
 }
 
-export async function DELETE(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-
-    if (!id) {
-      return NextResponse.json({ error: 'ID is required' }, { status: 400 });
-    }
-
-    const supabase = createServerClient();
-    const { error } = await supabase
-      .from('enterprise_customizations')
-      .delete()
-      .eq('id', id);
-
-    if (error) throw error;
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('Failed to delete customization:', error);
-    return NextResponse.json({ error: 'Failed to delete customization' }, { status: 500 });
-  }
+export async function DELETE(request: NextRequest) {
+  const g = authGuard(request);
+  if (!g.ok) return g.response;
+  return NextResponse.json({ error: '功能未实现' }, { status: 501 });
 }

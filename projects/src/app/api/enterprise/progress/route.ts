@@ -1,26 +1,9 @@
-import { NextResponse } from 'next/server';
-import { createAdminClient } from '@/storage/database/supabase-client';
+import { NextRequest, NextResponse } from 'next/server';
+import { authGuard } from '@/lib/auth/guard';
 
-// GET /api/enterprise/progress - 获取游戏进度
-export async function GET() {
-  try {
-    const supabase = createAdminClient();
-    
-    // 统计不同状态的对局数量
-    const { data: sessions, error } = await supabase
-      .from('game_sessions')
-      .select('status');
-
-    if (error) throw error;
-
-    const progress = [
-      { status: '未开始', count: sessions?.filter((s: any) => s.status === '未开始').length || 0 },
-      { status: '进行中', count: sessions?.filter((s: any) => s.status === '进行中').length || 0 },
-      { status: '已完成', count: sessions?.filter((s: any) => s.status === '已完成').length || 0 },
-    ];
-
-    return NextResponse.json({ success: true, data: progress });
-  } catch (e: any) {
-    return NextResponse.json({ success: false, error: e.message }, { status: 500 });
-  }
+// 延期后台功能（游戏进度）：状态枚举尚未统一，先干净降级，避免向客户端泄漏内部错误。
+export async function GET(request: NextRequest) {
+  const g = authGuard(request);
+  if (!g.ok) return g.response;
+  return NextResponse.json({ error: '功能未实现' }, { status: 501 });
 }

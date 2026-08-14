@@ -1,19 +1,9 @@
-import { NextResponse } from 'next/server';
-import { createServerClient } from '@/storage/database/supabase-client';
+import { NextRequest, NextResponse } from 'next/server';
+import { authGuard } from '@/lib/auth/guard';
 
-export async function GET() {
-  try {
-    const supabase = createServerClient();
-    const { data: history, error } = await supabase
-      .from('coach_history')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-
-    return NextResponse.json({ history: history || [] });
-  } catch (error) {
-    console.error('Failed to fetch history:', error);
-    return NextResponse.json({ history: [] });
-  }
+// 延期后台功能（历史记录）：对应数据表尚未建模，先干净降级，避免向客户端泄漏内部错误。
+export async function GET(request: NextRequest) {
+  const g = authGuard(request);
+  if (!g.ok) return g.response;
+  return NextResponse.json({ error: '功能未实现' }, { status: 501 });
 }
