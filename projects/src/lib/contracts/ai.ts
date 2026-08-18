@@ -17,7 +17,6 @@ export const npcChatRequestSchema = z.object({
   contextType: z.enum(['online', 'short_visit', 'formal_visit', 'informal_visit']).optional(),
   appointmentId: z.string().trim().min(1).max(128).optional(),
   usedPreparationIds: z.array(z.string().trim().min(1).max(128)).max(12).default([]),
-  workTopicOpenedBy: z.enum(['none', 'player', 'npc']).optional(),
 });
 
 export const onlineContactDecisionSchema = z.object({
@@ -52,7 +51,7 @@ export const giftAssessmentSchema = z.object({
     'accepted_then_exposed',
   ]),
   riskLevel: z.enum(['none', 'low', 'medium', 'high', 'critical']),
-  riskReason: z.string().trim().max(160),
+  riskReason: z.string().trim().min(1).max(160),
 });
 
 export const giftCommandDecisionSchema = z.object({
@@ -76,8 +75,8 @@ export const npcTurnEvaluationSchema = z.object({
   // mirrors supportDelta. New evaluators must return both fields.
   affinityDelta: z.number().int().min(-10).max(10),
   affinityReason: z.string().trim().min(1).max(120),
-  pleasureDelta: z.number().int().min(-12).max(12).optional(),
-  supportDelta: z.number().int().min(-10).max(10).optional(),
+  pleasureDelta: z.number().int().min(-12).max(12),
+  supportDelta: z.number().int().min(-10).max(10),
   dimensionDeltas: z.object({
     decisionAnalysis: z.number().int().min(-3).max(3),
     relationshipBuilding: z.number().int().min(-3).max(3),
@@ -91,13 +90,13 @@ export const npcTurnEvaluationSchema = z.object({
     'procurement_priority',
     'personal_interest',
   ])).max(2),
-  confirmedFacts: z.array(z.string().trim().min(1).max(160)).max(2).default([]),
-  commitments: z.array(z.string().trim().min(1).max(160)).max(2).default([]),
-  publicValueEvidence: z.array(z.string().trim().min(1).max(180)).max(3).optional(),
-  personalBenefitEvidence: z.array(z.string().trim().min(1).max(180)).max(3).optional(),
-  workTopicOpenedBy: z.enum(['none', 'player', 'npc']).optional(),
-  semanticFlags: npcSemanticFlagsSchema.optional(),
-  giftAssessment: giftAssessmentSchema.optional(),
+  confirmedFacts: z.array(z.string().trim().min(1).max(160)).max(2),
+  commitments: z.array(z.string().trim().min(1).max(160)).max(2),
+  publicValueEvidence: z.array(z.string().trim().min(1).max(180)).max(3),
+  personalBenefitEvidence: z.array(z.string().trim().min(1).max(180)).max(3),
+  workTopicOpenedBy: z.enum(['none', 'player', 'npc']),
+  semanticFlags: npcSemanticFlagsSchema,
+  giftAssessment: giftAssessmentSchema,
   handoff: z.object({
     targetNpcId: z.enum([
       'p1-frontline-wang-hao',
@@ -106,7 +105,7 @@ export const npcTurnEvaluationSchema = z.object({
       'p1-deputy-zhao-feng',
     ]),
     summary: z.string().trim().min(1).max(180),
-  }).nullable().default(null),
+  }).nullable(),
   emotion: z.enum(['greeting', 'thinking', 'excited', 'annoyed']),
 });
 

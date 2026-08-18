@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Image from 'next/image';
 import {
   Bell,
   Building2,
@@ -23,14 +24,14 @@ import {
   Phone,
   Play,
   Send,
+  Search,
   Sparkles,
   UserRound,
   Users,
   WalletCards,
   X,
 } from 'lucide-react';
-import { getPhaseName, type GameRuntimeState } from '@/lib/game/state';
-import { getProjectOneNpc } from '@/lib/game/project-one';
+import { getPhaseName, type CompetitorActionRecord, type GamePublicResearchRecord, type GameRuntimeState } from '@/lib/game/state';
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -82,6 +83,13 @@ interface PreparationView {
   status: string;
   cost: number;
   minutes: number;
+  brief?: {
+    audience: string;
+    problem: string;
+    dimensions: string;
+    evidence: string;
+    nextStep: string;
+  };
 }
 
 interface NotificationView {
@@ -108,6 +116,23 @@ interface MeetingMinutesView {
   nextStepRound: number;
   nextStepMinute: number;
   owner: string;
+  revisionCount: number;
+}
+
+interface InvitationResultView {
+  appointment: AppointmentView;
+  npcName: string;
+  npcTitle: string;
+  feedback: string;
+}
+
+interface MeetingMinutesDraft {
+  id: string;
+  summary: string;
+  confirmedItems: string;
+  npcCommitments: string;
+  playerCommitments: string;
+  nextStep: string;
 }
 
 interface ActiveMeetingView {
@@ -149,11 +174,10 @@ interface SpeechRecognitionLike {
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 type PhoneTab = 'contacts' | 'messages' | 'tasks';
 type WorkspaceMode = 'conversation' | 'appointment' | 'preparation' | 'follow_up';
-type CommunicationChannel = 'email' | 'online' | 'work_phone';
+type CommunicationChannel = 'email' | 'work_phone';
 
 const CHANNEL_META: Record<CommunicationChannel, { label: string; hint: string; accent: string }> = {
   email: { label: '邮件', hint: '正式邮件 · 消耗 10 分钟', accent: 'text-blue-700 bg-blue-50 border-blue-200' },
-  online: { label: '微信', hint: '即时消息 · 消耗 5 分钟', accent: 'text-emerald-700 bg-emerald-50 border-emerald-200' },
   work_phone: { label: '电话', hint: '工作电话 · 消耗 15 分钟', accent: 'text-violet-700 bg-violet-50 border-violet-200' },
 };
 
@@ -189,6 +213,20 @@ const PREPARATION_OPTIONS = [
   { type: 'courtesy_gift', title: '准备合规伴手礼', minutes: 10, cost: 3, description: '低风险、收益较稳定' },
   { type: 'boundary_gift', title: '准备高波动边界礼品', minutes: 10, cost: 8, description: '潜在收益更高，也可能拒收、上报或延迟反噬' },
 ] as const;
+
+const PHASE_GUIDANCE = [
+  { goal: '建立触点、了解项目', hint: '先选择一位人物搜集公开资料，再带着明确目标联系对方。' },
+  { goal: '补全决策链', hint: '核实谁影响流程、谁能推动落地，不要只停留在表面关系。' },
+  { goal: '关键人攻坚', hint: '把已知事实转化为针对性问题和有效拜访。' },
+  { goal: '方案验证与异议处理', hint: '用证据回应客户价值、竞品比较和实施风险。' },
+  { goal: '决策闭环', hint: '检查承诺、待办、风险和关键人物支持，再决定是否提交。' },
+] as const;
+
+const COMPETITIVE_POSITION_META = {
+  lagging: { label: '我方暂时落后', tone: 'border-red-200 bg-red-50 text-red-700' },
+  close: { label: '双方态势接近', tone: 'border-amber-200 bg-amber-50 text-amber-700' },
+  leading: { label: '我方暂时领先', tone: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
+} as const;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -310,6 +348,7 @@ function getPreparations(state: GameRuntimeState | null): PreparationView[] {
   const raw = nested.length > 0 ? nested : firstArray(root, ['preparations', 'materials', 'inventory']);
   return raw.map((value, index) => {
     const item = asRecord(value);
+    const brief = firstRecord(item, ['brief']);
     const type = firstString(item, ['type', 'preparationType', 'kind'], 'materials');
     const option = PREPARATION_OPTIONS.find((entry) => entry.type === type);
     return {
@@ -321,6 +360,13 @@ function getPreparations(state: GameRuntimeState | null): PreparationView[] {
       status: firstString(item, ['status'], 'ready'),
       cost: firstNumber(item, ['costPoints', 'cost', 'actionPointCost'], option?.cost ?? 0),
       minutes: firstNumber(item, ['timeMinutes', 'minutes', 'durationMinutes'], option?.minutes ?? 0),
+      brief: brief ? {
+        audience: firstString(brief, ['audience']),
+        problem: firstString(brief, ['problem']),
+        dimensions: firstString(brief, ['dimensions']),
+        evidence: firstString(brief, ['evidence']),
+        nextStep: firstString(brief, ['nextStep']),
+      } : undefined,
     };
   });
 }
@@ -372,6 +418,7 @@ function getMeetingMinutes(state: GameRuntimeState | null): MeetingMinutesView[]
       nextStepRound: firstNumber(item, ['nextStepRound', 'nextRound'], state?.currentRound ?? 1),
       nextStepMinute: firstNumber(item, ['nextStepMinute', 'nextMinute'], 9 * 60),
       owner: firstString(item, ['owner'], '我方销售 / 客户联系人'),
+      revisionCount: firstNumber(item, ['revisionCount'], 0),
     };
   });
 }
@@ -428,6 +475,7 @@ function commandResultMessage(type: string, value: unknown): string {
   if (type === 'end_visit') return '拜访已结束，已生成会后待办';
   if (type === 'follow_up') return '材料或跟进消息已送出';
   if (type === 'update_appointment') return '预约状态已更新';
+  if (type === 'research_public_info') return '人物公开信息已整理';
   return '操作已完成';
 }
 
@@ -449,7 +497,6 @@ function GameInner() {
   const [gameState, setGameState] = useState<GameRuntimeState | null>(null);
   const [savePickerReady, setSavePickerReady] = useState(false);
   const [activeSaves, setActiveSaves] = useState<GameSaveView[]>([]);
-  const [maxSaves, setMaxSaves] = useState(5);
   const [savePickerError, setSavePickerError] = useState('');
   const [loadingSave, setLoadingSave] = useState(false);
   const [npcs, setNpcs] = useState<NpcProfile[]>([]);
@@ -457,27 +504,26 @@ function GameInner() {
   const [selectedNpc, setSelectedNpc] = useState<string | null>(null);
   const [phoneTab, setPhoneTab] = useState<PhoneTab>('contacts');
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('conversation');
-  const [communicationChannel, setCommunicationChannel] = useState<CommunicationChannel>('online');
+  const [communicationChannel, setCommunicationChannel] = useState<CommunicationChannel>('email');
   const [phoneCallActive, setPhoneCallActive] = useState(false);
   const [actionNpcId, setActionNpcId] = useState<string | null>(null);
+  const [publicInfoNpcId, setPublicInfoNpcId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [commandBusy, setCommandBusy] = useState<string | null>(null);
   const [commandFeedback, setCommandFeedback] = useState('');
   const [showResourceDetails, setShowResourceDetails] = useState(false);
   const [showCompetitors, setShowCompetitors] = useState(false);
-  const [newlyUnlockedNpcId, setNewlyUnlockedNpcId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
-  const [inviteDraft, setInviteDraft] = useState({
-    visitType: 'formal' as AppointmentView['visitType'],
-    approach: 'dedicated' as AppointmentView['approach'],
-    location: '办公室',
-    purpose: '介绍项目方案并了解关键诉求',
-    stage: 1,
-    time: '14:00',
-  });
+  const [invitationText, setInvitationText] = useState('');
   const [preparationType, setPreparationType] = useState<(typeof PREPARATION_OPTIONS)[number]['type']>('agenda');
+  const [preparationBrief, setPreparationBrief] = useState({ audience: '', problem: '', dimensions: '', evidence: '', nextStep: '' });
   const [preparationAppointmentId, setPreparationAppointmentId] = useState('');
+  const [invitationResult, setInvitationResult] = useState<InvitationResultView | null>(null);
+  const [showEndDayCheck, setShowEndDayCheck] = useState(false);
+  const [showSubmissionCheck, setShowSubmissionCheck] = useState(false);
+  const [competitorEvent, setCompetitorEvent] = useState<CompetitorActionRecord | null>(null);
+  const [minutesDraft, setMinutesDraft] = useState<MeetingMinutesDraft | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -496,6 +542,9 @@ function GameInner() {
   const meetingMinutes = getMeetingMinutes(gameState);
   const activeMeeting = getActiveMeeting(gameState, appointments);
   const visibleChannelMessages = messages.filter((message) => message.channel === (activeMeeting ? 'offline' : communicationChannel));
+  const offlineMessages = messages.filter((message) => message.channel === 'offline');
+  const latestNpcMeetingMessage = [...offlineMessages].reverse().find((message) => message.role === 'assistant');
+  const latestPlayerMeetingMessage = [...offlineMessages].reverse().find((message) => message.role === 'user');
   const selectedProfile = npcs.find((npc) => npc.id === selectedNpc) ?? null;
   const selectedContact = selectedNpc ? gameState?.npcContacts?.[selectedNpc] : undefined;
   const canInviteSelected = Boolean(selectedContact?.hasReplied && selectedContact.status !== 'known');
@@ -514,20 +563,18 @@ function GameInner() {
   const nextAppointment = appointments
     .filter((item) => ['accepted', 'countered', 'pending'].includes(item.status))
     .sort((a, b) => a.stage - b.stage || a.scheduledMinute - b.scheduledMinute)[0];
-
-  const showUnlockNoticeOnce = (sessionId: string, npcId: string) => {
-    const key = `npc-unlock-notified:${sessionId}:${npcId}`;
-    if (localStorage.getItem(key)) return;
-    localStorage.setItem(key, '1');
-    setNewlyUnlockedNpcId(npcId);
-  };
+  const competitorMeta = COMPETITIVE_POSITION_META[gameState?.competitorState?.position ?? 'close'];
+  const todayUnfinishedAppointments = appointments.filter((item) => item.stage === round && ['pending', 'accepted', 'countered'].includes(item.status));
+  const unreadFollowUps = notifications.filter((item) => !item.read && item.target === 'follow_up');
+  const submissionWarnings = [
+    !gameState?.unlockedClues?.includes('decision_process') ? '尚未核实完整决策链' : '',
+    Object.keys(gameState?.publicResearch ?? {}).length === 0 ? '尚无人物公开信息佐证' : '',
+    meetingMinutes.length === 0 ? '尚未完成任何线下拜访' : '',
+    gameState?.complianceRisks?.some((risk) => risk.status === 'latent' || risk.status === 'triggered') ? '存在未消除的合规风险' : '',
+  ].filter(Boolean);
 
   const applyServerState = (nextState: GameRuntimeState) => {
-    setGameState((previous) => {
-      const newlyUnlocked = nextState.unlockedNpcIds?.find((id) => !previous?.unlockedNpcIds?.includes(id));
-      if (newlyUnlocked && gameSessionId) showUnlockNoticeOnce(gameSessionId, newlyUnlocked);
-      return nextState;
-    });
+    setGameState(nextState);
   };
 
   useEffect(() => {
@@ -543,7 +590,6 @@ function GameInner() {
       if (!saveResponse.ok) throw new Error(saveData?.error || '存档列表加载失败');
       if (!cancelled) {
         setActiveSaves(Array.isArray(saveData?.saves) ? saveData.saves : []);
-        setMaxSaves(Number(saveData?.maxSaves) || 5);
         setSavePickerReady(true);
       }
       return;
@@ -568,7 +614,6 @@ function GameInner() {
       if (!restored || cancelled) return;
       setGameSessionId(restored!.id);
       setGameState(restored!.state);
-      setInviteDraft((current) => ({ ...current, stage: restored?.state.currentRound ?? 1 }));
       const npcResponse = await fetch(`/api/game-data/npcs?project_id=${projectId}&game_session_id=${restored!.id}`, { headers });
       if (!npcResponse.ok) throw new Error('NPC加载失败');
       const npcData = await npcResponse.json();
@@ -579,7 +624,12 @@ function GameInner() {
     };
 
     bootstrap().catch((error) => {
-      if (!cancelled) alert(error instanceof Error ? error.message : '对局初始化失败');
+      if (cancelled) return;
+      const code = error instanceof Error ? error.message : '对局初始化失败';
+      setSavePickerError(code === 'SAVE_LIST_UNAVAILABLE'
+        ? '数据库暂时无法连接，当前存档尚未加载。请检查网络或 Supabase 配置后重试。'
+        : code);
+      setSavePickerReady(true);
     });
     fetch(`/api/game-data/competitors?project_id=${projectId}`)
       .then((response) => response.json())
@@ -612,8 +662,8 @@ function GameInner() {
 
   useEffect(() => {
     if (activeMeeting) return;
-    const preferred = selectedContact?.status === 'online' ? 'online' : selectedContact?.initialChannel;
-    if (preferred === 'email' || preferred === 'online' || preferred === 'work_phone') setCommunicationChannel(preferred);
+    const preferred = selectedContact?.initialChannel;
+    setCommunicationChannel(preferred === 'work_phone' ? 'work_phone' : 'email');
   }, [activeMeeting, selectedContact?.initialChannel, selectedContact?.status]);
 
   useEffect(() => {
@@ -626,12 +676,12 @@ function GameInner() {
     typewriterQueueRef.current = [];
   }, []);
 
-  const openSave = async (sessionId: string) => {
+  const openSave = async (sessionId: string, trackContinue = false) => {
     setLoadingSave(true);
     setSavePickerError('');
     try {
       const headers = { 'Content-Type': 'application/json', 'x-session': localStorage.getItem('weixun_session') || '' };
-      const response = await fetch(`/api/game/sessions/${sessionId}`, { headers });
+      const response = await fetch(`/api/game/sessions/${sessionId}${trackContinue ? '?entry=continue' : ''}`, { headers });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.gameSession) throw new Error(data?.error || '存档读取失败');
       const restored = data.gameSession as { id: string; state: GameRuntimeState };
@@ -644,7 +694,6 @@ function GameInner() {
       localStorage.setItem(`game-session:${location}`, restored.id);
       setGameSessionId(restored.id);
       setGameState(restored.state);
-      setInviteDraft((current) => ({ ...current, stage: restored.state.currentRound }));
       setNpcs(loaded);
       setSelectedNpc(restored.state.activeMeeting?.npcId ?? loaded[0]?.id ?? null);
     } catch (error) {
@@ -655,36 +704,28 @@ function GameInner() {
   };
 
   const startNewGame = async () => {
+    const replacing = activeSaves.length > 0;
+    if (replacing && !window.confirm('开始新游戏会永久覆盖当前进度，原存档无法恢复。确定继续吗？')) return;
     setLoadingSave(true);
     setSavePickerError('');
     try {
       const headers = { 'Content-Type': 'application/json', 'x-session': localStorage.getItem('weixun_session') || '' };
-      const response = await fetch('/api/game/sessions', { method: 'POST', headers, body: JSON.stringify({ scenarioCode: location }) });
+      const response = await fetch('/api/game/sessions', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ scenarioCode: location, replaceExisting: replacing }),
+      });
       const data = await response.json().catch(() => null);
-      if (!response.ok || !data?.gameSession) throw new Error(data?.error === 'SAVE_LIMIT_REACHED' ? `进行中存档已达 ${maxSaves} 个，请先载入并完成其中一个对局` : data?.error || '新游戏创建失败');
+      if (!response.ok || !data?.gameSession) throw new Error(
+        data?.error === 'SAVE_REPLACE_FAILED'
+          ? '新存档创建失败，原存档已保留，请稍后重试'
+          : data?.error === 'SAVE_LIMIT_REACHED'
+            ? '已有进行中的对局，请确认覆盖后重试'
+            : data?.error || '新游戏创建失败',
+      );
       await openSave(data.gameSession.id);
     } catch (error) {
       setSavePickerError(error instanceof Error ? error.message : '新游戏创建失败');
-      setLoadingSave(false);
-    }
-  };
-
-  const deleteSave = async (sessionId: string, replaceWithNew = false) => {
-    setLoadingSave(true);
-    setSavePickerError('');
-    try {
-      const response = await fetch(`/api/game/sessions/${sessionId}`, {
-        method: 'DELETE',
-        headers: { 'x-session': localStorage.getItem('weixun_session') || '' },
-      });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.error === 'SAVE_NOT_DELETABLE' ? '该对局已结束，不能覆盖或删除' : data?.error || '存档删除失败');
-      localStorage.removeItem(`game-session:${location}`);
-      setActiveSaves((current) => current.filter((save) => save.id !== sessionId));
-      setLoadingSave(false);
-      if (replaceWithNew) await startNewGame();
-    } catch (error) {
-      setSavePickerError(error instanceof Error ? error.message : '存档删除失败');
       setLoadingSave(false);
     }
   };
@@ -709,6 +750,21 @@ function GameInner() {
       if (nextState) applyServerState(nextState);
       retryCommandRef.current = null;
       setCommandFeedback(commandResultMessage(type, data?.result));
+      if (type === 'invite' && nextState) {
+        const result = asRecord(data?.result);
+        const appointmentId = firstString(firstRecord(result, ['appointment']), ['id', 'appointmentId']);
+        const appointment = getAppointments(nextState).find((item) => item.id === appointmentId);
+        if (appointment && selectedProfile) {
+          const feedback = [...getNotifications(nextState)].reverse().find((item) => item.npcId === selectedProfile.id)?.body
+            ?? commandResultMessage(type, data?.result);
+          setInvitationResult({ appointment, npcName: selectedProfile.name, npcTitle: selectedProfile.title, feedback });
+        }
+      }
+      if (type === 'advance_phase') {
+        const action = firstRecord(asRecord(data?.result), ['competitorAction']);
+        if (action) setCompetitorEvent(action as unknown as CompetitorActionRecord);
+        if (nextState?.submissionReady) setShowSubmissionCheck(true);
+      }
       if (nextState?.status && nextState.status !== 'playing') router.push(`/result?sessionId=${gameSessionId}`);
       return true;
     } catch (error) {
@@ -781,7 +837,6 @@ function GameInner() {
           contextType: activeMeeting ? `${activeMeeting.visitType}_visit` : 'online',
           appointmentId: activeMeeting?.appointmentId,
           usedPreparationIds: deliveredPreparationIds,
-          workTopicOpenedBy: activeMeeting?.workTopicOpenedBy,
         }),
         signal: abortRef.current.signal,
       });
@@ -893,72 +948,115 @@ function GameInner() {
     if (!selectedNpc) return;
     const success = await runCommand('invite', {
       npcId: selectedNpc,
-      visitType: inviteDraft.visitType,
-      invitationMethod: inviteDraft.approach === 'drop_by' ? 'drop_in' : 'dedicated',
-      approach: inviteDraft.approach,
-      travelMode: inviteDraft.approach,
-      venue: inviteDraft.location,
-      location: inviteDraft.location,
-      purpose: inviteDraft.purpose,
-      scheduledRound: inviteDraft.stage,
-      stage: inviteDraft.stage,
-      startMinute: parseMinuteLabel(inviteDraft.time),
-      scheduledMinute: parseMinuteLabel(inviteDraft.time),
-      scheduledTime: inviteDraft.time,
+      channel: communicationChannel,
+      rawText: invitationText,
     });
-    if (success) setWorkspaceMode('conversation');
+    if (success) {
+      setInvitationText('');
+      setWorkspaceMode('conversation');
+    }
   };
 
   const submitPreparation = async () => {
     if (!selectedNpc) return;
     const option = PREPARATION_OPTIONS.find((item) => item.type === preparationType);
+    const requiresBrief = preparationType === 'ppt' || preparationType === 'materials';
+    const briefComplete = Object.values(preparationBrief).every((value) => value.trim());
+    if (requiresBrief && !briefComplete) {
+      setCommandFeedback('请完整填写对象、问题、方案、证据和下一步。');
+      return;
+    }
+    const content = requiresBrief
+      ? `对象：${preparationBrief.audience}\n问题：${preparationBrief.problem}\n方案：${preparationBrief.dimensions}\n证据：${preparationBrief.evidence}\n下一步：${preparationBrief.nextStep}`
+      : '';
     const success = await runCommand('prepare', {
       npcId: selectedNpc,
       appointmentId: preparationAppointmentId || undefined,
       preparationType,
       type: preparationType,
       title: option?.title,
+      content,
+      brief: requiresBrief ? preparationBrief : undefined,
     });
-    if (success) setWorkspaceMode('conversation');
+    if (success) {
+      setPreparationBrief({ audience: '', problem: '', dimensions: '', evidence: '', nextStep: '' });
+      setWorkspaceMode('conversation');
+    }
+  };
+
+  const openMinutesEditor = (minutes: MeetingMinutesView) => setMinutesDraft({
+    id: minutes.id,
+    summary: minutes.summary,
+    confirmedItems: minutes.confirmedItems.join('；'),
+    npcCommitments: minutes.npcCommitments.join('；'),
+    playerCommitments: minutes.playerCommitments.join('；'),
+    nextStep: minutes.nextStep,
+  });
+
+  const saveMeetingMinutes = async () => {
+    if (!minutesDraft) return;
+    const splitItems = (value: string) => value.split(/[\n；;]/).map((item) => item.trim()).filter(Boolean);
+    const success = await runCommand('update_meeting_minutes', {
+      minutesId: minutesDraft.id,
+      summary: minutesDraft.summary,
+      confirmedItems: splitItems(minutesDraft.confirmedItems),
+      npcCommitments: splitItems(minutesDraft.npcCommitments),
+      playerCommitments: splitItems(minutesDraft.playerCommitments),
+      nextStep: minutesDraft.nextStep,
+    });
+    if (success) setMinutesDraft(null);
   };
 
   const selectedNpcName = selectedProfile?.name ?? '联系人';
+  const publicInfoRecord: GamePublicResearchRecord | undefined = publicInfoNpcId
+    ? gameState?.publicResearch?.[publicInfoNpcId]
+    : undefined;
+
+  const openOrResearchPublicInfo = async (npcId: string) => {
+    setActionNpcId(null);
+    if (gameState?.publicResearch?.[npcId]) {
+      setPublicInfoNpcId(npcId);
+      return;
+    }
+    const success = await runCommand('research_public_info', { npcId });
+    if (success) setPublicInfoNpcId(npcId);
+  };
 
   return (
-    <div className="min-h-screen bg-[#F5F7FB] text-slate-900 flex flex-col">
-      <header className="border-b border-slate-200 bg-white px-4 py-3 shadow-sm lg:px-6">
+    <div className="min-h-screen bg-[#EEF2F7] text-slate-900 flex flex-col">
+      <header className="border-b border-slate-800 bg-[#0B1736] px-4 py-3 text-white shadow-lg lg:px-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600 text-white"><Building2 className="h-4 w-4" /></div>
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500 text-white shadow-lg shadow-blue-950/30"><Building2 className="h-4 w-4" /></div>
             <div>
               <div className="text-sm font-bold">{scene.name}</div>
-              <div className="text-[11px] text-slate-500">难度 {'★'.repeat(scene.difficulty)}</div>
+              <div className="text-[11px] text-slate-300">销售作战台 · 难度 {'★'.repeat(scene.difficulty)}</div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs">
-            <span className="font-semibold text-blue-800">第{round}阶段 · {getPhaseName(round)}</span>
-            <span className="text-blue-200">|</span>
-            <span className="flex items-center gap-1 font-semibold"><Clock3 className="h-3.5 w-3.5 text-blue-600" />{formatClock(simulation.minuteOfDay)}</span>
-            <span className="text-blue-200">|</span>
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs backdrop-blur">
+            <span className="font-semibold text-blue-200">第{round}阶段 · {getPhaseName(round)}</span>
+            <span className="text-white/20">|</span>
+            <span className="flex items-center gap-1 font-semibold"><Clock3 className="h-3.5 w-3.5 text-blue-300" />{formatClock(simulation.minuteOfDay)}</span>
+            <span className="text-white/20">|</span>
             <span>今日可用 <strong>{formatDuration(simulation.available)}</strong></span>
-            <span className="text-blue-200">|</span>
+            <span className="text-white/20">|</span>
             <span className="flex items-center gap-1"><Sparkles className="h-3.5 w-3.5 text-amber-500" />行动点 <strong>{coins}</strong></span>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => runCommand('wait', { minutes: 30 })} disabled={Boolean(commandBusy) || streaming || Boolean(activeMeeting)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold hover:bg-slate-50 disabled:opacity-40">等待30分钟</button>
-            <button onClick={() => runCommand('advance_phase')} disabled={Boolean(commandBusy) || streaming || Boolean(activeMeeting)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold hover:bg-slate-50 disabled:opacity-40">结束阶段</button>
-            <button onClick={() => runCommand('submit')} disabled={Boolean(commandBusy) || streaming || Boolean(activeMeeting)} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-40">提交项目</button>
+            <button onClick={() => runCommand('wait', { minutes: 30 })} disabled={Boolean(commandBusy) || streaming || Boolean(activeMeeting)} className="rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-xs font-semibold hover:bg-white/10 disabled:opacity-40">等待30分钟</button>
+            <button onClick={() => setShowEndDayCheck(true)} disabled={Boolean(commandBusy) || streaming || Boolean(activeMeeting) || Boolean(gameState?.submissionReady)} className="rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-xs font-semibold hover:bg-white/10 disabled:opacity-40">{round < 5 ? '结束今日工作' : '进入提交检查'}</button>
+            <button onClick={() => setShowSubmissionCheck(true)} disabled={Boolean(commandBusy) || streaming || Boolean(activeMeeting)} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-40">提交项目</button>
           </div>
         </div>
         {nextAppointment && (
-          <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-600">
-            <CalendarClock className="h-3.5 w-3.5 text-blue-600" />
+          <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-300">
+            <CalendarClock className="h-3.5 w-3.5 text-blue-300" />
             下一日程：第{nextAppointment.stage}阶段 {nextAppointment.scheduledLabel ?? formatClock(nextAppointment.scheduledMinute)} · {npcs.find((npc) => npc.id === nextAppointment.npcId)?.name ?? '联系人'} · {VISIT_LABELS[nextAppointment.visitType]} {nextAppointment.durationMinutes}分钟
           </div>
         )}
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 p-4 lg:grid-cols-[340px_minmax(0,1fr)] xl:grid-cols-[250px_390px_minmax(480px,1fr)]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 p-4 lg:grid-cols-[340px_minmax(0,1fr)] xl:grid-cols-[260px_370px_minmax(500px,1fr)]">
         <aside className="hidden min-h-0 flex-col gap-4 overflow-y-auto xl:flex">
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-2 text-xs font-bold text-slate-900">项目现场</div>
@@ -970,6 +1068,11 @@ function GameInner() {
             <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-5 text-amber-900">
               态度、支持度和中标条件已隐藏。请从回复速度、措辞、邀约结果和对方是否主动联系来判断局势。
             </div>
+          </section>
+          <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-sm">
+            <div className="text-[10px] font-semibold tracking-[0.16em] text-blue-600">今日建议目标</div>
+            <div className="mt-1 text-sm font-bold text-blue-950">{PHASE_GUIDANCE[Math.min(round, 5) - 1].goal}</div>
+            <p className="mt-2 text-[11px] leading-5 text-blue-800">{PHASE_GUIDANCE[Math.min(round, 5) - 1].hint}</p>
           </section>
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <button onClick={() => setShowResourceDetails((value) => !value)} className="flex w-full items-center justify-between text-left text-xs font-bold">
@@ -987,17 +1090,15 @@ function GameInner() {
           </section>
           <button onClick={() => setShowCompetitors(true)} className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:border-blue-300">
             <span className="flex items-center justify-between text-xs font-bold"><span className="flex items-center gap-2"><Users className="h-4 w-4 text-blue-600" />竞品动态</span><ChevronRight className="h-4 w-4" /></span>
-            <span className="mt-2 block text-[11px] text-slate-500">查看公开竞品信息，不显示内部评分。</span>
+            <span className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold ${competitorMeta.tone}`}>{competitorMeta.label}</span>
+            <span className="mt-2 block text-[11px] leading-5 text-slate-500">{gameState?.competitorState?.actions[gameState.competitorState.actions.length - 1]?.summary ?? '竞品尚未出现明显动作。'}</span>
           </button>
         </aside>
 
-        <section className="relative mx-auto flex min-h-[680px] w-full max-w-[390px] flex-col overflow-hidden rounded-[34px] border-[8px] border-slate-900 bg-slate-50 shadow-2xl">
-          <div className="flex items-center justify-between bg-slate-900 px-5 py-2 text-[10px] text-white">
-            <span>{formatClock(simulation.minuteOfDay)}</span><span className="h-1.5 w-20 rounded-full bg-slate-700" /><span>项目专机</span>
-          </div>
+        <section className="relative flex min-h-[680px] w-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">
           <div className="border-b border-slate-200 bg-white px-4 py-3">
             <div className="flex items-center justify-between">
-              <div><div className="text-base font-bold">客户联络</div><div className="text-[10px] text-slate-500">模拟商务工作台</div></div>
+              <div><div className="text-base font-bold">客户关系</div><div className="text-[10px] text-slate-500">联系人、回执与行动记录</div></div>
               <button onClick={() => { setPhoneTab('messages'); setActionNpcId(null); }} aria-label={`查看消息，${unreadCount}条未读`} className="relative flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100"><Bell className="h-4 w-4" />{unreadCount > 0 && <span className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-red-500 px-1 text-center text-[9px] text-white">{unreadCount}</span>}</button>
             </div>
           </div>
@@ -1019,18 +1120,25 @@ function GameInner() {
                 {npcs.map((npc) => {
                   const contacted = hasContacted(npc.id);
                   const unread = npcUnread(npc.id);
+                  const publicResearch = gameState?.publicResearch?.[npc.id];
                   return (
-                    <button key={npc.id} onClick={() => openContact(npc.id)} disabled={Boolean(activeMeeting && activeMeeting.npcId !== npc.id)} className={`flex w-full items-center gap-3 rounded-2xl border p-3 text-left transition disabled:opacity-40 ${selectedNpc === npc.id ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-200'}`}>
-                      <div className={`relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full ${contacted ? 'bg-gradient-to-br from-blue-500 to-indigo-700 text-lg font-bold text-white' : 'bg-slate-200 text-slate-500'}`}>
-                        {contacted ? npc.name.slice(0, 1) : <UserRound className="h-6 w-6" />}
-                        {unread > 0 && <span className="absolute right-0 top-0 h-3 w-3 rounded-full border-2 border-white bg-red-500" />}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2"><span className="truncate text-sm font-bold">{npc.name}</span><MoreHorizontal className="h-4 w-4 text-slate-400" /></div>
-                        <div className="truncate text-[11px] text-slate-500">{npc.title}</div>
-                        <div className="mt-1 text-[10px] text-slate-400">{contacted ? '已建立接触 · 照片占位' : '尚未有效接触'}</div>
-                      </div>
-                    </button>
+                    <div key={npc.id} className={`overflow-hidden rounded-2xl border transition ${selectedNpc === npc.id ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-200'} ${activeMeeting && activeMeeting.npcId !== npc.id ? 'opacity-40' : ''}`}>
+                      <button onClick={() => openContact(npc.id)} disabled={Boolean(activeMeeting && activeMeeting.npcId !== npc.id)} className="flex w-full items-center gap-3 p-3 text-left disabled:cursor-not-allowed">
+                        <div className={`relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full ${contacted ? 'bg-gradient-to-br from-blue-500 to-indigo-700 text-lg font-bold text-white' : 'bg-slate-200 text-slate-500'}`}>
+                          {contacted ? npc.name.slice(0, 1) : <UserRound className="h-6 w-6" />}
+                          {unread > 0 && <span className="absolute right-0 top-0 h-3 w-3 rounded-full border-2 border-white bg-red-500" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2"><span className="truncate text-sm font-bold">{npc.name}</span><MoreHorizontal className="h-4 w-4 text-slate-400" /></div>
+                          <div className="truncate text-[11px] text-slate-500">{npc.title}</div>
+                          <div className="mt-1 text-[10px] text-slate-400">{contacted ? '已建立接触' : '尚未有效接触'}</div>
+                        </div>
+                      </button>
+                      <button onClick={() => void openOrResearchPublicInfo(npc.id)} disabled={Boolean(commandBusy) || Boolean(activeMeeting)} className={`flex w-full items-center justify-between border-t px-3 py-2 text-left text-[11px] font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${publicResearch ? 'border-violet-100 bg-violet-50 text-violet-700 hover:bg-violet-100' : 'border-slate-100 bg-slate-50 text-slate-600 hover:bg-slate-100'}`}>
+                        <span className="flex items-center gap-1.5"><Search className="h-3.5 w-3.5" />{publicResearch ? '公开资料已收录' : '搜集人物公开信息'}</span>
+                        <span>{publicResearch ? '查看' : '20分钟 · 2点'}</span>
+                      </button>
+                    </div>
                   );
                 })}
               </div>
@@ -1091,18 +1199,16 @@ function GameInner() {
               </div>
             )}
           </div>
-          <div className="grid grid-cols-3 border-t border-slate-200 bg-white px-3 py-3 text-[10px] text-slate-500">
-            <button onClick={() => setPhoneTab('contacts')} className="flex flex-col items-center gap-1"><Phone className="h-4 w-4" />通讯录</button>
-            <button onClick={() => setPhoneTab('messages')} className="relative flex flex-col items-center gap-1"><MessageCircle className="h-4 w-4" />消息{unreadCount > 0 && <span className="absolute right-7 top-0 h-2 w-2 rounded-full bg-red-500" />}</button>
-            <button onClick={() => setPhoneTab('tasks')} className="flex flex-col items-center gap-1"><CalendarClock className="h-4 w-4" />日程</button>
-          </div>
           {actionNpcId && phoneTab === 'contacts' && (
-            <div className="absolute inset-x-0 bottom-0 z-20 rounded-t-3xl border-t border-slate-200 bg-white p-4 shadow-[0_-12px_32px_rgba(15,23,42,.18)]">
-              <div className="mb-3 flex items-center justify-between"><div><div className="text-sm font-bold">{npcs.find((npc) => npc.id === actionNpcId)?.name}</div><div className="text-[10px] text-slate-500">选择下一步行动</div></div><button onClick={() => setActionNpcId(null)}><X className="h-4 w-4" /></button></div>
-              <div className="grid grid-cols-3 gap-2">
-                <button onClick={() => { setSelectedNpc(actionNpcId); setWorkspaceMode('conversation'); setActionNpcId(null); }} className="rounded-xl bg-blue-50 p-3 text-center text-[11px] font-semibold text-blue-700"><MessageCircle className="mx-auto mb-1 h-5 w-5" />线上联系</button>
-                <button onClick={() => { setSelectedNpc(actionNpcId); setWorkspaceMode('appointment'); setInviteDraft((current) => ({ ...current, stage: round })); setActionNpcId(null); }} disabled={Boolean(activeMeeting) || !gameState?.npcContacts[actionNpcId]?.hasReplied || gameState?.npcContacts[actionNpcId]?.status === 'known'} title={!gameState?.npcContacts[actionNpcId]?.hasReplied ? '完成一次双向沟通后才能邀约' : undefined} className="rounded-xl bg-emerald-50 p-3 text-center text-[11px] font-semibold text-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"><CalendarClock className="mx-auto mb-1 h-5 w-5" />邀约见面</button>
-                <button onClick={() => { setSelectedNpc(actionNpcId); setWorkspaceMode('preparation'); setActionNpcId(null); }} disabled={Boolean(activeMeeting)} className="rounded-xl bg-amber-50 p-3 text-center text-[11px] font-semibold text-amber-700 disabled:cursor-not-allowed disabled:opacity-40"><FileText className="mx-auto mb-1 h-5 w-5" />拜访准备</button>
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-[2px]" onClick={() => setActionNpcId(null)}>
+              <div className="w-full max-w-[330px] rounded-2xl border border-white/70 bg-white p-5 shadow-[0_24px_64px_rgba(15,23,42,.28)]" onClick={(event) => event.stopPropagation()}>
+                <div className="mb-4 flex items-center justify-between"><div><div className="text-base font-bold">{npcs.find((npc) => npc.id === actionNpcId)?.name}</div><div className="mt-0.5 text-[11px] text-slate-500">选择下一步行动</div></div><button onClick={() => setActionNpcId(null)} aria-label="关闭行动选择" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"><X className="h-4 w-4" /></button></div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => { setSelectedNpc(actionNpcId); setCommunicationChannel('email'); setWorkspaceMode('conversation'); setActionNpcId(null); }} className="rounded-xl bg-blue-50 p-3 text-center text-[11px] font-semibold text-blue-700 hover:bg-blue-100"><Mail className="mx-auto mb-1.5 h-5 w-5" />电话 / 邮件</button>
+                  <button onClick={() => { setSelectedNpc(actionNpcId); setWorkspaceMode('appointment'); setActionNpcId(null); }} disabled={Boolean(activeMeeting) || !gameState?.npcContacts[actionNpcId]?.hasReplied || gameState?.npcContacts[actionNpcId]?.status === 'known'} title={!gameState?.npcContacts[actionNpcId]?.hasReplied ? '完成一次双向沟通后才能邀约' : undefined} className="rounded-xl bg-emerald-50 p-3 text-center text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-40"><CalendarClock className="mx-auto mb-1.5 h-5 w-5" />邀约见面</button>
+                  <button onClick={() => void openOrResearchPublicInfo(actionNpcId)} disabled={Boolean(commandBusy) || Boolean(activeMeeting)} className="rounded-xl bg-violet-50 p-3 text-center text-[11px] font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-40"><Search className="mx-auto mb-1.5 h-5 w-5" />{gameState?.publicResearch?.[actionNpcId] ? '查看公开资料' : '搜集公开信息'}</button>
+                  <button onClick={() => { setSelectedNpc(actionNpcId); setWorkspaceMode('preparation'); setActionNpcId(null); }} disabled={Boolean(activeMeeting)} className="rounded-xl bg-amber-50 p-3 text-center text-[11px] font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"><FileText className="mx-auto mb-1.5 h-5 w-5" />拜访准备</button>
+                </div>
               </div>
             </div>
           )}
@@ -1112,11 +1218,10 @@ function GameInner() {
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
             <div className="flex items-center gap-3">
               <div className={`flex h-11 w-11 items-center justify-center rounded-full ${selectedNpc && hasContacted(selectedNpc) ? 'bg-gradient-to-br from-blue-500 to-indigo-700 font-bold text-white' : 'bg-slate-200 text-slate-500'}`}>{selectedNpc && hasContacted(selectedNpc) ? selectedNpcName.slice(0, 1) : <UserRound className="h-5 w-5" />}</div>
-              <div><div className="text-sm font-bold">{selectedNpcName}</div><div className="text-[11px] text-slate-500">{selectedProfile?.title ?? '请在手机中选择联系人'}{selectedContact ? ` · ${selectedContact.status === 'known' ? '待建联' : selectedContact.status === 'online' ? '可线上联系' : '已建联'}` : ''}</div></div>
+              <div><div className="text-sm font-bold">{selectedNpcName}</div><div className="text-[11px] text-slate-500">{selectedProfile?.title ?? '请在客户关系栏选择联系人'}{selectedContact ? ` · ${selectedContact.status === 'known' ? '待建联' : '已建立联系'}` : ''}</div></div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {activeMeeting?.npcId === selectedNpc && <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-semibold text-emerald-700">{VISIT_LABELS[activeMeeting.visitType]} · {activeMeeting.turnCount}/{activeMeeting.maxTurns}轮</span>}
-              {selectedNpc && selectedContact?.status === 'connected' && !activeMeeting && <button onClick={() => sendMessage('方便添加一下您的线上联系方式吗？后续项目资料我可以及时同步给您。', { intent: 'request_online', channel: selectedContact.initialChannel })} disabled={streaming} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-semibold text-blue-700 disabled:opacity-40">申请线上联系方式</button>}
               {selectedNpc && <button onClick={() => setWorkspaceMode('appointment')} disabled={Boolean(activeMeeting) || !canInviteSelected} title={!canInviteSelected ? '完成一次双向沟通后才能邀约' : undefined} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">邀约</button>}
               {selectedNpc && latestCompletedAppointment && !activeMeeting && <button onClick={() => setWorkspaceMode('follow_up')} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700 hover:bg-violet-100">会后待办</button>}
               {selectedNpc && <button onClick={() => setWorkspaceMode('preparation')} disabled={Boolean(activeMeeting)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">准备</button>}
@@ -1126,19 +1231,14 @@ function GameInner() {
           {workspaceMode === 'appointment' && selectedNpc && (
             <div className="flex-1 overflow-y-auto p-6">
               <div className="mx-auto max-w-2xl">
-                <div className="mb-5 flex items-center justify-between"><div><h2 className="text-lg font-bold">邀约 {selectedNpcName}</h2><p className="mt-1 text-xs text-slate-500">选择方式、场合和时间；NPC可能接受、拒绝或提出改期。</p></div><button onClick={() => setWorkspaceMode('conversation')} className="rounded-lg border border-slate-200 p-2"><X className="h-4 w-4" /></button></div>
+                <div className="mb-5 flex items-center justify-between"><div><h2 className="text-lg font-bold">邀约 {selectedNpcName}</h2><p className="mt-1 text-xs text-slate-500">像真实工作一样，用电话或邮件自然表达邀约。</p></div><button onClick={() => setWorkspaceMode('conversation')} className="rounded-lg border border-slate-200 p-2"><X className="h-4 w-4" /></button></div>
                 {!canInviteSelected && <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">需要先完成一次有效的双向沟通，再发起线下邀约。</div>}
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <Field label="拜访类型"><select value={inviteDraft.visitType} onChange={(event) => setInviteDraft((current) => ({ ...current, visitType: event.target.value as AppointmentView['visitType'] }))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400"><option value="short">短时拜访 · 5分钟</option><option value="formal">正式拜访 · 40分钟</option><option value="informal">非正式拜访 · 60分钟</option></select></Field>
-                  <Field label="邀约方式"><select value={inviteDraft.approach} onChange={(event) => setInviteDraft((current) => ({ ...current, approach: event.target.value as AppointmentView['approach'] }))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400"><option value="dedicated">专程拜访 · 表达重视</option><option value="drop_by">顺路拜访 · 自然切入</option></select></Field>
-                  <Field label="阶段"><select value={inviteDraft.stage} onChange={(event) => setInviteDraft((current) => ({ ...current, stage: Number(event.target.value) }))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400">{Array.from({ length: Math.max(1, (gameState?.maxRounds ?? 5) - round + 1) }, (_, index) => round + index).map((stage) => <option key={stage} value={stage}>第{stage}阶段 · {getPhaseName(stage)}</option>)}</select></Field>
-                  <Field label="时间"><input type="time" value={inviteDraft.time} onChange={(event) => setInviteDraft((current) => ({ ...current, time: event.target.value }))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400" /></Field>
-                  <Field label="地点"><input value={inviteDraft.location} onChange={(event) => setInviteDraft((current) => ({ ...current, location: event.target.value }))} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400" /></Field>
-                  <Field label="拜访时长"><div className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">{VISIT_DURATIONS[inviteDraft.visitType]}分钟（固定）</div></Field>
+                <div className="mb-4 flex gap-2">
+                  {(['email', 'work_phone'] as CommunicationChannel[]).map((channel) => <button key={channel} onClick={() => setCommunicationChannel(channel)} className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-semibold ${communicationChannel === channel ? CHANNEL_META[channel].accent : 'border-slate-200 bg-white text-slate-500'}`}>{channel === 'email' ? <Mail className="h-4 w-4" /> : <Phone className="h-4 w-4" />}{CHANNEL_META[channel].label}</button>)}
                 </div>
-                <Field label="拜访目的"><textarea value={inviteDraft.purpose} onChange={(event) => setInviteDraft((current) => ({ ...current, purpose: event.target.value }))} rows={3} className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400" /></Field>
-                {inviteDraft.visitType === 'informal' && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">非正式场合默认先不谈工作。由NPC主动开启项目话题后，再自然回应。</div>}
-                <button onClick={submitInvitation} disabled={Boolean(commandBusy) || !inviteDraft.purpose.trim() || !canInviteSelected} className="mt-5 w-full rounded-xl bg-blue-600 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{commandBusy === 'invite' ? '正在发送...' : '发送邀约'}</button>
+                <Field label={communicationChannel === 'email' ? '邮件正文' : '电话邀约话术'}><textarea value={invitationText} onChange={(event) => setInvitationText(event.target.value)} rows={7} placeholder="例如：王经理您好，想约您明天下午两点在贵公司会议室正式沟通一下实施方案和交付风险，预计四十分钟，您看是否方便？" className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 outline-none focus:border-blue-400" /></Field>
+                <div className="mt-3 rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs leading-5 text-blue-900">系统会从话术中提取会面时间、地点、类型和目的；未提及的字段将按当前项目阶段自动补齐。对方可能接受、拒绝、改期或提出前置条件。</div>
+                <button onClick={submitInvitation} disabled={Boolean(commandBusy) || !invitationText.trim() || !canInviteSelected} className="mt-5 w-full rounded-xl bg-blue-600 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{commandBusy === 'invite' ? '正在等待对方回复...' : communicationChannel === 'email' ? '发送邀约邮件' : '拨打邀约电话'}</button>
               </div>
             </div>
           )}
@@ -1157,8 +1257,19 @@ function GameInner() {
                   ))}
                 </div>
                 {selectedAppointments.length > 0 && <Field label="绑定预约（可选）"><select value={preparationAppointmentId} onChange={(event) => setPreparationAppointmentId(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400"><option value="">作为通用材料</option>{selectedAppointments.filter((item) => ['pending', 'accepted', 'countered'].includes(item.status)).map((item) => <option key={item.id} value={item.id}>{VISIT_LABELS[item.visitType]} · 第{item.stage}阶段 {item.scheduledLabel ?? formatClock(item.scheduledMinute)}</option>)}</select></Field>}
+                {(preparationType === 'ppt' || preparationType === 'materials') && (
+                  <div className="mt-4 rounded-2xl border border-blue-100 bg-blue-50/50 p-4">
+                    <div className="text-sm font-bold text-blue-950">结构化材料大纲</div>
+                    <p className="mt-1 text-[11px] leading-5 text-blue-800">按老板演示版的五段式准备，会面时会根据对象与证据的相关性判断效果。</p>
+                    <Field label="1. 对象：这份材料给谁看"><input value={preparationBrief.audience} onChange={(event) => setPreparationBrief((current) => ({ ...current, audience: event.target.value }))} placeholder={`例如：${selectedNpcName}及其部门`} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400" /></Field>
+                    <Field label="2. 问题：要解决什么"><textarea value={preparationBrief.problem} onChange={(event) => setPreparationBrief((current) => ({ ...current, problem: event.target.value }))} rows={2} placeholder="客户当前最需要解决的问题或风险" className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400" /></Field>
+                    <Field label="3. 方案：核心维度"><textarea value={preparationBrief.dimensions} onChange={(event) => setPreparationBrief((current) => ({ ...current, dimensions: event.target.value }))} rows={2} placeholder="价值、实施、交付、报价等核心维度" className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400" /></Field>
+                    <Field label="4. 证据：用什么支撑"><textarea value={preparationBrief.evidence} onChange={(event) => setPreparationBrief((current) => ({ ...current, evidence: event.target.value }))} rows={2} placeholder="公开事实、客户原话、案例或测算" className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400" /></Field>
+                    <Field label="5. 下一步：希望对方采取什么行动"><textarea value={preparationBrief.nextStep} onChange={(event) => setPreparationBrief((current) => ({ ...current, nextStep: event.target.value }))} rows={2} placeholder="例如：确认技术交流并引荐最终决策人" className="w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400" /></Field>
+                  </div>
+                )}
                 {preparationType === 'boundary_gift' && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs leading-5 text-red-800">高波动边界礼品存在更高潜在收益，也可能被拒收、上报或在后续审计中反噬；明确的现金、回扣和利益交换不会产生正收益。</div>}
-                <button onClick={submitPreparation} disabled={Boolean(commandBusy)} className="mt-5 w-full rounded-xl bg-blue-600 py-3 text-sm font-bold text-white disabled:opacity-40">{commandBusy === 'prepare' ? '准备中...' : '确认准备'}</button>
+                <button onClick={submitPreparation} disabled={Boolean(commandBusy) || ((preparationType === 'ppt' || preparationType === 'materials') && !Object.values(preparationBrief).every((value) => value.trim()))} className="mt-5 w-full rounded-xl bg-blue-600 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{commandBusy === 'prepare' ? '准备中...' : '确认准备'}</button>
               </div>
             </div>
           )}
@@ -1167,7 +1278,14 @@ function GameInner() {
             <div className="flex-1 overflow-y-auto bg-slate-50 p-6">
               <div className="mx-auto max-w-2xl">
                 <div className="mb-5 flex items-center justify-between"><div><div className="text-xs font-semibold tracking-[0.16em] text-violet-600">VISIT FOLLOW-UP</div><h2 className="mt-1 text-xl font-bold text-slate-900">与 {selectedNpcName} 的会后待办</h2><p className="mt-1 text-xs text-slate-500">先确认纪要，再选择需要兑现的动作；每项会按所选渠道消耗对应模拟时间。</p></div><button onClick={() => setWorkspaceMode('conversation')} className="rounded-lg border border-slate-200 bg-white p-2"><X className="h-4 w-4" /></button></div>
-                <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><div className="text-sm font-bold">拜访纪要</div><span className="rounded-full bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-700">{VISIT_LABELS[latestCompletedAppointment.visitType]}</span></div><p className="mt-3 text-sm leading-6 text-slate-700">{latestSelectedMinutes?.summary || '本次拜访已完成，请根据约定安排后续。'}</p><div className="mt-4 grid gap-3 sm:grid-cols-2"><div className="rounded-xl bg-slate-50 p-3 text-xs"><strong className="text-slate-700">客户承诺</strong><p className="mt-1 leading-5 text-slate-500">{latestSelectedMinutes?.npcCommitments.join('；') || '暂无明确承诺'}</p></div><div className="rounded-xl bg-slate-50 p-3 text-xs"><strong className="text-slate-700">我方承诺</strong><p className="mt-1 leading-5 text-slate-500">{latestSelectedMinutes?.playerCommitments.join('；') || '确认下一步沟通安排'}</p></div></div></section>
+                <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2"><div className="text-sm font-bold">拜访纪要</div>{Boolean(latestSelectedMinutes?.revisionCount) && <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] text-slate-600">已修订 {latestSelectedMinutes?.revisionCount} 次</span>}</div>
+                    <div className="flex items-center gap-2"><span className="rounded-full bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-700">{VISIT_LABELS[latestCompletedAppointment.visitType]}</span>{latestSelectedMinutes && <button onClick={() => openMinutesEditor(latestSelectedMinutes)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-[10px] font-semibold text-slate-700 hover:bg-slate-50">纠正纪要</button>}</div>
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-slate-700">{latestSelectedMinutes?.summary || '本次拜访已完成，请根据约定安排后续。'}</p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2"><div className="rounded-xl bg-slate-50 p-3 text-xs"><strong className="text-slate-700">客户承诺</strong><p className="mt-1 leading-5 text-slate-500">{latestSelectedMinutes?.npcCommitments.join('；') || '暂无明确承诺'}</p></div><div className="rounded-xl bg-slate-50 p-3 text-xs"><strong className="text-slate-700">我方承诺</strong><p className="mt-1 leading-5 text-slate-500">{latestSelectedMinutes?.playerCommitments.join('；') || '确认下一步沟通安排'}</p></div></div>
+                </section>
                 <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h3 className="text-sm font-bold text-slate-900">下一步动作</h3><div className="mt-3 space-y-3"><button onClick={() => void runCommand('follow_up', { npcId: selectedNpc, appointmentId: latestCompletedAppointment.id, channel: communicationChannel, content: '感谢您今天抽时间交流。我已整理会谈要点和后续事项，如有遗漏请您指正。', preparationIds: [] })} disabled={Boolean(commandBusy) || streaming} className="flex w-full items-center justify-between rounded-xl border border-violet-200 bg-violet-50 p-4 text-left disabled:opacity-40"><span><strong className="block text-sm text-violet-900">发送感谢与纪要确认</strong><span className="mt-1 block text-[11px] text-violet-700">确认已沟通事项与下一步负责人</span></span><ChevronRight className="h-4 w-4 text-violet-700" /></button><button onClick={() => void runCommand('follow_up', { npcId: selectedNpc, appointmentId: latestCompletedAppointment.id, channel: communicationChannel, content: '按我们会面时的约定，补发相关方案材料供您内部参考。', preparationIds: selectedPreparations.filter((item) => item.status === 'ready' && (item.type === 'materials' || item.type === 'ppt')).map((item) => item.id) })} disabled={Boolean(commandBusy) || streaming || !selectedPreparations.some((item) => item.status === 'ready' && (item.type === 'materials' || item.type === 'ppt'))} className="flex w-full items-center justify-between rounded-xl border border-blue-200 bg-blue-50 p-4 text-left disabled:opacity-40"><span><strong className="block text-sm text-blue-900">补发 PPT / 方案材料</strong><span className="mt-1 block text-[11px] text-blue-700">仅发送已准备且尚未使用的材料</span></span><ChevronRight className="h-4 w-4 text-blue-700" /></button></div></section>
                 {latestSelectedMinutes?.pendingMaterials.length ? <section className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900"><strong>待补材料：</strong>{latestSelectedMinutes.pendingMaterials.join('；')}</section> : null}
               </div>
@@ -1183,6 +1301,7 @@ function GameInner() {
                     <button onClick={() => runCommand('end_visit', { appointmentId: activeMeeting.appointmentId, reason: 'player', summary: '' })} disabled={Boolean(commandBusy) || streaming} className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-emerald-800 disabled:opacity-40">结束拜访</button>
                   </div>
                   {activeMeeting.visitType === 'informal' && activeMeeting.workTopicOpenedBy !== 'npc' && <div className="mt-2 text-[11px] text-amber-800">当前是非正式交流，建议先聊生活与兴趣，等待对方自然谈到工作。</div>}
+                  {activeMeeting.turnCount === activeMeeting.maxTurns - 1 && <div className="mt-2 rounded-lg border border-amber-300 bg-amber-100 px-3 py-2 text-[11px] font-semibold text-amber-900">只剩最后一轮对话，请优先确认结论、双方承诺和下一步。</div>}
                   {selectedPreparations.filter((item) => item.status !== 'delivered' && item.status !== 'used').length > 0 && (
                     <div className="mt-3 flex flex-wrap gap-2">
                       {selectedPreparations.map((item) => {
@@ -1221,24 +1340,28 @@ function GameInner() {
               )}
               {activeMeeting?.npcId === selectedNpc && (
                 <section className="relative m-4 min-h-[560px] flex-1 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl">
-                  <div className="absolute inset-0 bg-cover bg-center opacity-95" style={{ backgroundImage: "url('/images/game/visit-dialogue-scene-v1.png')" }} />
+                  <div className="absolute inset-0 bg-cover bg-center opacity-95" style={{ backgroundImage: "url('/images/game/visit-meeting-room-empty-v1.png')" }} />
                   <div className="absolute inset-0 bg-gradient-to-b from-slate-950/10 via-transparent to-slate-950/90" />
                   <div className="relative flex h-full min-h-[560px] flex-col justify-between p-5">
                     <div className="flex items-start justify-between gap-4 text-white">
                       <div><div className="text-xs font-semibold tracking-[0.22em] text-amber-200">线下拜访现场</div><h2 className="mt-1 text-xl font-bold">{selectedAppointments.find((item) => item.id === activeMeeting.appointmentId)?.location || '客户会面场景'}</h2><p className="mt-1 text-xs text-white/75">{VISIT_LABELS[activeMeeting.visitType]} · {activeMeeting.durationMinutes} 分钟 · 第 {activeMeeting.turnCount}/{activeMeeting.maxTurns} 轮</p></div>
-                      <div className="flex items-center gap-2 rounded-full bg-slate-950/55 px-3 py-2 text-xs backdrop-blur"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-500 font-bold">我</span><span className="text-white/70">↔</span><span className="flex h-7 w-7 items-center justify-center rounded-full bg-amber-500 font-bold">{selectedNpcName.slice(0, 1)}</span></div>
+                      <div className="rounded-full bg-slate-950/55 px-3 py-2 text-xs text-white/85 backdrop-blur">正在会面 · {selectedNpcName}</div>
                     </div>
-                    <div className="mx-auto w-full max-w-3xl space-y-3 rounded-2xl border border-white/20 bg-slate-950/65 p-4 shadow-2xl backdrop-blur-md">
-                      <div className="max-h-48 space-y-2 overflow-y-auto pr-1">
-                        {messages.filter((message) => message.channel === 'offline').slice(-4).map((message) => (
-                          <div key={message.ts} className={`flex items-start gap-2 ${message.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                            <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${message.role === 'user' ? 'bg-blue-500 text-white' : 'bg-amber-400 text-slate-900'}`}>{message.role === 'user' ? '我' : selectedNpcName.slice(0, 1)}</div>
-                            <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm leading-6 shadow-sm ${message.role === 'user' ? 'bg-blue-600 text-white' : 'bg-white text-slate-800'}`}>{message.content || (streaming ? '对方正在思考…' : '')}</div>
+                    <div className="mx-auto w-full max-w-4xl space-y-3">
+                      {latestNpcMeetingMessage && (
+                        <div key={latestNpcMeetingMessage.ts} className="flex items-end gap-3 rounded-2xl border border-white/25 bg-slate-950/72 p-3 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 duration-300">
+                          <div className="relative h-32 w-24 shrink-0 overflow-hidden rounded-xl border border-white/30 bg-slate-800 shadow-lg sm:h-40 sm:w-32">
+                            <Image src={latestNpcMeetingMessage.content ? '/emotion-greeting.jpeg' : '/emotion-thinking.jpeg'} alt={`${selectedNpcName}的形象`} fill sizes="128px" className="object-cover object-top" priority />
                           </div>
-                        ))}
-                        {messages.filter((message) => message.channel === 'offline').length === 0 && <div className="rounded-xl bg-white/10 px-4 py-3 text-center text-sm text-white/85">面谈开始。请根据场景和对方状态自然展开交流。</div>}
-                      </div>
-                      <div className="flex items-end gap-2 border-t border-white/15 pt-3"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(input); } }} disabled={streaming} rows={2} placeholder="输入你在现场说的话…" className="min-h-[56px] flex-1 resize-none rounded-xl border border-white/20 bg-white/95 px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-300" /><button onClick={() => sendMessage(input)} disabled={streaming || !input.trim()} className="rounded-xl bg-amber-400 p-3 text-slate-900 disabled:opacity-40"><Send className="h-4 w-4" /></button></div>
+                          <div className="min-w-0 flex-1 rounded-2xl rounded-bl-sm bg-white p-4 text-slate-900 shadow-lg">
+                            <div className="mb-1.5 text-xs font-bold text-amber-700">{selectedNpcName} · {selectedProfile?.title}</div>
+                            <p className="whitespace-pre-wrap text-sm leading-6 sm:text-base">{latestNpcMeetingMessage.content || (streaming ? '正在思考…' : '')}</p>
+                          </div>
+                        </div>
+                      )}
+                      {!latestNpcMeetingMessage && <div className="rounded-xl bg-slate-950/55 px-4 py-3 text-center text-sm text-white/90 backdrop-blur">面谈开始。现场暂时只呈现环境，对方发言时人物形象与台词会同步出现。</div>}
+                      {latestPlayerMeetingMessage && <div className="ml-auto max-w-2xl rounded-xl border border-white/15 bg-slate-950/55 px-4 py-2 text-xs leading-5 text-white/80 backdrop-blur"><strong className="text-blue-200">你刚刚说：</strong>{latestPlayerMeetingMessage.content}</div>}
+                      <div className="flex items-end gap-2 rounded-2xl border border-white/20 bg-slate-950/65 p-3 shadow-2xl backdrop-blur-md"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(input); } }} disabled={streaming} rows={2} placeholder="输入你在现场说的话…" className="min-h-[56px] flex-1 resize-none rounded-xl border border-white/20 bg-white/95 px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-300" /><button onClick={() => sendMessage(input)} disabled={streaming || !input.trim()} className="rounded-xl bg-amber-400 p-3 text-slate-900 disabled:opacity-40"><Send className="h-4 w-4" /></button></div>
                     </div>
                   </div>
                 </section>
@@ -1249,23 +1372,22 @@ function GameInner() {
                   <div className="mt-2 text-[11px] text-slate-400">{CHANNEL_META[communicationChannel].hint}</div>
                 </div>
               )}
-              <div className={`h-[430px] shrink-0 overflow-y-auto p-5 ${activeMeeting ? 'hidden' : communicationChannel === 'online' ? 'bg-[#ededed]' : communicationChannel === 'email' ? 'bg-slate-100' : 'bg-slate-950'}`}>
-                {selectedNpc && !activeMeeting && <div className={`mx-auto mb-4 max-w-2xl rounded-2xl border p-4 shadow-sm ${communicationChannel === 'online' ? 'border-emerald-200 bg-emerald-600 text-white' : communicationChannel === 'email' ? 'border-slate-200 bg-white text-slate-800' : 'border-violet-200 bg-gradient-to-r from-violet-700 to-indigo-700 text-white'}`}><div className="flex items-center gap-2 text-sm font-bold">{communicationChannel === 'email' ? <Mail className="h-4 w-4" /> : communicationChannel === 'work_phone' ? <Phone className="h-4 w-4" /> : <MessageCircle className="h-4 w-4" />}{communicationChannel === 'email' ? `写给 ${selectedNpcName} 的邮件` : communicationChannel === 'work_phone' ? `与 ${selectedNpcName} 的工作电话` : `微信 · ${selectedNpcName}`}</div><div className={`mt-1 text-[11px] ${communicationChannel === 'email' ? 'text-slate-400' : 'text-white/70'}`}>{communicationChannel === 'email' ? '收件人：客户联系人　主题：项目沟通' : communicationChannel === 'work_phone' ? '请在关键事实与结论上保持简洁' : '即时沟通，请注意语气与分寸'}</div></div>}
-                {!selectedNpc && <EmptyPhoneState icon={Users} title="选择一位联系人" description="在手机通讯录中点击头像，再选择线上联系、邀约见面或拜访准备。" />}
+              <div className={`h-[430px] shrink-0 overflow-y-auto p-5 ${activeMeeting ? 'hidden' : communicationChannel === 'email' ? 'bg-slate-100' : 'bg-slate-950'}`}>
+                {selectedNpc && !activeMeeting && <div className={`mx-auto mb-4 max-w-2xl rounded-2xl border p-4 shadow-sm ${communicationChannel === 'email' ? 'border-slate-200 bg-white text-slate-800' : 'border-violet-200 bg-gradient-to-r from-violet-700 to-indigo-700 text-white'}`}><div className="flex items-center gap-2 text-sm font-bold">{communicationChannel === 'email' ? <Mail className="h-4 w-4" /> : <Phone className="h-4 w-4" />}{communicationChannel === 'email' ? `写给 ${selectedNpcName} 的邮件` : `与 ${selectedNpcName} 的工作电话`}</div><div className={`mt-1 text-[11px] ${communicationChannel === 'email' ? 'text-slate-400' : 'text-white/70'}`}>{communicationChannel === 'email' ? '收件人：客户联系人　主题：项目沟通' : '请在关键事实与结论上保持简洁'}</div></div>}
+                {!selectedNpc && <EmptyPhoneState icon={Users} title="选择一位联系人" description="从左侧客户关系栏选择人物，再通过电话或邮件沟通、邀约见面或准备材料。" />}
               {selectedNpc && !activeMeeting && communicationChannel === 'work_phone' && <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center text-center text-white"><div className="flex h-24 w-24 items-center justify-center rounded-full bg-gradient-to-br from-violet-400 to-fuchsia-500 text-4xl font-bold shadow-[0_0_50px_rgba(168,85,247,.55)]">{selectedNpcName.slice(0, 1)}</div><h3 className="mt-5 text-xl font-bold">{selectedNpcName}</h3><p className="mt-1 text-sm text-violet-200">{phoneCallActive ? (streaming ? '正在接通…' : '通话已接通') : '准备拨打工作电话'}</p>{phoneCallActive ? <div className="mt-7 w-full rounded-2xl bg-white/10 p-4 text-left"><div className="mb-2 text-xs text-violet-200">本次通话记录</div><div className="max-h-28 space-y-2 overflow-y-auto text-sm">{visibleChannelMessages.filter((message) => message.content !== '[电话呼出]').slice(-3).map((message) => <p key={message.ts} className="leading-5"><strong>{message.role === 'user' ? '我：' : `${selectedNpcName}：`}</strong>{message.content || (streaming ? '…' : '')}</p>)}</div></div> : <button onClick={() => { setPhoneCallActive(true); void sendMessage('[电话呼出]', { intent: 'call_connect', channel: 'work_phone', hidePlayerMessage: true }); }} disabled={!selectedNpc || streaming} className="mt-8 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg hover:bg-emerald-400 disabled:opacity-40"><Phone className="h-6 w-6" /></button>}</div>}
                 {selectedNpc && !activeMeeting && communicationChannel !== 'work_phone' && visibleChannelMessages.length === 0 && <div className="mx-auto mt-12 max-w-sm rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center"><MessageCircle className="mx-auto h-8 w-8 text-blue-500" /><div className="mt-3 text-sm font-bold">开始与 {selectedNpcName} 沟通</div><div className="mt-2 text-xs leading-5 text-slate-500">对方的真实态度不会直接显示，请留意措辞、回复节奏与后续行动。</div></div>}
-                {selectedNpc && !activeMeeting && communicationChannel === 'online' && <div className="mx-auto max-w-2xl space-y-3">{visibleChannelMessages.map((message) => <div key={message.ts} className={`flex items-end gap-2 ${message.role === 'user' ? 'flex-row-reverse' : ''}`}><div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded text-xs font-bold ${message.role === 'user' ? 'bg-blue-500 text-white' : 'bg-white text-slate-500 shadow-sm'}`}>{message.role === 'user' ? '我' : selectedNpcName.slice(0, 1)}</div><div><div className={`max-w-[420px] rounded-md px-3 py-2 text-sm leading-6 shadow-sm ${message.role === 'user' ? 'bg-[#95ec69] text-slate-900' : 'bg-white text-slate-800'}`}>{message.content || (streaming ? '正在输入…' : '')}</div><div className={`mt-1 text-[10px] text-slate-400 ${message.role === 'user' ? 'text-right' : ''}`}>{formatMessageTime(message.ts)}{message.role === 'user' && message.deliveryStatus === 'replied' ? ' · 已读' : ''}</div></div></div>)}</div>}
                 {selectedNpc && !activeMeeting && communicationChannel === 'email' && <div className="mx-auto max-w-2xl space-y-3">{visibleChannelMessages.map((message) => <article key={message.ts} className="rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-100 px-4 py-2 text-[11px] text-slate-500"><div><strong className="text-slate-800">{message.role === 'user' ? '我方' : selectedNpcName}</strong>　收件人：{message.role === 'user' ? selectedNpcName : '我方'}</div><div className="mt-1">主题：项目沟通　·　{formatMessageTime(message.ts)}</div></div><p className="whitespace-pre-wrap px-4 py-3 text-sm leading-6 text-slate-800">{message.content || (streaming ? '正在发送…' : '')}</p></article>)}</div>}
                 <div ref={messagesEndRef} />
               </div>
               <div className={`border-t border-slate-200 bg-white p-4 ${activeMeeting ? 'hidden' : ''}`}>
                 {commandFeedback && <div className="mb-2 flex items-center gap-1.5 text-[11px] text-emerald-700"><Check className="h-3.5 w-3.5" />{commandFeedback}</div>}
                 {communicationChannel === 'work_phone' && !phoneCallActive ? <div className="flex items-center justify-between rounded-xl bg-violet-50 px-4 py-3 text-sm text-violet-900"><span>点击上方绿色按钮拨打电话；接通后可输入通话要点。</span><Phone className="h-4 w-4" /></div> : <div className="flex items-end gap-2">
-                  <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(input); } }} disabled={!selectedNpc || streaming} rows={3} placeholder={selectedContact?.status === 'known' ? '输入首次建联内容…' : communicationChannel === 'email' ? '撰写邮件正文…' : communicationChannel === 'work_phone' ? '输入电话话术…' : '输入微信消息…'} className="min-h-[76px] flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 disabled:bg-slate-100" />
+                  <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(input); } }} disabled={!selectedNpc || streaming} rows={3} placeholder={selectedContact?.status === 'known' ? '输入首次建联内容…' : communicationChannel === 'email' ? '撰写邮件正文…' : '输入电话话术…'} className="min-h-[76px] flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 disabled:bg-slate-100" />
                   <button onClick={toggleRecording} disabled={!selectedNpc || streaming} className={`rounded-xl border p-3 ${isRecording ? 'border-red-300 bg-red-50 text-red-600' : 'border-slate-200 text-slate-500'}`}>{isRecording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}</button>
                   <button onClick={() => sendMessage(input)} disabled={!selectedNpc || streaming || !input.trim()} className="rounded-xl bg-blue-600 p-3 text-white disabled:opacity-40"><Send className="h-4 w-4" /></button>
                 </div>}
-                <div className="mt-2 text-[10px] text-slate-400">线上消息5分钟 · 邮件10分钟 · 工作电话15分钟；AI响应等待不消耗模拟时间。</div>
+                <div className="mt-2 text-[10px] text-slate-400">邮件10分钟 · 工作电话15分钟；AI响应等待不消耗模拟时间。</div>
               </div>
             </>
           )}
@@ -1274,36 +1396,93 @@ function GameInner() {
 
       {!gameState && savePickerReady && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl">
-            <div className="bg-gradient-to-r from-blue-700 to-indigo-700 px-7 py-6 text-white"><div className="text-xs font-semibold tracking-[0.2em] text-blue-100">项目演练</div><h1 className="mt-2 text-2xl font-bold">选择进入方式</h1><p className="mt-2 text-sm text-blue-100">已结束对局会保留在历史记录中，不会再作为可继续的存档出现。</p></div>
-            <div className="max-h-[58vh] overflow-y-auto p-6"><div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-bold text-slate-800">进行中存档</h2><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-500">{activeSaves.length} / {maxSaves}</span></div>
-              {activeSaves.length === 0 ? <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500">当前没有可继续的对局。开始一局新游戏吧。</div> : <div className="space-y-2">{activeSaves.map((save, index) => <button key={save.id} onClick={() => void openSave(save.id)} disabled={loadingSave} className="flex w-full items-center justify-between rounded-2xl border border-slate-200 p-4 text-left transition hover:border-blue-300 hover:bg-blue-50 disabled:opacity-50"><div><div className="text-sm font-bold text-slate-800">存档 {index + 1} · {getPhaseName(save.currentRound)}</div><div className="mt-1 text-xs text-slate-500">第 {save.currentRound} / {save.maxRounds} 阶段 · 最近保存 {new Date(save.updatedAt).toLocaleString('zh-CN')}</div></div><ChevronRight className="h-5 w-5 text-blue-600" /></button>)}</div>}
-              {activeSaves.length > 0 && <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3"><div className="mb-2 text-xs font-semibold text-slate-600">管理存档</div><div className="space-y-2">{activeSaves.map((save, index) => <div key={`manage-${save.id}`} className="flex items-center justify-between gap-2 rounded-lg bg-white px-3 py-2"><span className="min-w-0 truncate text-xs text-slate-600">存档 {index + 1} · 第 {save.currentRound} 阶段</span><span className="flex shrink-0 gap-2"><button onClick={() => void deleteSave(save.id)} disabled={loadingSave} className="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-40">删除</button>{activeSaves.length >= maxSaves && <button onClick={() => void deleteSave(save.id, true)} disabled={loadingSave} className="rounded-md bg-orange-600 px-2 py-1 text-[11px] font-semibold text-white disabled:opacity-40">覆盖新开</button>}</span></div>)}</div></div>}
+          <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-white/10 bg-white shadow-2xl">
+            <div className="bg-[#0B1736] px-8 py-7 text-white"><div className="text-xs font-semibold tracking-[0.2em] text-blue-300">SALES SIMULATION</div><h1 className="mt-2 text-2xl font-bold">进入项目作战台</h1><p className="mt-2 text-sm text-slate-300">每位玩家只保留一个进行中的项目存档。</p></div>
+            <div className="p-7">
+              {activeSaves[0] ? <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-5"><div className="flex items-center justify-between gap-4"><div><div className="text-xs font-semibold uppercase tracking-wider text-slate-400">当前进度</div><div className="mt-2 text-base font-bold text-slate-900">{getPhaseName(activeSaves[0].currentRound)}</div><div className="mt-1 text-xs text-slate-500">第 {activeSaves[0].currentRound} / {activeSaves[0].maxRounds} 阶段 · 最近保存 {new Date(activeSaves[0].updatedAt).toLocaleString('zh-CN')}</div></div><span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">可继续</span></div></div> : <div className="mb-5 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-7 text-center text-sm text-slate-500">还没有进行中的项目，请开始新游戏。</div>}
               {savePickerError && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{savePickerError}</div>}
-              <button onClick={() => void startNewGame()} disabled={loadingSave || activeSaves.length >= maxSaves} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><Play className="h-4 w-4" />{loadingSave ? '正在载入…' : activeSaves.length >= maxSaves ? `进行中存档已满（最多 ${maxSaves} 个）` : '开始新游戏'}</button>
-              <p className="mt-3 text-center text-[11px] text-slate-400">结束后的对局请在历史对局或结果页查看。</p>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <button onClick={() => activeSaves[0] && void openSave(activeSaves[0].id, true)} disabled={loadingSave || !activeSaves[0]} className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-35"><ChevronRight className="h-4 w-4" />继续游戏</button>
+                <button onClick={() => void startNewGame()} disabled={loadingSave} className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40"><Play className="h-4 w-4" />开始新游戏</button>
+              </div>
+              {activeSaves[0] && <p className="mt-3 text-center text-[11px] text-amber-700">开始新游戏会先要求确认，确认后覆盖当前存档。</p>}
             </div>
           </div>
         </div>
       )}
 
       {showCompetitors && (
-        <Modal title="竞品公开信息" onClose={() => setShowCompetitors(false)}>
+        <Modal title="竞品实时竞争情况" onClose={() => setShowCompetitors(false)}>
+          <div className={`rounded-xl border p-4 ${competitorMeta.tone}`}><div className="text-xs font-semibold">当前模糊态势</div><div className="mt-1 text-lg font-bold">{competitorMeta.label}</div><p className="mt-2 text-xs leading-5">这是根据已发生事件的区间判断，对局结束前不显示竞品精确分数。</p></div>
+          <section className="mt-4"><h3 className="text-sm font-bold">竞品行动记录</h3><div className="mt-2 space-y-2">{gameState?.competitorState?.actions.length ? [...gameState.competitorState.actions].reverse().map((action) => <div key={action.id} className="rounded-xl border border-slate-200 p-3"><div className="flex items-center justify-between gap-2 text-xs"><strong>第{action.round}阶段 · {npcs.find((npc) => npc.id === action.targetNpcId)?.name ?? '关键人'}</strong><span className={`rounded-full px-2 py-1 text-[10px] ${action.mitigated ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{action.mitigated ? '我方已部分对冲' : '产生压力'}</span></div><p className="mt-1 text-xs leading-5 text-slate-600">{action.summary}</p></div>) : <div className="rounded-xl border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500">竞品尚未出现明显动作。</div>}</div></section>
+          <h3 className="mt-5 border-t border-slate-100 pt-4 text-sm font-bold">竞品公开资料</h3>
           {competitors.length === 0 ? <div className="py-10 text-center text-sm text-slate-500">暂无竞品数据</div> : <div className="space-y-3">{competitors.map((competitor) => <div key={competitor.company_name} className="rounded-xl border border-slate-200 p-4"><div className="text-sm font-bold text-blue-700">{competitor.company_name}</div><div className="mt-2 text-xs text-slate-700">{competitor.features}</div><div className="mt-1 text-[11px] text-slate-500">{competitor.more_info || '暂无更多公开信息'}</div></div>)}</div>}
         </Modal>
       )}
 
-      {newlyUnlockedNpcId && (() => {
-        const unlocked = getProjectOneNpc(newlyUnlockedNpcId);
-        if (!unlocked) return null;
-        return <Modal title="新人物已发现" onClose={() => setNewlyUnlockedNpcId(null)}><div className="py-4 text-center"><div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-700 text-2xl font-bold text-white">{unlocked.name.slice(0, 1)}</div><div className="mt-4 text-xl font-bold">{unlocked.name}</div><div className="mt-1 text-sm text-slate-500">{unlocked.title}</div><button onClick={() => { setSelectedNpc(unlocked.id); setPhoneTab('contacts'); setWorkspaceMode('conversation'); setNewlyUnlockedNpcId(null); }} className="mt-5 rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-bold text-white">查看联系人</button></div></Modal>;
-      })()}
+      {invitationResult && (
+        <Modal title="邀约结果" onClose={() => setInvitationResult(null)}>
+          <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-4"><div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-700 text-lg font-bold text-white">{invitationResult.npcName.slice(0, 1)}</div><div><div className="font-bold">{invitationResult.npcName}</div><div className="text-xs text-slate-500">{invitationResult.npcTitle}</div></div></div>
+          <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-950">{invitationResult.feedback}</div>
+          <div className="mt-4 grid gap-2 text-xs sm:grid-cols-2"><div className="rounded-xl border border-slate-200 p-3"><span className="text-slate-500">状态</span><strong className="ml-2">{STATUS_LABELS[invitationResult.appointment.status] ?? invitationResult.appointment.status}</strong></div><div className="rounded-xl border border-slate-200 p-3"><span className="text-slate-500">时间</span><strong className="ml-2">第{invitationResult.appointment.stage}阶段 {invitationResult.appointment.scheduledLabel ?? formatClock(invitationResult.appointment.scheduledMinute)}</strong></div><div className="rounded-xl border border-slate-200 p-3"><span className="text-slate-500">地点</span><strong className="ml-2">{invitationResult.appointment.location}</strong></div><div className="rounded-xl border border-slate-200 p-3"><span className="text-slate-500">形式</span><strong className="ml-2">{VISIT_LABELS[invitationResult.appointment.visitType]}</strong></div></div>
+        </Modal>
+      )}
+
+      {showEndDayCheck && (
+        <Modal title={round < 5 ? '结束今日工作' : '进入项目提交检查'} onClose={() => setShowEndDayCheck(false)}>
+          <p className="text-sm leading-6 text-slate-600">结束后将结算当日未完成事项，同时推进竞品的实时动作。</p>
+          <div className="mt-4 space-y-2 text-xs"><CheckRow label="当日未完成预约" value={`${todayUnfinishedAppointments.length} 项`} warning={todayUnfinishedAppointments.length > 0} /><CheckRow label="未读会后待办" value={`${unreadFollowUps.length} 项`} warning={unreadFollowUps.length > 0} /><CheckRow label="今日剩余时间" value={formatDuration(simulation.available)} warning={false} /><CheckRow label="剩余行动点" value={`${coins} 点`} warning={false} /></div>
+          {todayUnfinishedAppointments.length > 0 && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">已接受但未履约的当日预约会被记为爽约，并影响客户态度。</div>}
+          <div className="mt-5 flex justify-end gap-2"><button onClick={() => setShowEndDayCheck(false)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold">继续处理</button><button onClick={async () => { setShowEndDayCheck(false); await runCommand('advance_phase'); }} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white">确认结束</button></div>
+        </Modal>
+      )}
+
+      {showSubmissionCheck && (
+        <Modal title="项目提交检查" onClose={() => setShowSubmissionCheck(false)}>
+          <p className="text-sm leading-6 text-slate-600">提交后将立即结算本局，结果页会展示我方与竞品对比、客户内部决策回放与证据链。</p>
+          <div className="mt-4 space-y-2 text-xs"><CheckRow label="决策链" value={gameState?.unlockedClues?.includes('decision_process') ? '已核实' : '未核实'} warning={!gameState?.unlockedClues?.includes('decision_process')} /><CheckRow label="公开信息证据" value={`${Object.keys(gameState?.publicResearch ?? {}).length} 人`} warning={Object.keys(gameState?.publicResearch ?? {}).length === 0} /><CheckRow label="线下拜访纪要" value={`${meetingMinutes.length} 份`} warning={meetingMinutes.length === 0} /><CheckRow label="合规风险" value={gameState?.complianceRisks?.some((risk) => risk.status === 'latent' || risk.status === 'triggered') ? '存在风险' : '未发现高风险'} warning={Boolean(gameState?.complianceRisks?.some((risk) => risk.status === 'latent' || risk.status === 'triggered'))} /></div>
+          {submissionWarnings.length > 0 && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900"><strong>提交前注意：</strong>{submissionWarnings.join('；')}</div>}
+          <div className="mt-5 flex justify-end gap-2"><button onClick={() => setShowSubmissionCheck(false)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold">返回补充</button><button onClick={async () => { setShowSubmissionCheck(false); await runCommand('submit'); }} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white">确认提交并结算</button></div>
+        </Modal>
+      )}
+
+      {competitorEvent && (
+        <Modal title={`第${competitorEvent.round}阶段 · 竞品动态`} onClose={() => setCompetitorEvent(null)}>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-800">{competitorEvent.summary}</div><div className={`mt-3 rounded-xl border p-3 text-xs ${competitorEvent.mitigated ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>{competitorEvent.mitigated ? '你此前积累的调研、拜访或材料已对冲部分压力。' : '该动作已影响目标联系人，请尽快核实并回应。'}</div>
+        </Modal>
+      )}
+
+      {minutesDraft && (
+        <Modal title="纠正拜访纪要" onClose={() => setMinutesDraft(null)}>
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs leading-5 text-blue-900">修订会保留系统原始纪要和修订次数，便于结果回放和教练复盘。</div>
+          <Field label="会谈摘要"><textarea value={minutesDraft.summary} onChange={(event) => setMinutesDraft((current) => current ? { ...current, summary: event.target.value } : current)} rows={3} className="w-full rounded-xl border border-slate-200 p-3 text-sm" /></Field>
+          <Field label="已确认事项（用分号分隔）"><textarea value={minutesDraft.confirmedItems} onChange={(event) => setMinutesDraft((current) => current ? { ...current, confirmedItems: event.target.value } : current)} rows={2} className="w-full rounded-xl border border-slate-200 p-3 text-sm" /></Field>
+          <Field label="客户承诺"><textarea value={minutesDraft.npcCommitments} onChange={(event) => setMinutesDraft((current) => current ? { ...current, npcCommitments: event.target.value } : current)} rows={2} className="w-full rounded-xl border border-slate-200 p-3 text-sm" /></Field>
+          <Field label="我方承诺"><textarea value={minutesDraft.playerCommitments} onChange={(event) => setMinutesDraft((current) => current ? { ...current, playerCommitments: event.target.value } : current)} rows={2} className="w-full rounded-xl border border-slate-200 p-3 text-sm" /></Field>
+          <Field label="下一步"><input value={minutesDraft.nextStep} onChange={(event) => setMinutesDraft((current) => current ? { ...current, nextStep: event.target.value } : current)} className="w-full rounded-xl border border-slate-200 p-3 text-sm" /></Field>
+          <button onClick={() => void saveMeetingMinutes()} disabled={Boolean(commandBusy) || !minutesDraft.summary.trim() || !minutesDraft.nextStep.trim()} className="mt-5 w-full rounded-xl bg-blue-600 py-3 text-sm font-bold text-white disabled:opacity-40">保存修订</button>
+        </Modal>
+      )}
+
+      {publicInfoNpcId && publicInfoRecord && (
+        <Modal title={`${npcs.find((npc) => npc.id === publicInfoNpcId)?.name ?? '人物'} · 公开资料卡`} onClose={() => setPublicInfoNpcId(null)}>
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-xs text-blue-900">本资料只包含公开可获得的信息。弱线索是准备方向，不代表人物的真实态度或最终决策权。</div>
+          <section className="mt-4"><h3 className="text-sm font-bold text-slate-900">公开事实</h3><div className="mt-2 space-y-2">{publicInfoRecord.facts.map((fact) => <div key={fact} className="flex gap-2 rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-700"><Check className="mt-1 h-4 w-4 shrink-0 text-emerald-600" /><span>{fact}</span></div>)}</div></section>
+          <section className="mt-5"><h3 className="text-sm font-bold text-slate-900">可供准备参考的弱线索</h3><div className="mt-2 space-y-2">{publicInfoRecord.weakSignals.map((signal) => <div key={signal} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900">{signal}</div>)}</div></section>
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4 text-[11px] text-slate-500"><span>来源：{publicInfoRecord.sourceNote}</span><span>消耗 {publicInfoRecord.timeMinutes} 分钟 · {publicInfoRecord.costPoints} 行动点</span></div>
+        </Modal>
+      )}
+
     </div>
   );
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <label className="mt-4 block"><span className="mb-1.5 block text-xs font-semibold text-slate-700">{label}</span>{children}</label>;
+}
+
+function CheckRow({ label, value, warning }: { label: string; value: string; warning: boolean }) {
+  return <div className={`flex items-center justify-between rounded-xl border px-3 py-2.5 ${warning ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-slate-200 bg-slate-50 text-slate-700'}`}><span>{label}</span><strong>{value}</strong></div>;
 }
 
 function EmptyPhoneState({ icon: Icon, title, description }: { icon: typeof Mail; title: string; description: string }) {

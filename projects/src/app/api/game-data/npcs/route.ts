@@ -10,7 +10,6 @@ export async function GET(request: NextRequest) {
 
   if (projectId === '1') {
     const gameSessionId = searchParams.get('game_session_id');
-    let unlockedNpcIds = PROJECT_ONE_NPCS.filter((npc) => npc.initiallyVisible).map((npc) => npc.id);
     let npcAffinity: Record<string, number> = {};
     let personalInterestUnlocked = false;
 
@@ -19,7 +18,6 @@ export async function GET(request: NextRequest) {
       if (!guard.ok || !guard.session) return guard.response!;
       try {
         const gameSession = await getOwnedGameSession(gameSessionId, guard.session.userId);
-        unlockedNpcIds = gameSession.state.unlockedNpcIds;
         npcAffinity = gameSession.state.npcAffinity;
         personalInterestUnlocked = gameSession.state.unlockedClues.includes('personal_interest');
       } catch {
@@ -27,9 +25,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const data = PROJECT_ONE_NPCS
-      .filter((npc) => unlockedNpcIds.includes(npc.id))
-      .map((npc) => ({
+    const data = PROJECT_ONE_NPCS.map((npc) => ({
         id: npc.id,
         project_id: npc.projectId,
         category: npc.category,
@@ -40,7 +36,7 @@ export async function GET(request: NextRequest) {
         hometown: npc.hometown,
         personality: npc.personality,
         weakness: personalInterestUnlocked && (npcAffinity[npc.id] ?? 0) >= 50 ? npc.weakness : null,
-      }));
+    }));
     return NextResponse.json({ success: true, data });
   }
 

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const createGameSessionRequestSchema = z.object({
   scenarioCode: z.literal('project-1'),
+  replaceExisting: z.boolean().default(false),
 });
 
 export const relationshipActionRequestSchema = z.object({
@@ -45,13 +46,16 @@ export const inviteGameCommandSchema = z.object({
   type: z.literal('invite'),
   payload: z.object({
     npcId: npcIdSchema,
-    channel: z.enum(['email', 'work_phone', 'online']).default('online'),
-    invitationMethod: z.enum(['dedicated', 'drop_in']),
-    visitType: z.enum(['short', 'formal', 'informal']),
-    venue: z.string().trim().min(1).max(120),
-    purpose: textSchema,
-    scheduledRound: z.number().int().min(1).max(5),
-    startMinute: z.number().int().min(9 * 60).max(22 * 60),
+    channel: z.enum(['email', 'work_phone', 'online']),
+    rawText: textSchema.optional(),
+    // Legacy structured fields remain optional for old clients and tests. New
+    // player flows send natural language and let the server resolve defaults.
+    invitationMethod: z.enum(['dedicated', 'drop_in']).optional(),
+    visitType: z.enum(['short', 'formal', 'informal']).optional(),
+    venue: z.string().trim().min(1).max(120).optional(),
+    purpose: textSchema.optional(),
+    scheduledRound: z.number().int().min(1).max(5).optional(),
+    startMinute: z.number().int().min(9 * 60).max(22 * 60).optional(),
   }),
 });
 
@@ -64,6 +68,13 @@ export const prepareGameCommandSchema = z.object({
     preparationType: z.enum(['agenda', 'ppt', 'materials', 'courtesy_gift', 'boundary_gift']),
     title: z.string().trim().min(1).max(120),
     content: z.string().trim().max(2000).default(''),
+    brief: z.object({
+      audience: z.string().trim().min(2).max(200),
+      problem: z.string().trim().min(4).max(500),
+      dimensions: z.string().trim().min(4).max(500),
+      evidence: z.string().trim().min(2).max(500),
+      nextStep: z.string().trim().min(2).max(500),
+    }).optional(),
   }),
 });
 
@@ -112,7 +123,7 @@ export const followUpGameCommandSchema = z.object({
     z.object({
       action: z.literal('message').default('message'),
       npcId: npcIdSchema,
-      appointmentId: entityIdSchema.optional(),
+      appointmentId: entityIdSchema,
       channel: z.enum(['email', 'work_phone', 'online']),
       content: textSchema,
       preparationIds: z.array(entityIdSchema).max(8).default([]),
@@ -126,6 +137,19 @@ export const updateAppointmentGameCommandSchema = z.object({
   payload: z.object({
     appointmentId: entityIdSchema,
     action: z.enum(['accept_counter', 'cancel']),
+  }),
+});
+
+export const updateMeetingMinutesGameCommandSchema = z.object({
+  ...commandBaseSchema,
+  type: z.literal('update_meeting_minutes'),
+  payload: z.object({
+    minutesId: entityIdSchema,
+    summary: z.string().trim().min(1).max(2000),
+    confirmedItems: z.array(z.string().trim().min(1).max(300)).max(12),
+    npcCommitments: z.array(z.string().trim().min(1).max(300)).max(12),
+    playerCommitments: z.array(z.string().trim().min(1).max(300)).max(12),
+    nextStep: z.string().trim().min(1).max(500),
   }),
 });
 
@@ -153,6 +177,12 @@ export const markNotificationReadGameCommandSchema = z.object({
   payload: z.object({ notificationId: entityIdSchema }),
 });
 
+export const researchPublicInfoGameCommandSchema = z.object({
+  ...commandBaseSchema,
+  type: z.literal('research_public_info'),
+  payload: z.object({ npcId: npcIdSchema }),
+});
+
 /** Versioned deterministic commands used by the unified game command API. */
 export const gameCommandSchema = z.discriminatedUnion('type', [
   contactGameCommandSchema,
@@ -163,10 +193,12 @@ export const gameCommandSchema = z.discriminatedUnion('type', [
   endVisitGameCommandSchema,
   giveGiftGameCommandSchema,
   followUpGameCommandSchema,
+  updateMeetingMinutesGameCommandSchema,
   waitGameCommandSchema,
   advancePhaseGameCommandSchema,
   submitGameCommandSchema,
   markNotificationReadGameCommandSchema,
+  researchPublicInfoGameCommandSchema,
 ]);
 
 export type GameCommand = z.infer<typeof gameCommandSchema>;

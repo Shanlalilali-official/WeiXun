@@ -15,9 +15,11 @@ import {
   Gift,
   HeartHandshake,
   Home,
+  MessagesSquare,
   RefreshCw,
   ShieldAlert,
   Sparkles,
+  Swords,
   Target,
   Trophy,
   UserRound,
@@ -313,6 +315,15 @@ function ResultInner() {
   const cumulativeTime = firstNumber(root, ['cumulativeTimeMinutes', 'totalInvestedMinutes']) ?? 0;
   const cumulativeSpent = firstNumber(root, ['cumulativeSpentPoints', 'totalActionPointsSpent']) ?? 0;
   const completeHybridData = outcome.publicValueScore !== undefined && outcome.personalBenefitScore !== undefined && outcome.decisionChainSupport !== undefined;
+  const deterministicOutcome = getGameOutcome(state);
+  const competitorScore = deterministicOutcome.competitorScore;
+  const decisionReplay = attitudes.map((attitude) => {
+    const npc = getProjectOneNpc(attitude.npcId);
+    const support = attitude.support ?? 0;
+    const stance = support >= 60 ? '支持我方方案' : support >= 45 ? '谨慎认可，仍要求补证' : '保留意见';
+    const reason = attitude.history[attitude.history.length - 1]?.reason ?? '本局没有形成更明确的直接证据';
+    return { npcId: attitude.npcId, name: npc?.name ?? attitude.npcId, title: npc?.title ?? '关键联系人', stance, reason };
+  });
   const restartGame = () => {
     localStorage.removeItem(`game-session:${state.scenarioCode}`);
     router.push('/start');
@@ -353,6 +364,19 @@ function ResultInner() {
             这是旧版或迁移中的对局，部分「对公价值、个人合理收益、决策链支持」数据尚未记录。已保留原五维结果，不会用虚构数值补齐缺失项。
           </div>
         )}
+
+        <section className="mt-6 rounded-2xl border border-border bg-card p-6 shadow-sm card-elevated">
+          <div className="flex items-center gap-2"><Swords className="h-5 w-5 text-red-600" /><h2 className="text-base font-bold">竞品最终对比</h2></div>
+          <p className="mt-1 text-xs text-muted-foreground">对局中只显示模糊态势；结束后公开双方结算分和竞品动作对决策链的影响。</p>
+          <div className="mt-5 grid gap-4 sm:grid-cols-2"><ComparisonScore label="我方" value={finalScore} winner={finalScore >= competitorScore} tone="blue" /><ComparisonScore label={state.competitorState?.name ?? 'ABC竞品'} value={competitorScore} winner={competitorScore > finalScore} tone="red" /></div>
+          <div className="mt-5 space-y-2">{state.competitorState?.actions.length ? state.competitorState.actions.map((action) => <div key={action.id} className="flex items-start gap-3 rounded-xl border border-border p-3 text-xs"><span className="rounded-full bg-red-50 px-2 py-1 font-semibold text-red-700">第{action.round}阶段</span><div className="min-w-0 flex-1"><p className="leading-5 text-slate-700">{action.summary}</p><div className={`mt-1 text-[10px] ${action.mitigated ? 'text-emerald-700' : 'text-amber-700'}`}>{action.mitigated ? '我方前置行动已部分对冲' : '我方未及时对冲'}</div></div></div>) : <EmptyReport text="本局没有可展示的竞品动作。" />}</div>
+        </section>
+
+        <section className="mt-6 rounded-2xl border border-border bg-card p-6 shadow-sm card-elevated">
+          <div className="flex items-center gap-2"><MessagesSquare className="h-5 w-5 text-violet-600" /><h2 className="text-base font-bold">客户内部决策回放</h2></div>
+          <p className="mt-1 text-xs text-muted-foreground">根据各关键人最终支持度和最近态度转折生成，便于追溯“为什么支持或保留”。</p>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">{decisionReplay.map((item) => <article key={item.npcId} className="rounded-xl border border-border p-4"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-bold">{item.name}</div><div className="text-[10px] text-muted-foreground">{item.title}</div></div><span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${item.stance.startsWith('支持') ? 'bg-emerald-50 text-emerald-700' : item.stance.startsWith('谨慎') ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>{item.stance}</span></div><p className="mt-3 text-xs leading-5 text-slate-600">核心依据：{item.reason}</p></article>)}</div>
+        </section>
 
         <section className="mt-6 rounded-2xl border border-border bg-card p-6 shadow-sm card-elevated">
           <div className="flex items-center gap-2"><Award className="h-5 w-5 text-blue-600" /><h2 className="text-base font-bold">混合结果构成</h2></div>
@@ -441,6 +465,11 @@ function ResultInner() {
 
 function SummaryStat({ icon: Icon, label, value }: { icon: typeof Trophy; label: string; value: string }) {
   return <div className="rounded-xl bg-white/10 p-3"><div className="flex items-center gap-1.5 text-[10px] text-white/65"><Icon className="h-3.5 w-3.5" />{label}</div><div className="mt-1 text-lg font-bold">{value}</div></div>;
+}
+
+function ComparisonScore({ label, value, winner, tone }: { label: string; value: number; winner: boolean; tone: 'blue' | 'red' }) {
+  const color = tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-900' : 'border-red-200 bg-red-50 text-red-900';
+  return <div className={`rounded-2xl border p-5 ${color}`}><div className="flex items-center justify-between"><span className="text-sm font-bold">{label}</span>{winner && <span className="rounded-full bg-white/70 px-2 py-1 text-[10px] font-semibold">领先</span>}</div><div className="mt-3 text-4xl font-black">{value}<span className="text-sm font-medium opacity-60"> / 100</span></div></div>;
 }
 
 function MetricCard({ label, value, weight, icon: Icon, color }: { label: string; value?: number; weight: string; icon: typeof Trophy; color: 'blue' | 'emerald' | 'amber' | 'violet' }) {

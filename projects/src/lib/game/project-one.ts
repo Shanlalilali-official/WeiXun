@@ -45,6 +45,52 @@ export const PROJECT_ONE_PREPARATION_RULES = {
   boundary_gift: { timeMinutes: 10, costPoints: 8, reusable: false },
 } as const;
 
+export const PROJECT_ONE_PREPARATION_TITLES: Record<keyof typeof PROJECT_ONE_PREPARATION_RULES, string> = {
+  agenda: '明确拜访议程',
+  ppt: '制作方案 PPT',
+  materials: '准备案例 / 技术 / 报价材料',
+  courtesy_gift: '准备合规伴手礼',
+  boundary_gift: '准备高波动边界礼品',
+};
+
+export const PROJECT_ONE_PUBLIC_RESEARCH_RULE = {
+  timeMinutes: 20,
+  costPoints: 2,
+} as const;
+
+export interface ProjectOnePublicProfile {
+  facts: string[];
+  weakSignals: string[];
+  sourceNote: string;
+}
+
+/**
+ * Publicly obtainable information only. These records intentionally exclude
+ * private interests, hidden attitudes, decision weights and win conditions.
+ */
+export const PROJECT_ONE_PUBLIC_PROFILES: Record<string, ProjectOnePublicProfile> = {
+  'p1-frontline-wang-hao': {
+    facts: ['现任项目一线办事员，日常负责业务材料流转与跨部门协调。', '曾参与单位内部的数据汇总与流程整理工作。'],
+    weakSignals: ['公开工作记录多次提到重复录入与跨部门确认成本，可能重视方案是否真正减轻一线负担。'],
+    sourceNote: '单位公开通讯与公开岗位信息整理',
+  },
+  'p1-procurement-liu-kai': {
+    facts: ['现任采购专员，工作范围覆盖采购流程、供应商材料与合规核验。', '参加过单位公开的采购规范与数字化采购培训。'],
+    weakSignals: ['公开活动记录中频繁出现验收依据、交付边界和流程留痕，可能优先关注可审计性。'],
+    sourceNote: '公开采购培训与岗位信息整理',
+  },
+  'p1-minister-chen-jianguo': {
+    facts: ['现任业务部部长，负责业务部门整体推进与项目落地协调。', '曾在单位内部公开交流中介绍业务数字化与部门协同。'],
+    weakSignals: ['公开表述更强调规模化落地与部门整体成效，方案准备应避免只描述单点功能。'],
+    sourceNote: '单位公开交流与部门介绍整理',
+  },
+  'p1-deputy-zhao-feng': {
+    facts: ['现任分管业务副主任，负责业务方向与重点项目统筹。', '近期公开讲话强调重点项目要形成可衡量成果并守住合规底线。'],
+    weakSignals: ['更可能从组织成果、实施风险和可复制性判断方案，而非只看产品参数。'],
+    sourceNote: '公开讲话与单位新闻整理',
+  },
+};
+
 export type ProjectOneClue =
   | 'decision_process'
   | 'performance_goal'
@@ -126,7 +172,7 @@ export const PROJECT_ONE_NPCS: ProjectOneNpc[] = [
     hometown: '未提供',
     personality: '老虎型',
     weakness: '职称评级、行业个人口碑或子女升学',
-    initiallyVisible: false,
+    initiallyVisible: true,
     initialContactChannel: 'work_phone',
     decisionWeight: 0.3,
     complianceSensitivity: 70,

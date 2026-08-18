@@ -1,19 +1,20 @@
 import { NextRequest } from 'next/server';
 import { streamLLM, type ChatMessage } from '@/lib/ai/client';
-import { CUSTOMER_PROMPT } from '@/lib/ai/prompts/customer';
+import { CUSTOMER_CONTEXT, CUSTOMER_PROMPT, type CustomerPromptContext } from '@/lib/ai/prompts/customer';
 import { decideOnlineContact, evaluateNpcTurn } from '@/lib/ai/npc-evaluation';
 import { authGuard } from '@/lib/auth/guard';
 import { npcChatRequestSchema } from '@/lib/contracts/ai';
 import { getProjectOneNpc, type ContactChannel } from '@/lib/game/project-one';
 import {
   commitGameCommand,
+  appendGameEvent,
+  deliverPendingNpcHandoffs,
   getCommittedGameCommand,
   getNpcConversation,
   getNpcInbox,
   getOwnedGameSession,
 } from '@/lib/game/repository';
 import {
-  applyNpcAttitudeDelta,
   applyNpcEvaluation,
   connectNpc,
   consumeCommunicationTime,
@@ -27,6 +28,8 @@ import {
   shouldNpcRespond,
   type GameRuntimeState,
 } from '@/lib/game/state';
+import { createServerProbabilitySeed } from '@/lib/game/server-random';
+import { refreshConversationMemory } from '@/lib/game/memory';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -108,35 +111,6 @@ function applySelectedPreparations(
       ])),
     },
   };
-}
-
-function applyHandoffImpression(
-  state: GameRuntimeState,
-  sourceNpcId: string,
-  handoff: NonNullable<ReturnType<typeof normalizeHandoff>>,
-  supportDelta: number,
-) {
-  const impressionDelta = supportDelta > 0 ? 3 : supportDelta < 0 ? -3 : 1;
-  let next = applyNpcAttitudeDelta(state, handoff.targetNpcId, {
-    unmetImpressionDelta: impressionDelta,
-    reason: `来自其他人物的间接转述：${handoff.summary}`,
-    source: 'npc_handoff',
-  });
-  next = {
-    ...next,
-    notifications: [...next.notifications, {
-      id: `handoff:${sourceNpcId}:${handoff.targetNpcId}:${state.currentRound}:${state.version}`,
-      npcId: handoff.targetNpcId,
-      kind: 'handoff' as const,
-      title: '收到内部转述',
-      body: handoff.summary,
-      round: state.currentRound,
-      minute: state.simulatedClockMinutes,
-      isRead: false,
-      targetId: sourceNpcId,
-    }],
-  };
-  return next;
 }
 
 function normalizeHandoff(value: unknown) {
@@ -333,7 +307,15 @@ export async function POST(req: NextRequest) {
     : intent === 'outreach'
       ? channel === 'email' ? 55 : 70
       : Math.max(35, Math.min(90, 65 + ((initialState.npcAffinity[npcId] ?? 35) - 35) * 0.5));
-  const responseSeed = `${gameSessionId}:${npcId}:${initialState.currentRound}:${contact.outboundCount}:${channel}`;
+  const responseSeed = createServerProbabilitySeed([
+    gameSessionId,
+    commandId,
+    'npc-response',
+    npcId,
+    initialState.currentRound,
+    contact.outboundCount,
+    channel,
+  ]);
   if (!shouldNpcRespond(responseSeed, responseChance)) {
     try {
       let changed = channel === 'offline' ? initialState : consumeCommunicationTime(initialState, channel);
@@ -365,6 +347,7 @@ export async function POST(req: NextRequest) {
   }
 
   const memory = initialState.conversationMemories[npcId];
+  await deliverPendingNpcHandoffs(gameSessionId, initialState.currentRound).catch(() => undefined);
   const inbox = await getNpcInbox(gameSessionId, npcId).catch(() => []);
   const attitude = initialState.npcAttitudes[npcId];
   const relevantPreparations = initialState.preparations.filter((item) =>
@@ -377,8 +360,10 @@ export async function POST(req: NextRequest) {
     formal: 'formal_visit',
     informal: 'informal_visit',
   } as const)[meeting.visitType] : undefined;
-  const workTopicOpenedBy = meeting?.workTopicOpenedBy ?? parsed.data.workTopicOpenedBy ?? 'none';
-  const systemPrompt = CUSTOMER_PROMPT({
+  // Who opened the work topic is authoritative meeting state derived from
+  // prior evaluated turns. The browser cannot declare this value.
+  const workTopicOpenedBy = meeting?.workTopicOpenedBy ?? 'none';
+  const customerContext: CustomerPromptContext = {
     gameSessionId,
     scenarioId,
     npc,
@@ -403,9 +388,10 @@ export async function POST(req: NextRequest) {
     inbox,
     canRevealPersonalInterest: (attitude?.support ?? 35) >= 50,
     canRevealKeyContact: (attitude?.support ?? 35) >= 50,
-  });
+  };
   const messages: ChatMessage[] = [
-    { role: 'system', content: systemPrompt },
+    { role: 'system', content: CUSTOMER_PROMPT() },
+    { role: 'user', content: CUSTOMER_CONTEXT(customerContext) },
     ...recentHistory.map(({ role, content }) => ({ role, content })),
     { role: 'user', content: message },
   ];
@@ -461,8 +447,13 @@ export async function POST(req: NextRequest) {
           changedState = addExplicitComplianceEvent(changedState, npcId, commandId, evaluation.affinityReason);
         }
         const handoff = normalizeHandoff(evaluation.handoff);
-        if (handoff && getProjectOneNpc(handoff.targetNpcId)) {
-          changedState = applyHandoffImpression(changedState, npcId, handoff, evaluation.supportDelta ?? evaluation.affinityDelta);
+        const validHandoff = handoff && getProjectOneNpc(handoff.targetNpcId) ? handoff : null;
+
+        let memoryRefreshError: string | null = null;
+        try {
+          changedState = await refreshConversationMemory(gameSessionId, npcId, changedState);
+        } catch (error) {
+          memoryRefreshError = error instanceof Error ? error.message.slice(0, 80) : 'MEMORY_REFRESH_FAILED';
         }
 
         const nextOutcome = getGameOutcome(changedState);
@@ -483,8 +474,10 @@ export async function POST(req: NextRequest) {
             intent,
             scoreDelta,
             evaluationSource: assessment.source,
+            evaluationValidationErrors: assessment.validationErrors.slice(0, 12),
             cluesUnlocked: evaluation.cluesUnlocked,
-            handoff,
+            handoff: validHandoff,
+            memoryRefreshError,
             meetingEnded,
           },
           result: {
@@ -509,8 +502,9 @@ export async function POST(req: NextRequest) {
               metadata: {
                 npcId,
                 ...evaluation,
-                protocolValid: true,
+                protocolValid: assessment.source !== 'fallback',
                 evaluationSource: assessment.source,
+                evaluationValidationErrors: assessment.validationErrors.slice(0, 12),
                 intent,
                 channel,
                 deliveryStatus: 'replied',
@@ -521,6 +515,15 @@ export async function POST(req: NextRequest) {
             },
           ],
         });
+
+        if (validHandoff) {
+          await appendGameEvent(gameSessionId, initialState.currentRound, 'npc.handoff.promised', {
+            sourceCommandId: commandId,
+            sourceNpcId: npcId,
+            targetNpcId: validHandoff.targetNpcId,
+            summary: validHandoff.summary,
+          }, npcId).catch(() => undefined);
+        }
 
         // Emit content only after the transaction succeeds. Chunking keeps the
         // existing typewriter client behavior without exposing partial state.

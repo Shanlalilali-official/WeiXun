@@ -34,11 +34,12 @@ export async function POST(request: NextRequest) {
       guard.session.displayName,
       parsed.data.scenarioCode,
       getProgressionMultiplier(guard.session.userId),
+      parsed.data.replaceExisting,
     );
     return NextResponse.json({ success: true, gameSession });
   } catch (error) {
     const code = error instanceof Error ? error.message : 'SESSION_CREATE_FAILED';
-    const status = code === 'SCENARIO_NOT_CONFIGURED' || code === 'SAVE_LIMIT_REACHED' ? 409 : 503;
+    const status = code === 'SCENARIO_NOT_CONFIGURED' || code === 'SAVE_LIMIT_REACHED' || code === 'SAVE_REPLACE_FAILED' ? 409 : 503;
     return NextResponse.json({ error: code }, { status });
   }
 }

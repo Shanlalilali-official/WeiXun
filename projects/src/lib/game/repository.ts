@@ -51,7 +51,7 @@ export interface GameSaveSummary {
   startedAt: string;
 }
 
-export const MAX_ACTIVE_GAME_SAVES = 5;
+export const MAX_ACTIVE_GAME_SAVES = 1;
 
 function toState(session: Record<string, unknown>, runtime: RuntimeStateRow): GameRuntimeState {
   const rawStatus = String(session.status);
@@ -87,7 +87,13 @@ function toState(session: Record<string, unknown>, runtime: RuntimeStateRow): Ga
   });
 }
 
-export async function createGameSession(userId: string, displayName: string, scenarioCode: string, progressionMultiplier = 1) {
+export async function createGameSession(
+  userId: string,
+  displayName: string,
+  scenarioCode: string,
+  progressionMultiplier = 1,
+  replaceExisting = false,
+) {
   if (scenarioCode !== 'project-1') throw new Error('SCENARIO_NOT_SUPPORTED');
   const supabase = createServerClient();
   const { data: scenario, error: scenarioError } = await supabase
@@ -103,77 +109,29 @@ export async function createGameSession(userId: string, displayName: string, sce
     : null);
   if (!resolvedScenario) throw new Error('SCENARIO_NOT_CONFIGURED');
 
-  const { count: activeSaveCount, error: activeSaveCountError } = await supabase
-    .from('game_sessions')
-    .select('id', { count: 'exact', head: true })
-    .eq('user_id', userId)
-    .eq('status', 'playing');
-  if (activeSaveCountError) throw new Error('SAVE_LIST_UNAVAILABLE');
-  if ((activeSaveCount ?? 0) >= MAX_ACTIVE_GAME_SAVES) throw new Error('SAVE_LIMIT_REACHED');
-
   const initialState = createProjectOneState(progressionMultiplier);
-  const { data: session, error: sessionError } = await supabase
-    .from('game_sessions')
-    .insert({
-      user_id: userId,
-      user_name: displayName,
-      scenario_id: resolvedScenario.id,
-      difficulty: resolvedScenario.difficulty,
-      mode: 'ai_dialog',
-      multiplayer: false,
-      current_round: initialState.currentRound,
-      max_round: initialState.maxRounds,
-      total_score: Math.round(getGameOutcome(initialState).finalScore),
-      status: initialState.status,
-    })
-    .select('id')
-    .single();
-  if (sessionError || !session) {
-    // Keep the browser response stable, but retain the database diagnostic in
-    // the server log.  Previously every failure was flattened into
-    // SESSION_CREATE_FAILED, which made a transient database/network problem
-    // indistinguishable from an invalid scenario or a schema mismatch.
-    console.error('game session insert failed', {
-      code: sessionError?.code,
-      message: sessionError?.message,
-      details: sessionError?.details,
+  const { data, error } = await supabase.rpc('create_or_replace_game_session', {
+    p_user_id: userId,
+    p_user_name: displayName,
+    p_scenario_id: resolvedScenario.id,
+    p_difficulty: resolvedScenario.difficulty,
+    p_state: initialState,
+    p_total_score: Math.round(getGameOutcome(initialState).finalScore),
+    p_replace_existing: replaceExisting,
+  });
+  if (error || !data || typeof data !== 'object') {
+    const message = error?.message ?? '';
+    if (message.includes('SAVE_LIMIT_REACHED') || error?.code === '23505') throw new Error('SAVE_LIMIT_REACHED');
+    console.error('atomic game session create failed', {
+      code: error?.code,
+      message: error?.message,
+      details: error?.details,
     });
     throw new Error('SESSION_CREATE_FAILED');
   }
-
-  const { error: runtimeError } = await supabase.from('game_runtime_states').insert({
-    session_id: session.id,
-    scenario_code: initialState.scenarioCode,
-    action_points: initialState.actionPoints,
-    dimensions: initialState.dimensions,
-    npc_affinity: initialState.npcAffinity,
-    unlocked_npc_ids: initialState.unlockedNpcIds,
-    unlocked_clues: initialState.unlockedClues,
-    conversation_memories: initialState.conversationMemories,
-    phase_started_at: initialState.phaseStartedAt,
-    phase_ends_at: initialState.phaseEndsAt,
-    paused_at: initialState.pausedAt,
-    paused_remaining_ms: initialState.pausedRemainingMs,
-    npc_contacts: initialState.npcContacts,
-    active_meeting: initialState.activeMeeting,
-    simulation_state: initialState,
-    last_action: initialState.lastAction,
-    version: initialState.version,
-  });
-  if (runtimeError) {
-    await supabase.from('game_sessions').delete().eq('id', session.id);
-    console.error('game runtime-state insert failed', {
-      code: runtimeError.code,
-      message: runtimeError.message,
-      details: runtimeError.details,
-    });
-    throw new Error('RUNTIME_STATE_CREATE_FAILED');
-  }
-
-  await appendGameEvent(session.id, initialState.currentRound, 'session.created', {
-    scenarioCode,
-  });
-  return { id: session.id as string, state: initialState };
+  const envelope = data as { id?: unknown };
+  if (typeof envelope.id !== 'string') throw new Error('SESSION_CREATE_FAILED');
+  return { id: envelope.id, state: initialState };
 }
 
 export async function listOwnedActiveGameSaves(userId: string, scenarioCode?: string): Promise<GameSaveSummary[]> {
@@ -222,6 +180,7 @@ export async function getOwnedGameSession(sessionId: string, userId: string): Pr
     .select('id, user_id, current_round, max_round, status')
     .eq('id', sessionId)
     .eq('user_id', userId)
+    .in('status', ['playing', 'won', 'lost'])
     .single();
   if (sessionError || !session) throw new Error('SESSION_NOT_FOUND');
 
@@ -451,22 +410,59 @@ export async function deliverPendingNpcHandoffs(sessionId: string, currentRound:
     .eq('event_type', 'npc.handoff.promised')
     .lt('round', currentRound);
   if (error) throw new Error('HANDOFF_LOAD_FAILED');
+  // npc.turn.completed is the durable recovery source. The explicit promised
+  // event is written after the atomic command commit; if that best-effort write
+  // fails, the completed event still lets delivery progress exactly once.
+  const { data: completedTurns, error: completedError } = await supabase
+    .from('game_events')
+    .select('id, npc_key, round, payload')
+    .eq('session_id', sessionId)
+    .eq('event_type', 'npc.turn.completed')
+    .lt('round', currentRound);
+  if (completedError) throw new Error('HANDOFF_SOURCE_LOAD_FAILED');
   const { data: sent, error: sentError } = await supabase
     .from('game_events')
     .select('id, npc_key, round, payload')
     .eq('session_id', sessionId)
     .eq('event_type', 'npc.handoff.sent');
   if (sentError) throw new Error('HANDOFF_SENT_LOAD_FAILED');
-  const sentPromiseIds = new Set((sent ?? []).map((event) => String((event.payload as Record<string, unknown>)?.sourceEventId ?? '')));
-  for (const event of promised ?? []) {
-    if (sentPromiseIds.has(String(event.id))) continue;
+  const sentPromiseKeys = new Set((sent ?? []).map((event) => String((event.payload as Record<string, unknown>)?.promiseKey ?? '')));
+  const explicitPromises = (promised ?? []).map((event) => {
     const payload = event.payload as Record<string, unknown>;
-    await appendGameEvent(sessionId, currentRound, 'npc.handoff.sent', {
-      sourceEventId: event.id,
-      sourceNpcId: event.npc_key,
+    return {
+      ...event,
+      promiseKey: String(payload.sourceCommandId ?? payload.commandId ?? event.id),
+      sourceNpcId: String(payload.sourceNpcId ?? event.npc_key ?? ''),
       targetNpcId: payload.targetNpcId,
       summary: payload.summary,
-    }, String(payload.targetNpcId));
+    };
+  });
+  const explicitKeys = new Set(explicitPromises.map((event) => event.promiseKey));
+  const recoveredPromises = (completedTurns ?? []).flatMap((event) => {
+    const payload = event.payload as Record<string, unknown>;
+    const handoff = payload.handoff;
+    if (!handoff || typeof handoff !== 'object') return [];
+    const value = handoff as Record<string, unknown>;
+    const promiseKey = String(payload.commandId ?? event.id);
+    if (explicitKeys.has(promiseKey)) return [];
+    return [{
+      ...event,
+      promiseKey,
+      sourceNpcId: String(payload.npcId ?? event.npc_key ?? ''),
+      targetNpcId: value.targetNpcId,
+      summary: value.summary,
+    }];
+  });
+  for (const event of [...explicitPromises, ...recoveredPromises]) {
+    if (sentPromiseKeys.has(event.promiseKey)) continue;
+    if (typeof event.targetNpcId !== 'string' || typeof event.summary !== 'string') continue;
+    await appendGameEvent(sessionId, currentRound, 'npc.handoff.sent', {
+      sourceEventId: event.id,
+      promiseKey: event.promiseKey,
+      sourceNpcId: event.sourceNpcId,
+      targetNpcId: event.targetNpcId,
+      summary: event.summary,
+    }, event.targetNpcId);
   }
 
   const { data: received, error: receivedError } = await supabase

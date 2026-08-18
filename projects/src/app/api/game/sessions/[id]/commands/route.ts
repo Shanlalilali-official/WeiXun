@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { evaluateGiftDecision } from '@/lib/ai/npc-evaluation';
 import { authGuard } from '@/lib/auth/guard';
-import { gameCommandSchema } from '@/lib/contracts/game';
+import { gameCommandSchema, type GameCommand } from '@/lib/contracts/game';
 import {
   commitGameCommand,
+  deliverPendingNpcHandoffs,
   getCommittedGameCommand,
   getOwnedGameSession,
 } from '@/lib/game/repository';
 import { getProjectOneNpc } from '@/lib/game/project-one';
 import { executeGameCommand, getPhaseName } from '@/lib/game/state';
+import { createServerProbabilitySeed } from '@/lib/game/server-random';
 
 export const runtime = 'nodejs';
 
@@ -33,9 +35,16 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       }, { status: 409 });
     }
 
+    // Probability decisions use an HMAC seed that the browser cannot predict
+    // or enumerate. The original command ID remains the idempotency key.
+    const probabilityCommand = {
+      ...parsed.data,
+      commandId: createServerProbabilitySeed([id, parsed.data.commandId, parsed.data.type]),
+    } as GameCommand;
+
     // Pure preflight rejects invalid inventory/meeting/version state before an
     // external AI call. The authoritative state is still committed only once.
-    let execution = executeGameCommand(gameSession.state, parsed.data);
+    let execution = executeGameCommand(gameSession.state, probabilityCommand);
     if (parsed.data.type === 'give_gift') {
       const giftCommand = parsed.data;
       const preparation = gameSession.state.preparations.find((item) => item.id === giftCommand.payload.preparationId);
@@ -49,7 +58,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         && item.kind === 'boundary_gift'
         && (item.outcome === 'delighted_acceptance' || item.outcome === 'cautious_acceptance')).length;
       const assessment = await evaluateGiftDecision({
-        commandId: giftCommand.commandId,
+        commandId: probabilityCommand.commandId,
         npcId: npc.id,
         npcName: npc.name,
         npcTitle: npc.title,
@@ -78,7 +87,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         procurementSensitive: gameSession.state.currentRound >= 4,
         exchangeRequested: giftCommand.payload.exchangeRequested,
       });
-      execution = executeGameCommand(gameSession.state, giftCommand, {
+      execution = executeGameCommand(gameSession.state, {
+        ...giftCommand,
+        commandId: probabilityCommand.commandId,
+      }, {
         giftEvaluation: { ...assessment.decision, source: assessment.source },
       });
     }
@@ -92,6 +104,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       eventPayload: execution.eventPayload,
       result: execution.result,
     });
+    await deliverPendingNpcHandoffs(id, committed.state.currentRound).catch(() => undefined);
     return NextResponse.json({ success: true, ...committed });
   } catch (error) {
     const code = error instanceof Error ? error.message : 'GAME_COMMAND_FAILED';

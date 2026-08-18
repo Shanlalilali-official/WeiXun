@@ -13,6 +13,9 @@ import {
   PROJECT_ONE_PHASE_ACTION_POINT_GAIN,
   PROJECT_ONE_PHASE_NAMES,
   PROJECT_ONE_PREPARATION_RULES,
+  PROJECT_ONE_PREPARATION_TITLES,
+  PROJECT_ONE_PUBLIC_PROFILES,
+  PROJECT_ONE_PUBLIC_RESEARCH_RULE,
   PROJECT_ONE_STANDARD_DAY_MINUTES,
   PROJECT_ONE_VISIT_RULES,
   PROJECT_ONE_WORK_END_MINUTE,
@@ -97,6 +100,9 @@ export interface GameAppointment {
   reservedMinutes: number;
   workTopicOpenedBy: 'player' | 'npc' | null;
   invitationCommandId: string;
+  invitationText?: string;
+  extractedFields?: string[];
+  defaultedFields?: string[];
 }
 
 export interface GamePreparation {
@@ -106,6 +112,13 @@ export interface GamePreparation {
   type: PreparationType;
   title: string;
   content: string;
+  brief?: {
+    audience: string;
+    problem: string;
+    dimensions: string;
+    evidence: string;
+    nextStep: string;
+  };
   status: 'ready' | 'used';
   costPoints: number;
   timeMinutes: number;
@@ -199,6 +212,48 @@ export interface GameMeetingMinutes {
   owner: string;
   createdRound: number;
   createdMinute: number;
+  original?: {
+    summary: string;
+    confirmedItems: string[];
+    npcCommitments: string[];
+    playerCommitments: string[];
+    nextStep: string;
+  };
+  revisionCount?: number;
+  lastEditedRound?: number;
+  lastEditedMinute?: number;
+}
+
+export type CompetitivePosition = 'lagging' | 'close' | 'leading';
+
+export interface CompetitorActionRecord {
+  id: string;
+  round: number;
+  targetNpcId: string;
+  kind: 'relationship' | 'price' | 'case' | 'executive';
+  title: string;
+  summary: string;
+  pressureDelta: number;
+  supportImpact: number;
+  mitigated: boolean;
+}
+
+export interface CompetitorRuntimeState {
+  name: string;
+  pressureScore: number;
+  position: CompetitivePosition;
+  actions: CompetitorActionRecord[];
+}
+
+export interface GamePublicResearchRecord {
+  npcId: string;
+  facts: string[];
+  weakSignals: string[];
+  sourceNote: string;
+  completedRound: number;
+  completedMinute: number;
+  timeMinutes: number;
+  costPoints: number;
 }
 
 export interface GameRuntimeState {
@@ -227,6 +282,9 @@ export interface GameRuntimeState {
   npcAttitudes: Record<string, NpcAttitudeState>;
   outcomeEvidence: OutcomeEvidenceLedger;
   complianceRisks: ComplianceRiskEvent[];
+  publicResearch: Record<string, GamePublicResearchRecord>;
+  competitorState: CompetitorRuntimeState;
+  submissionReady: boolean;
   processedCommandIds: string[];
 
   /** Deprecated wall-clock fields retained while old persisted rows migrate. */
@@ -265,6 +323,8 @@ export interface GameOutcome {
   won: boolean;
   eligible: boolean;
   supportByNpc: Record<string, number>;
+  competitorScore: number;
+  competitivePosition: CompetitivePosition;
 }
 
 export interface ExecuteGameCommandResult {
@@ -309,10 +369,40 @@ const clamp = (value: number, min = 0, max = 100) => Math.max(min, Math.min(max,
 const clampDelta = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 const roundScore = (value: number) => Math.round(clamp(value) * 10) / 10;
 
-function deriveUnlockedNpcIds(unlockedClues: ProjectOneClue[]): string[] {
-  const next = PROJECT_ONE_NPCS.filter((npc) => npc.initiallyVisible).map((npc) => npc.id);
-  if (unlockedClues.includes('key_contact')) next.push('p1-minister-chen-jianguo');
-  return Array.from(new Set(next));
+const DEFAULT_COMPETITOR_STATE: CompetitorRuntimeState = {
+  name: 'ABC竞品',
+  pressureScore: 52,
+  position: 'close',
+  actions: [],
+};
+
+const COMPETITOR_ACTIONS: Array<Omit<CompetitorActionRecord, 'id' | 'supportImpact' | 'mitigated'>> = [
+  { round: 1, targetNpcId: 'p1-frontline-wang-hao', kind: 'relationship', title: '竞品正在接触一线使用部门', summary: '公开迹象显示，竞品正在强调既有合作经验并争取一线反馈。', pressureDelta: 3 },
+  { round: 2, targetNpcId: 'p1-procurement-liu-kai', kind: 'price', title: '竞品释放价格攻势信号', summary: '采购侧出现竞品可能下调报价、强化商务条件的消息。', pressureDelta: 4 },
+  { round: 3, targetNpcId: 'p1-minister-chen-jianguo', kind: 'case', title: '竞品补充同类项目案例', summary: '竞品正在用同类案例证明交付确定性，业务部门可能重新比较方案风险。', pressureDelta: 4 },
+  { round: 4, targetNpcId: 'p1-deputy-zhao-feng', kind: 'executive', title: '竞品尝试推进高层沟通', summary: '竞品正在从组织成果和重点项目角度争取高层关注。', pressureDelta: 5 },
+  { round: 5, targetNpcId: 'p1-procurement-liu-kai', kind: 'price', title: '竞品进入最终商务冲刺', summary: '临近决策，竞品正在集中强化价格、交付承诺与内部支持。', pressureDelta: 5 },
+];
+
+function normalizeCompetitorState(value?: Partial<CompetitorRuntimeState>): CompetitorRuntimeState {
+  return {
+    ...DEFAULT_COMPETITOR_STATE,
+    ...value,
+    pressureScore: clamp(value?.pressureScore ?? DEFAULT_COMPETITOR_STATE.pressureScore),
+    actions: value?.actions ?? [],
+  };
+}
+
+function positionFromScores(playerScore: number, competitorScore: number): CompetitivePosition {
+  const gap = playerScore - competitorScore;
+  return gap >= 6 ? 'leading' : gap <= -6 ? 'lagging' : 'close';
+}
+
+function deriveUnlockedNpcIds(_unlockedClues: ProjectOneClue[]): string[] {
+  // D-024: project one exposes all four stakeholders from the beginning.
+  // Keep the field for save compatibility, but it no longer represents a
+  // narrative unlock gate.
+  return PROJECT_ONE_NPCS.map((npc) => npc.id);
 }
 
 function defaultContact(npcId: string): NpcContactState {
@@ -399,6 +489,9 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
     npcAffinity,
     outcomeEvidence: state.outcomeEvidence ?? { publicValue: [], personalBenefit: [] },
     complianceRisks: state.complianceRisks ?? [],
+    publicResearch: state.publicResearch ?? {},
+    competitorState: normalizeCompetitorState(state.competitorState),
+    submissionReady: state.submissionReady ?? false,
     processedCommandIds: state.processedCommandIds ?? [],
     phaseStartedAt: LEGACY_SIMULATION_MARKER,
     phaseEndsAt: LEGACY_SIMULATION_MARKER,
@@ -430,9 +523,11 @@ export function explicitlyRevealsMinister(replyContent: string): boolean {
 }
 
 export function reconcileNarrativeDiscoveries(state: GameRuntimeState, assistantReplies: string[]): GameRuntimeState {
-  if (state.unlockedClues.includes('key_contact') || !assistantReplies.some(explicitlyRevealsMinister)) return state;
-  const unlockedClues = [...state.unlockedClues, 'key_contact' as const];
-  return { ...state, unlockedClues, unlockedNpcIds: deriveUnlockedNpcIds(unlockedClues) };
+  // Historical saves used NPC dialogue to unlock Chen Jianguo. The current
+  // baseline shows all four NPCs immediately, so loading old transcripts must
+  // not mutate state or replay a discovery event.
+  void assistantReplies;
+  return { ...state, unlockedNpcIds: deriveUnlockedNpcIds(state.unlockedClues) };
 }
 
 export function createProjectOneState(progressionMultiplier = 1, _legacyNow?: number): GameRuntimeState {
@@ -451,7 +546,7 @@ export function createProjectOneState(progressionMultiplier = 1, _legacyNow?: nu
       informationDiscovery: 50,
     },
     npcAffinity: Object.fromEntries(PROJECT_ONE_NPCS.map((npc) => [npc.id, 35])),
-    unlockedNpcIds: PROJECT_ONE_NPCS.filter((npc) => npc.initiallyVisible).map((npc) => npc.id),
+    unlockedNpcIds: PROJECT_ONE_NPCS.map((npc) => npc.id),
     unlockedClues: [],
     conversationMemories: {},
     npcContacts: Object.fromEntries(PROJECT_ONE_NPCS.map((npc) => [npc.id, defaultContact(npc.id)])),
@@ -582,7 +677,9 @@ export function applyNpcEvaluation(
   const acceptedClues: ProjectOneClue[] = evaluation.cluesUnlocked.filter(
     (clue) => clue !== 'personal_interest' || (next.npcAttitudes[npcId]?.support ?? 0) >= 50,
   );
-  if (explicitlyRevealsMinister(replyContent)) acceptedClues.push('key_contact');
+  // key_contact used to unlock Chen Jianguo. D-024 removes that gate; do not
+  // let model text create a legacy unlock clue.
+  void replyContent;
   const unlockedClues = Array.from(new Set([...next.unlockedClues, ...acceptedClues]));
   const memory = next.conversationMemories[npcId] ?? { summary: '', summarizedMessageCount: 0 };
   const confirmedFacts = Array.from(new Set([...(memory.confirmedFacts ?? []), ...evaluation.confirmedFacts])).slice(-12);
@@ -774,10 +871,19 @@ function reconcileMissedAppointments(state: GameRuntimeState, ignoreAppointmentI
     isRead: false,
     targetId: appointment.id,
   }))];
+  let next = state;
+  for (const appointment of missed) {
+    next = applyNpcAttitudeDelta(next, appointment.npcId, {
+      pleasantnessDelta: -5,
+      supportDelta: -4,
+      reason: '预约未赴约，客户对履约可靠性产生疑虑',
+      source: `missed:${appointment.id}`,
+    });
+  }
   return {
-    ...state,
+    ...next,
     dayAvailableMinutes: Math.min(PROJECT_ONE_STANDARD_DAY_MINUTES, state.dayAvailableMinutes + releasedMinutes),
-    appointments: state.appointments.map((appointment) => missedIds.has(appointment.id)
+    appointments: next.appointments.map((appointment) => missedIds.has(appointment.id)
       ? { ...appointment, status: 'missed' as const, reservedMinutes: 0 }
       : appointment),
     notifications,
@@ -890,6 +996,8 @@ export function getGameOutcome(state: GameRuntimeState): GameOutcome {
     .reduce((sum, risk) => sum + Math.max(0, risk.penalty), 0));
   const finalScore = Math.max(0, Math.round((baseScore - compliancePenalty) * 10) / 10);
   const won = finalScore >= 60;
+  const competitorScore = roundScore(state.competitorState?.pressureScore ?? DEFAULT_COMPETITOR_STATE.pressureScore);
+  const competitivePosition = positionFromScores(finalScore, competitorScore);
   return {
     fiveDimensionScore,
     publicValueScore,
@@ -902,7 +1010,61 @@ export function getGameOutcome(state: GameRuntimeState): GameOutcome {
     won,
     eligible: won,
     supportByNpc,
+    competitorScore,
+    competitivePosition,
   };
+}
+
+function refreshCompetitivePosition(state: GameRuntimeState): GameRuntimeState {
+  const position = getGameOutcome(state).competitivePosition;
+  return state.competitorState.position === position
+    ? state
+    : { ...state, competitorState: { ...state.competitorState, position } };
+}
+
+function processCompetitorAction(state: GameRuntimeState): { state: GameRuntimeState; action: CompetitorActionRecord | null } {
+  const template = COMPETITOR_ACTIONS.find((item) => item.round === state.currentRound);
+  if (!template || state.competitorState.actions.some((item) => item.round === state.currentRound)) {
+    return { state, action: null };
+  }
+  const researched = Boolean(state.publicResearch[template.targetNpcId]);
+  const completedVisit = state.appointments.some((item) => item.npcId === template.targetNpcId && item.status === 'completed');
+  const usedMaterial = state.preparations.some((item) => item.npcId === template.targetNpcId && item.usedCount > 0 && ['ppt', 'materials'].includes(item.type));
+  const mitigationCount = Number(researched) + Number(completedVisit) + Number(usedMaterial);
+  const supportImpact = -Math.max(0, 3 - mitigationCount);
+  const pressureDelta = Math.max(1, template.pressureDelta - mitigationCount);
+  const action: CompetitorActionRecord = {
+    ...template,
+    id: `competitor:${state.currentRound}:${template.kind}`,
+    supportImpact,
+    pressureDelta,
+    mitigated: mitigationCount > 0,
+  };
+  let next = supportImpact === 0 ? state : applyNpcAttitudeDelta(state, template.targetNpcId, {
+    supportDelta: supportImpact,
+    reason: `竞品${template.title.replace('竞品', '')}`,
+    source: action.id,
+  });
+  next = {
+    ...next,
+    competitorState: {
+      ...next.competitorState,
+      pressureScore: clamp(next.competitorState.pressureScore + pressureDelta),
+      actions: [...next.competitorState.actions, action],
+    },
+    notifications: [...next.notifications, {
+      id: action.id,
+      npcId: action.targetNpcId,
+      kind: 'project',
+      title: '竞品动态',
+      body: `${action.summary}${action.mitigated ? ' 你此前的调研、拜访或材料准备减弱了这次影响。' : ' 当前缺少针对性准备，竞争压力有所上升。'}`,
+      round: state.currentRound,
+      minute: state.simulatedClockMinutes,
+      isRead: false,
+      targetId: action.id,
+    }],
+  };
+  return { state: refreshCompetitivePosition(next), action };
 }
 
 export function getWinConditions(state: GameRuntimeState) {
@@ -915,12 +1077,12 @@ export function getWinConditions(state: GameRuntimeState) {
   };
 }
 
-function processComplianceRisks(state: GameRuntimeState, finalAudit = false): GameRuntimeState {
+function processComplianceRisks(state: GameRuntimeState, finalAudit = false, probabilitySeed = 'legacy-audit'): GameRuntimeState {
   let next = state;
   const risks = state.complianceRisks.map((risk) => {
     if (risk.status !== 'latent') return risk;
     const chance = Math.min(90, risk.severity * 12 + (finalAudit ? 15 : 0));
-    if (!shouldNpcRespond(`${risk.id}:audit:${state.currentRound}:${finalAudit}`, chance)) return risk;
+    if (!shouldNpcRespond(`${probabilitySeed}:${risk.id}:audit:${state.currentRound}:${finalAudit}`, chance)) return risk;
     next = applyNpcAttitudeDelta(next, risk.npcId, {
       pleasantnessDelta: -Math.min(10, risk.severity * 2),
       supportDelta: -Math.min(8, risk.severity * 2),
@@ -949,12 +1111,12 @@ function processComplianceRisks(state: GameRuntimeState, finalAudit = false): Ga
   };
 }
 
-export function submitGame(state: GameRuntimeState): GameRuntimeState {
+export function submitGame(state: GameRuntimeState, probabilitySeed = 'legacy-submit'): GameRuntimeState {
   if (state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
   if (state.activeMeeting) throw new Error('MEETING_ALREADY_ACTIVE');
-  const audited = processComplianceRisks(state, true);
+  const audited = processComplianceRisks(state, true, probabilitySeed);
   const outcome = getGameOutcome(audited);
-  return { ...audited, status: outcome.eligible ? 'won' : 'lost', activeMeeting: null, lastAction: null };
+  return refreshCompetitivePosition({ ...audited, status: outcome.eligible ? 'won' : 'lost', submissionReady: false, activeMeeting: null, lastAction: null });
 }
 
 /** @deprecated Simulated time naturally stops when the player does not act. */
@@ -1104,6 +1266,14 @@ function completeMeeting(state: GameRuntimeState, reason: string, summary = ''):
     createdRound: state.currentRound,
     createdMinute: simulatedClockMinutes,
   };
+  minutes.original = {
+    summary: minutes.summary,
+    confirmedItems: [...minutes.confirmedItems],
+    npcCommitments: [...minutes.npcCommitments],
+    playerCommitments: [...minutes.playerCommitments],
+    nextStep: minutes.nextStep,
+  };
+  minutes.revisionCount = 0;
   return {
     ...state,
     simulatedClockMinutes: Math.min(PROJECT_ONE_EVENING_END_MINUTE, simulatedClockMinutes),
@@ -1150,10 +1320,21 @@ export function endMeeting(state: GameRuntimeState): GameRuntimeState {
   return completeMeeting(state, 'player');
 }
 
-export function advanceRound(state: GameRuntimeState, _legacyNow?: number): GameRuntimeState {
+export function advanceRound(state: GameRuntimeState, _legacyNow?: number, probabilitySeed = 'legacy-advance'): GameRuntimeState {
   if (state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
   if (state.activeMeeting) throw new Error('MEETING_ALREADY_ACTIVE');
-  let next = processComplianceRisks(state);
+  let next = processComplianceRisks(state, false, probabilitySeed);
+  next = processCompetitorAction(next).state;
+  const missedToday = next.appointments.filter((appointment) =>
+    appointment.scheduledRound === state.currentRound && appointment.status === 'accepted');
+  for (const appointment of missedToday) {
+    next = applyNpcAttitudeDelta(next, appointment.npcId, {
+      pleasantnessDelta: -5,
+      supportDelta: -4,
+      reason: '预约未赴约，客户对履约可靠性产生疑虑',
+      source: `missed:${appointment.id}`,
+    });
+  }
   next = {
     ...next,
     appointments: next.appointments.map((appointment) =>
@@ -1161,7 +1342,9 @@ export function advanceRound(state: GameRuntimeState, _legacyNow?: number): Game
         ? { ...appointment, status: 'missed' as const, reservedMinutes: 0 }
         : appointment),
   };
-  if (state.currentRound >= state.maxRounds) return submitGame(next);
+  if (state.currentRound >= state.maxRounds) {
+    return refreshCompetitivePosition({ ...next, submissionReady: true, lastAction: 'submission_check' });
+  }
   const currentRound = state.currentRound + 1;
   const reservedMinutes = next.appointments
     .filter((appointment) => appointment.scheduledRound === currentRound && appointment.status === 'accepted')
@@ -1177,6 +1360,7 @@ export function advanceRound(state: GameRuntimeState, _legacyNow?: number): Game
     phaseEndsAt: LEGACY_SIMULATION_MARKER,
     pausedAt: null,
     pausedRemainingMs: null,
+    submissionReady: false,
     npcContacts: Object.fromEntries(Object.entries(next.npcContacts).map(([npcId, contact]) => [npcId, {
       ...contact,
       unansweredRound: null,
@@ -1242,35 +1426,93 @@ function assertEveningVisitLimit(state: GameRuntimeState, appointment: GameAppoi
   if (alreadyScheduled) throw new Error('EVENING_VISIT_LIMIT_REACHED');
 }
 
+function resolveInvitationPayload(
+  state: GameRuntimeState,
+  payload: Extract<GameCommand, { type: 'invite' }>['payload'],
+) {
+  const text = (payload.rawText || payload.purpose || '').trim();
+  if (!text) throw new Error('INVITATION_TEXT_REQUIRED');
+  const extractedFields: string[] = [];
+  const defaultedFields: string[] = [];
+
+  const invitationMethod = payload.invitationMethod
+    ?? (/顺路|顺便|路过/.test(text) ? 'drop_in' : 'dedicated');
+  (payload.invitationMethod || /顺路|顺便|路过/.test(text) ? extractedFields : defaultedFields).push('invitationMethod');
+
+  const inferredVisitType: VisitType = /吃饭|晚餐|午餐|咖啡|茶|茶叙/.test(text)
+    ? 'informal'
+    : /正式|汇报|演示|方案|PPT|会议/.test(text) ? 'formal' : 'short';
+  const visitType = payload.visitType ?? inferredVisitType;
+  (payload.visitType || /吃饭|晚餐|午餐|咖啡|茶|茶叙|正式|汇报|演示|方案|PPT|会议/.test(text) ? extractedFields : defaultedFields).push('visitType');
+
+  const roundMatch = text.match(/第\s*([1-5])\s*(?:阶段|天)/);
+  const scheduledRound = payload.scheduledRound
+    ?? (roundMatch ? Number(roundMatch[1]) : Math.min(state.currentRound + 1, state.maxRounds));
+  (payload.scheduledRound || roundMatch || /明天|次日/.test(text) ? extractedFields : defaultedFields).push('scheduledRound');
+
+  const timeMatch = text.match(/(?:(上午|下午|晚上)\s*(\d{1,2})(?:[:：点时](\d{1,2})?)?|(\d{1,2})[:：点时](\d{1,2})?)/);
+  let startMinute = payload.startMinute;
+  if (startMinute == null && timeMatch) {
+    let hour = Number(timeMatch[2] || timeMatch[4]);
+    const minute = Number(timeMatch[3] || timeMatch[5] || 0);
+    const prefix = timeMatch[1] || '';
+    if ((prefix.includes('下午') || prefix.includes('晚上')) && hour < 12) hour += 12;
+    startMinute = hour * 60 + minute;
+  }
+  if (startMinute == null) startMinute = visitType === 'informal' ? 18 * 60 : 14 * 60;
+  if (scheduledRound === state.currentRound && startMinute < state.simulatedClockMinutes) {
+    startMinute = Math.min(PROJECT_ONE_OVERTIME_END_MINUTE - PROJECT_ONE_VISIT_RULES[visitType].durationMinutes, state.simulatedClockMinutes + 60);
+  }
+  (payload.startMinute != null || timeMatch ? extractedFields : defaultedFields).push('startMinute');
+
+  const venueMatch = text.match(/(?:在|到)([^，。；]{2,24}?)(?:见面|聊|碰面|会面|沟通|交流)/);
+  const extractedVenue = venueMatch?.[1]?.trim().replace(/(?:正式|简单|当面)$/, '');
+  const venue = payload.venue ?? extractedVenue ?? (visitType === 'informal' ? '客户附近的合适场所' : '客户办公室');
+  (payload.venue || venueMatch ? extractedFields : defaultedFields).push('venue');
+
+  return {
+    invitationMethod,
+    visitType,
+    venue,
+    purpose: payload.purpose?.trim() || text,
+    scheduledRound,
+    startMinute,
+    invitationText: text,
+    extractedFields,
+    defaultedFields,
+  };
+}
+
 function createAppointmentFromCommand(
   state: GameRuntimeState,
   command: Extract<GameCommand, { type: 'invite' }>,
 ): { state: GameRuntimeState; appointment: GameAppointment } {
   const { payload } = command;
+  const resolved = resolveInvitationPayload(state, payload);
   const contact = state.npcContacts[payload.npcId];
   if (!contact || contact.status === 'known' || (!contact.hasReplied && contact.status !== 'online')) {
     throw new Error('TWO_WAY_CONTACT_REQUIRED');
   }
   if (!state.unlockedNpcIds.includes(payload.npcId)) throw new Error('NPC_LOCKED');
-  if (payload.scheduledRound < state.currentRound) throw new Error('APPOINTMENT_PHASE_INVALID');
-  const departureMinute = payload.startMinute;
-  const earliestDepartureMinute = payload.scheduledRound === state.currentRound
+  if (resolved.scheduledRound < state.currentRound) throw new Error('APPOINTMENT_PHASE_INVALID');
+  const departureMinute = resolved.startMinute;
+  const earliestDepartureMinute = resolved.scheduledRound === state.currentRound
     ? state.simulatedClockMinutes
     : PROJECT_ONE_DAY_START_MINUTE;
   if (departureMinute < earliestDepartureMinute) {
     throw new Error('APPOINTMENT_TIME_INVALID');
   }
-  const rules = PROJECT_ONE_VISIT_RULES[payload.visitType];
-  const eveningInformal = payload.visitType === 'informal' && payload.startMinute >= 18 * 60;
+  const rules = PROJECT_ONE_VISIT_RULES[resolved.visitType];
+  const eveningInformal = resolved.visitType === 'informal' && resolved.startMinute >= 18 * 60;
   if (eveningInformal) {
     const eveningCount = state.appointments.filter((item) =>
-      item.scheduledRound === payload.scheduledRound
+      item.scheduledRound === resolved.scheduledRound
       && item.visitType === 'informal'
       && item.startMinute >= 18 * 60
       && ['accepted', 'active', 'completed'].includes(item.status)).length;
     if (eveningCount >= 1) throw new Error('EVENING_VISIT_LIMIT_REACHED');
   }
-  const appointmentEnd = payload.startMinute + rules.durationMinutes;
+  const appointmentEnd = resolved.startMinute + rules.durationMinutes;
   if (eveningInformal) {
     if (appointmentEnd > PROJECT_ONE_EVENING_END_MINUTE) throw new Error('APPOINTMENT_TIME_INVALID');
   } else if (appointmentEnd > PROJECT_ONE_OVERTIME_END_MINUTE) {
@@ -1281,19 +1523,19 @@ function createAppointmentFromCommand(
   const countered = !accepted && shouldNpcRespond(`${command.commandId}:countered`, 65);
   const status: AppointmentStatus = accepted ? 'accepted' : countered ? 'countered' : 'rejected';
   const counteredStartMinute = countered
-    ? Math.min(eveningInformal ? PROJECT_ONE_EVENING_END_MINUTE - rules.durationMinutes : PROJECT_ONE_OVERTIME_END_MINUTE - rules.durationMinutes, payload.startMinute + 60)
-    : payload.startMinute;
+    ? Math.min(eveningInformal ? PROJECT_ONE_EVENING_END_MINUTE - rules.durationMinutes : PROJECT_ONE_OVERTIME_END_MINUTE - rules.durationMinutes, resolved.startMinute + 60)
+    : resolved.startMinute;
   const conditions = countered
-    ? [payload.visitType === 'formal' ? '请先发送议程或案例材料' : '请重新确认合适时间']
+    ? [resolved.visitType === 'formal' ? '请先发送议程或案例材料' : '请重新确认合适时间']
     : [];
   const appointment: GameAppointment = {
     id: `appointment:${command.commandId}`,
     npcId: payload.npcId,
-    invitationMethod: payload.invitationMethod,
-    visitType: payload.visitType,
-    venue: payload.venue,
-    purpose: payload.purpose,
-    scheduledRound: payload.scheduledRound,
+    invitationMethod: resolved.invitationMethod,
+    visitType: resolved.visitType,
+    venue: resolved.venue,
+    purpose: resolved.purpose,
+    scheduledRound: resolved.scheduledRound,
     startMinute: counteredStartMinute,
     durationMinutes: rules.durationMinutes,
     maxTurns: rules.maxTurns,
@@ -1302,6 +1544,9 @@ function createAppointmentFromCommand(
     reservedMinutes: accepted ? rules.durationMinutes : 0,
     workTopicOpenedBy: null,
     invitationCommandId: command.commandId,
+    invitationText: resolved.invitationText,
+    extractedFields: resolved.extractedFields,
+    defaultedFields: resolved.defaultedFields,
   };
   let next = { ...state, appointments: [...state.appointments, appointment] };
   if (accepted) {
@@ -1316,7 +1561,11 @@ function createAppointmentFromCommand(
       npcId: payload.npcId,
       kind: 'appointment',
       title: accepted ? '邀约已接受' : countered ? 'NPC提出改期条件' : '邀约被拒绝',
-      body: accepted ? '预约已加入日程。' : conditions[0] ?? '本次邀约未能安排。',
+      body: accepted
+        ? `可以，就按你说的安排。第${appointment.scheduledRound}阶段 ${String(Math.floor(appointment.startMinute / 60)).padStart(2, '0')}:${String(appointment.startMinute % 60).padStart(2, '0')}，我们在${appointment.venue}见。`
+        : countered
+          ? `这个时间我不太方便，建议调整到第${appointment.scheduledRound}阶段 ${String(Math.floor(appointment.startMinute / 60)).padStart(2, '0')}:${String(appointment.startMinute % 60).padStart(2, '0')}。另外，${conditions[0]}。`
+          : '谢谢你的邀请，不过我目前暂时安排不开。等项目条件更明确一些，我们再找合适时间沟通。',
       round: state.currentRound,
       minute: next.simulatedClockMinutes,
       isRead: false,
@@ -1336,6 +1585,11 @@ function prepareForVisit(
     const appointment = state.appointments.find((item) => item.id === payload.appointmentId);
     if (!appointment || appointment.npcId !== payload.npcId) throw new Error('APPOINTMENT_NOT_FOUND');
   }
+  if (['ppt', 'materials'].includes(payload.preparationType)) {
+    const structuredValid = payload.brief
+      && Object.values(payload.brief).every((value) => value.trim().length >= 2);
+    if (!structuredValid && payload.content.trim().length < 12) throw new Error('PREPARATION_BRIEF_REQUIRED');
+  }
   const rule = PROJECT_ONE_PREPARATION_RULES[payload.preparationType];
   const next = consumeGameTime(state, rule.timeMinutes, { pointCost: rule.costPoints });
   const preparation: GamePreparation = {
@@ -1343,8 +1597,11 @@ function prepareForVisit(
     npcId: payload.npcId,
     appointmentId: payload.appointmentId ?? null,
     type: payload.preparationType,
-    title: payload.title,
+    // The client may submit a legacy title, but authoritative labels are fixed
+    // server-side so player-controlled text cannot masquerade as system context.
+    title: PROJECT_ONE_PREPARATION_TITLES[payload.preparationType],
     content: payload.content,
+    brief: payload.brief,
     status: 'ready',
     costPoints: rule.costPoints,
     timeMinutes: rule.timeMinutes,
@@ -1589,6 +1846,37 @@ function markProcessed(state: GameRuntimeState, commandId: string): GameRuntimeS
   return { ...state, processedCommandIds: [...state.processedCommandIds, commandId].slice(-200) };
 }
 
+function researchPublicInfo(
+  state: GameRuntimeState,
+  npcId: string,
+): { state: GameRuntimeState; record: GamePublicResearchRecord } {
+  if (!state.unlockedNpcIds.includes(npcId)) throw new Error('NPC_UNKNOWN');
+  if (state.publicResearch[npcId]) throw new Error('PUBLIC_INFO_ALREADY_RESEARCHED');
+  const profile = PROJECT_ONE_PUBLIC_PROFILES[npcId];
+  if (!profile) throw new Error('PUBLIC_INFO_UNAVAILABLE');
+  const next = consumeGameTime(state, PROJECT_ONE_PUBLIC_RESEARCH_RULE.timeMinutes, {
+    pointCost: PROJECT_ONE_PUBLIC_RESEARCH_RULE.costPoints,
+  });
+  const record: GamePublicResearchRecord = {
+    npcId,
+    facts: [...profile.facts],
+    weakSignals: [...profile.weakSignals],
+    sourceNote: profile.sourceNote,
+    completedRound: state.currentRound,
+    completedMinute: next.simulatedClockMinutes,
+    timeMinutes: PROJECT_ONE_PUBLIC_RESEARCH_RULE.timeMinutes,
+    costPoints: PROJECT_ONE_PUBLIC_RESEARCH_RULE.costPoints,
+  };
+  return {
+    state: {
+      ...next,
+      publicResearch: { ...next.publicResearch, [npcId]: record },
+      lastAction: 'research_public_info',
+    },
+    record,
+  };
+}
+
 /**
  * Unified pure command reducer. Persistence/version increments remain the
  * repository's responsibility; this function validates expectedVersion.
@@ -1604,6 +1892,7 @@ export function executeGameCommand(
   }
   if (command.expectedVersion !== state.version) throw new Error('STATE_VERSION_CONFLICT');
   if (state.status !== 'playing' && command.type !== 'mark_notification_read') throw new Error('GAME_ALREADY_FINISHED');
+  if (state.submissionReady && !['submit', 'mark_notification_read'].includes(command.type)) throw new Error('SUBMISSION_CHECK_REQUIRED');
   if (state.activeMeeting && !['end_visit', 'give_gift', 'follow_up', 'mark_notification_read'].includes(command.type)) {
     throw new Error('MEETING_ALREADY_ACTIVE');
   }
@@ -1619,6 +1908,7 @@ export function executeGameCommand(
       state = connectNpc(recordNpcOutbound(state, command.payload.npcId), command.payload.npcId);
       result = { npcId: command.payload.npcId, channel: command.payload.channel };
       eventType = 'contact.completed';
+      eventPayload = { ...eventPayload, npcId: command.payload.npcId, channel: command.payload.channel };
       break;
     }
     case 'invite': {
@@ -1627,7 +1917,15 @@ export function executeGameCommand(
       state = created.state;
       result = { appointment: created.appointment };
       eventType = `appointment.${created.appointment.status}`;
-      eventPayload = { ...eventPayload, appointmentId: created.appointment.id, status: created.appointment.status };
+      eventPayload = {
+        ...eventPayload,
+        appointmentId: created.appointment.id,
+        status: created.appointment.status,
+        channel: command.payload.channel,
+        extractedFields: created.appointment.extractedFields ?? [],
+        defaultedFields: created.appointment.defaultedFields ?? [],
+        conditionCount: created.appointment.conditions.length,
+      };
       break;
     }
     case 'update_appointment': {
@@ -1646,6 +1944,13 @@ export function executeGameCommand(
         };
       } else {
         if (appointment.status !== 'countered') throw new Error('APPOINTMENT_NOT_COUNTERED');
+        const requiresMaterial = appointment.conditions.some((condition) => /议程|案例|材料/.test(condition));
+        const hasRequiredMaterial = state.preparations.some((item) =>
+          item.npcId === appointment.npcId
+          && (item.appointmentId === null || item.appointmentId === appointment.id)
+          && ['agenda', 'ppt', 'materials'].includes(item.type)
+          && item.status === 'ready');
+        if (requiresMaterial && !hasRequiredMaterial) throw new Error('APPOINTMENT_CONDITION_UNMET');
         const accepted = { ...appointment, status: 'accepted' as const, reservedMinutes: appointment.durationMinutes };
         assertEveningVisitLimit(state, accepted, appointment.id);
         assertAppointmentSlotAvailable(state, accepted, appointment.id);
@@ -1656,6 +1961,47 @@ export function executeGameCommand(
       }
       result = { appointment: state.appointments.find((item) => item.id === appointment.id) };
       eventType = command.payload.action === 'cancel' ? 'appointment.cancelled' : 'appointment.accepted';
+      eventPayload = {
+        ...eventPayload,
+        npcId: appointment.npcId,
+        appointmentId: appointment.id,
+        action: command.payload.action,
+        conditionCount: appointment.conditions.length,
+        conditionsSatisfied: command.payload.action === 'accept_counter',
+      };
+      break;
+    }
+    case 'update_meeting_minutes': {
+      const existing = state.meetingMinutes.find((item) => item.id === command.payload.minutesId);
+      if (!existing) throw new Error('MEETING_MINUTES_NOT_FOUND');
+      const original = existing.original ?? {
+        summary: existing.summary,
+        confirmedItems: [...existing.confirmedItems],
+        npcCommitments: [...existing.npcCommitments],
+        playerCommitments: [...existing.playerCommitments],
+        nextStep: existing.nextStep,
+      };
+      const updated: GameMeetingMinutes = {
+        ...existing,
+        ...command.payload,
+        original,
+        revisionCount: (existing.revisionCount ?? 0) + 1,
+        lastEditedRound: state.currentRound,
+        lastEditedMinute: state.simulatedClockMinutes,
+      };
+      state = {
+        ...state,
+        meetingMinutes: state.meetingMinutes.map((item) => item.id === updated.id ? updated : item),
+      };
+      result = { minutes: updated };
+      eventType = 'meeting_minutes.updated';
+      eventPayload = {
+        ...eventPayload,
+        minutesId: updated.id,
+        appointmentId: updated.appointmentId,
+        npcId: updated.npcId,
+        revisionCount: updated.revisionCount,
+      };
       break;
     }
     case 'prepare': {
@@ -1663,7 +2009,17 @@ export function executeGameCommand(
       state = prepared.state;
       result = { preparation: prepared.preparation };
       eventType = 'preparation.completed';
-      eventPayload = { ...eventPayload, preparationId: prepared.preparation.id, type: prepared.preparation.type };
+      eventPayload = {
+        ...eventPayload,
+        npcId: prepared.preparation.npcId,
+        appointmentId: prepared.preparation.appointmentId,
+        preparationId: prepared.preparation.id,
+        type: prepared.preparation.type,
+        hasPreparationBrief: prepared.preparation.content.trim().length > 0,
+        preparationBriefLength: prepared.preparation.content.trim().length,
+        timeMinutes: prepared.preparation.timeMinutes,
+        costPoints: prepared.preparation.costPoints,
+      };
       break;
     }
     case 'start_visit': {
@@ -1671,7 +2027,16 @@ export function executeGameCommand(
       state = started.state;
       result = { appointment: started.appointment, meeting: state.activeMeeting };
       eventType = 'visit.started';
-      eventPayload = { ...eventPayload, appointmentId: started.appointment.id, visitType: started.appointment.visitType };
+      eventPayload = {
+        ...eventPayload,
+        npcId: started.appointment.npcId,
+        appointmentId: started.appointment.id,
+        visitType: started.appointment.visitType,
+        scheduledRound: started.appointment.scheduledRound,
+        scheduledMinute: started.appointment.startMinute,
+        preparationCount: state.activeMeeting?.usedPreparationIds.length ?? 0,
+        conditionCount: started.appointment.conditions.length,
+      };
       break;
     }
     case 'end_visit': {
@@ -1686,7 +2051,17 @@ export function executeGameCommand(
         minutes: state.meetingMinutes.find((item) => item.appointmentId === meeting.appointmentId),
       };
       eventType = 'visit.completed';
-      eventPayload = { ...eventPayload, appointmentId: meeting.appointmentId, reason: command.payload.reason, summary: command.payload.summary };
+      eventPayload = {
+        ...eventPayload,
+        npcId: meeting.npcId,
+        appointmentId: meeting.appointmentId,
+        visitType: meeting.visitType,
+        reason: command.payload.reason,
+        turnCount: meeting.turnCount,
+        maxTurns: meeting.maxTurns,
+        usedPreparationCount: meeting.usedPreparationIds.length,
+        hasPlayerSummary: command.payload.summary.trim().length > 0,
+      };
       break;
     }
     case 'give_gift': {
@@ -1731,10 +2106,29 @@ export function executeGameCommand(
         };
         result = { npcId: payload.npcId, preparationIds: [preparation.id], deliveredDuringVisit: true };
         eventType = 'preparation.delivered';
+        eventPayload = {
+          ...eventPayload,
+          npcId: payload.npcId,
+          appointmentId: payload.appointmentId ?? preparation.appointmentId,
+          preparationId: preparation.id,
+          preparationType: preparation.type,
+          deliveredDuringVisit: true,
+        };
         break;
       }
+      if (state.activeMeeting) throw new Error('MEETING_ALREADY_ACTIVE');
+      const completedAppointment = state.appointments.find((item) => item.id === payload.appointmentId);
+      if (!completedAppointment || completedAppointment.npcId !== payload.npcId) throw new Error('APPOINTMENT_NOT_FOUND');
+      if (completedAppointment.status !== 'completed'
+        || !state.meetingMinutes.some((item) => item.appointmentId === completedAppointment.id && item.npcId === payload.npcId)) {
+        throw new Error('VISIT_NOT_COMPLETED');
+      }
       const selected = state.preparations.filter((item) => payload.preparationIds.includes(item.id));
-      if (selected.length !== payload.preparationIds.length || selected.some((item) => item.npcId !== payload.npcId || item.status !== 'ready' || item.type.endsWith('gift'))) {
+      if (selected.length !== payload.preparationIds.length || selected.some((item) =>
+        item.npcId !== payload.npcId
+        || (item.appointmentId !== null && item.appointmentId !== completedAppointment.id)
+        || item.status !== 'ready'
+        || item.type.endsWith('gift'))) {
         throw new Error('PREPARATION_NOT_AVAILABLE');
       }
       state = consumeCommunicationTime(state, payload.channel);
@@ -1747,6 +2141,13 @@ export function executeGameCommand(
       };
       result = { npcId: payload.npcId, preparationIds: payload.preparationIds };
       eventType = 'follow_up.sent';
+      eventPayload = {
+        ...eventPayload,
+        npcId: payload.npcId,
+        appointmentId: completedAppointment.id,
+        channel: payload.channel,
+        preparationCount: payload.preparationIds.length,
+      };
       break;
     }
     case 'wait': {
@@ -1757,15 +2158,57 @@ export function executeGameCommand(
     }
     case 'advance_phase': {
       const fromRound = state.currentRound;
-      state = advanceRound(state);
-      result = { fromRound, toRound: state.currentRound, status: state.status, outcome: state.status === 'playing' ? null : getGameOutcome(state) };
+      const pendingAppointmentCount = state.appointments.filter((item) =>
+        item.scheduledRound === fromRound && ['accepted', 'countered', 'pending'].includes(item.status)).length;
+      const unreadNotificationCount = state.notifications.filter((item) => !item.isRead).length;
+      state = advanceRound(state, undefined, command.commandId);
+      const outcome = state.status === 'playing' ? null : getGameOutcome(state);
+      const competitorAction = state.competitorState.actions.find((item) => item.round === fromRound) ?? null;
+      result = { fromRound, toRound: state.currentRound, status: state.status, submissionReady: state.submissionReady, competitorAction, outcome };
       eventType = state.status === 'playing' ? 'phase.advanced' : 'session.finished';
+      eventPayload = {
+        ...eventPayload,
+        fromRound,
+        toRound: state.currentRound,
+        status: state.status,
+        pendingAppointmentCount,
+        unreadNotificationCount,
+        missedAppointmentCount: state.appointments.filter((item) => item.status === 'missed').length,
+        competitorActionKind: competitorAction?.kind ?? null,
+        competitorActionMitigated: competitorAction?.mitigated ?? null,
+        ...(outcome ? {
+          finalScore: outcome.finalScore,
+          won: outcome.won,
+          publicValueEvidenceCount: state.outcomeEvidence.publicValue.length,
+          personalBenefitEvidenceCount: state.outcomeEvidence.personalBenefit.length,
+          complianceRiskCount: state.complianceRisks.filter((risk) => risk.status === 'triggered').length,
+        } : {}),
+      };
       break;
     }
     case 'submit': {
-      state = submitGame(state);
-      result = { status: state.status, outcome: getGameOutcome(state) };
+      const warningCodes = [
+        ...(!state.unlockedClues.includes('decision_process') ? ['decision_chain_unconfirmed'] : []),
+        ...(state.outcomeEvidence.publicValue.length === 0 ? ['public_value_missing'] : []),
+        ...(state.outcomeEvidence.personalBenefit.length === 0 ? ['personal_benefit_missing'] : []),
+        ...(state.complianceRisks.some((risk) => risk.status === 'latent' || risk.status === 'triggered') ? ['compliance_risk_present'] : []),
+      ];
+      state = submitGame(state, command.commandId);
+      const outcome = getGameOutcome(state);
+      result = { status: state.status, outcome, warningCodes };
       eventType = 'session.submitted';
+      eventPayload = {
+        ...eventPayload,
+        submittedRound: state.currentRound,
+        earlySubmission: state.currentRound < state.maxRounds,
+        warningCodes,
+        warningCount: warningCodes.length,
+        publicValueEvidenceCount: state.outcomeEvidence.publicValue.length,
+        personalBenefitEvidenceCount: state.outcomeEvidence.personalBenefit.length,
+        triggeredComplianceRiskCount: state.complianceRisks.filter((risk) => risk.status === 'triggered').length,
+        finalScore: outcome.finalScore,
+        won: outcome.won,
+      };
       break;
     }
     case 'mark_notification_read': {
@@ -1779,8 +2222,23 @@ export function executeGameCommand(
       eventType = 'notification.read';
       break;
     }
+    case 'research_public_info': {
+      const researched = researchPublicInfo(state, command.payload.npcId);
+      state = researched.state;
+      result = { publicResearch: researched.record };
+      eventType = 'public_info.researched';
+      eventPayload = {
+        ...eventPayload,
+        npcId: command.payload.npcId,
+        factCount: researched.record.facts.length,
+        weakSignalCount: researched.record.weakSignals.length,
+        timeMinutes: researched.record.timeMinutes,
+        costPoints: researched.record.costPoints,
+      };
+      break;
+    }
   }
 
-  state = markProcessed(state, command.commandId);
+  state = markProcessed(refreshCompetitivePosition(state), command.commandId);
   return { state, result, eventType, eventPayload };
 }

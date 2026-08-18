@@ -1,4 +1,4 @@
-import { pgTable, serial, timestamp, index, unique, pgPolicy, uuid, varchar, integer, text, jsonb, foreignKey, boolean } from "drizzle-orm/pg-core"
+import { pgTable, serial, timestamp, index, unique, uniqueIndex, pgPolicy, uuid, varchar, integer, text, jsonb, foreignKey, boolean } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 
@@ -59,6 +59,7 @@ export const gameSessions = pgTable("game_sessions", {
 	index("game_sessions_scenario_idx").using("btree", table.scenarioId.asc().nullsLast().op("uuid_ops")),
 	index("game_sessions_status_idx").using("btree", table.status.asc().nullsLast().op("text_ops")),
 	index("game_sessions_user_idx").using("btree", table.userId.asc().nullsLast().op("text_ops")),
+	uniqueIndex("game_sessions_one_playing_per_user_idx").on(table.userId).where(sql`${table.status} = 'playing'`),
 	foreignKey({
 			columns: [table.scenarioId],
 			foreignColumns: [projectScenarios.id],

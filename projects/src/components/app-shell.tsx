@@ -38,10 +38,8 @@ const ROLE_COLOR: Record<string, string> = {
 
 const NAV_ITEMS = [
   { key: 'home', href: '/home', label: '首页' },
-  { key: 'setup', href: '/setup', label: '开始对局' },
-  { key: 'ranking', href: '/ranking', label: '排行榜' },
-  { key: 'knowledge', href: '/knowledge', label: '知识库' },
-  { key: 'room', href: '/room', label: '多人房间' },
+  { key: 'setup', href: '/start', label: '项目地图' },
+  { key: 'ranking', href: '/ranking', label: '历史与复盘' },
 ] as const;
 
 export function AppShell({ identity, activeNav, roleAccent, wsConnected, children }: AppShellProps) {
@@ -62,14 +60,14 @@ export function AppShell({ identity, activeNav, roleAccent, wsConnected, childre
 
   return (
     <div className={`min-h-screen ${bgClass}`}>
-      <header className="topbar-glass sticky top-0 z-20">
+      <header className="sticky top-0 z-20 border-b border-slate-800 bg-[#0B1736] text-white shadow-lg shadow-slate-950/10">
         <div className="max-w-7xl mx-auto px-6 sm:px-8 h-16 flex items-center justify-between gap-4">
           <div className="flex items-center gap-8 min-w-0">
             <Link href="/home" className="flex items-center gap-2 shrink-0">
-              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center shadow-sm">
+              <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center shadow-sm">
                 <Building2 className="w-4 h-4 text-primary-foreground" />
               </div>
-              <span className="hidden sm:inline text-sm font-semibold text-foreground whitespace-nowrap">
+              <span className="hidden sm:inline text-sm font-semibold text-white whitespace-nowrap">
                 竞标博弈 · 政企销售实训
               </span>
             </Link>
@@ -78,7 +76,7 @@ export function AppShell({ identity, activeNav, roleAccent, wsConnected, childre
                 <Link
                   key={item.key}
                   href={item.href}
-                  className={`nav-item ${activeNav === item.key ? 'nav-active' : ''}`}
+                  className={`rounded-lg px-3 py-2 transition-colors ${activeNav === item.key ? 'bg-white/15 font-semibold text-white' : 'text-slate-300 hover:bg-white/10 hover:text-white'}`}
                 >
                   {item.label}
                 </Link>
@@ -87,7 +85,7 @@ export function AppShell({ identity, activeNav, roleAccent, wsConnected, childre
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {typeof wsConnected === 'boolean' && (
-              <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground">
+              <div className="hidden sm:flex items-center gap-1.5 text-xs text-slate-300">
                 {wsConnected ? (
                   <Wifi className="w-3.5 h-3.5 text-success" />
                 ) : (
@@ -109,7 +107,7 @@ export function AppShell({ identity, activeNav, roleAccent, wsConnected, childre
             )}
             <button
               onClick={handleLogout}
-              className="p-2 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground transition-colors"
+              className="p-2 hover:bg-white/10 rounded-lg text-slate-300 hover:text-white transition-colors"
               title="退出登录"
             >
               <LogOut className="w-4 h-4" />

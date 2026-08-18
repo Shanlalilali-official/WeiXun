@@ -9,7 +9,7 @@ dotenv.config({ path: '.env.local', override: false, quiet: true });
 dotenv.config({ path: '.env', override: false, quiet: true });
 
 const dev = process.env.NODE_ENV !== 'production';
-const hostname = process.env.HOSTNAME || 'localhost';
+const hostname = process.env.WEIXUN_HOST || '127.0.0.1';
 const port = Number.parseInt(process.env.PORT || '5000', 10);
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();

@@ -69,7 +69,6 @@ async function streamChat(
     contextType?: 'online' | 'short_visit' | 'formal_visit' | 'informal_visit';
     appointmentId?: string;
     usedPreparationIds?: string[];
-    workTopicOpenedBy?: 'none' | 'player' | 'npc';
   } = {},
   options?: { commandId?: string; expectedVersion?: number },
 ) {
@@ -123,9 +122,18 @@ async function cleanup() {
 }
 
 async function main() {
+  const authenticated = await jsonRequest<{ userId: string; loginToken: string }>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'login', username: userId, password: 'e2e-test-password' }),
+  });
   const login = await jsonRequest<{ token: string }>('/api/auth/login', {
     method: 'POST',
-    body: JSON.stringify({ action: 'select_role', userId, role: 'player', subRole: 'paid_individual' }),
+    body: JSON.stringify({
+      action: 'select_role',
+      loginToken: authenticated.loginToken,
+      role: 'player',
+      subRole: 'paid_individual',
+    }),
   });
   assert(login.token);
 
@@ -219,6 +227,15 @@ async function main() {
   assert.equal(appointment.maxTurns, 6);
   const availableAfterReservation = currentState.dayAvailableMinutes;
 
+  await assert.rejects(() => command(login.token, 'follow_up', {
+    action: 'message',
+    npcId: appointment!.npcId,
+    appointmentId: appointment!.id,
+    channel: 'email',
+    content: '尚未完成拜访时不应允许发送会后跟进。',
+    preparationIds: [],
+  }), /VISIT_NOT_COMPLETED/);
+
   const ppt = await command(login.token, 'prepare', {
     npcId: appointment.npcId,
     appointmentId: appointment.id,
@@ -275,6 +292,21 @@ async function main() {
   assert.equal(replayedGift.state.version, firstGift.state.version);
   assert.equal(replayedGift.state.complianceRisks.length, riskCount);
 
+  // Seed enough already-persisted history to trigger the real rolling-memory
+  // path on the next atomic chat turn without spending 16 model calls.
+  const memoryRows = Array.from({ length: 18 }, (_, index) => ({
+    session_id: sessionId,
+    decision_maker_id: null,
+    round: currentState.currentRound,
+    sender: index % 2 === 0 ? 'user' : 'assistant',
+    content: index % 2 === 0
+      ? `历史沟通${index + 1}：请确认验收留痕、接口边界和交付计划。`
+      : `历史回复${index + 1}：验收材料必须可追溯，接口边界需要写清楚。`,
+    metadata: { npcId: appointment.npcId, source: 'memory-e2e-seed' },
+  }));
+  const { error: memorySeedError } = await createAdminClient().from('chat_messages').insert(memoryRows);
+  assert.equal(memorySeedError, null, `memory history seed failed: ${memorySeedError?.message ?? ''}`);
+
   const visitTurn = await streamChat(
     login.token,
     appointment.npcId,
@@ -290,6 +322,9 @@ async function main() {
   assert.equal(visitTurn.deliveryStatus, 'replied');
   assert.equal(currentState.activeMeeting?.turnCount, 1);
   assert.equal(currentState.cumulativeTimeMinutes, investedAtMeetingStart, 'meeting turns must not charge time');
+  const refreshedMemory = currentState.conversationMemories[appointment.npcId];
+  assert(refreshedMemory?.summary, '16+ persisted messages must produce a rolling summary');
+  assert(refreshedMemory.summarizedMessageCount >= 10, 'summary cursor must advance while retaining the recent window');
 
   await command(login.token, 'end_visit', {
     appointmentId: appointment.id,
@@ -305,6 +340,61 @@ async function main() {
     availableAfterReservation - 30 - 10 - travelMinutes - idleDaytimeMinutes,
     'preparation, intentional idle time and travel consume available capacity while the reserved visit is not charged twice',
   );
+
+  const followUp = await command(login.token, 'follow_up', {
+    action: 'message',
+    npcId: appointment.npcId,
+    appointmentId: appointment.id,
+    channel: 'email',
+    content: '按会面确认事项发送纪要，并同步下一步负责人。',
+    preparationIds: [],
+  });
+  assert.equal(followUp.result.npcId, appointment.npcId);
+
+  // Verify promised -> sent -> received across two simulated workdays. The
+  // target NPC must not receive the summary in the promise round.
+  const handoffCommandId = makeCommandId('handoff-source');
+  const handoffSummary = '王浩已确认验收材料必须留痕，并建议业务部继续评估。';
+  const { error: handoffSeedError } = await createAdminClient().from('game_events').insert({
+    session_id: sessionId,
+    npc_key: 'p1-frontline-wang-hao',
+    round: currentState.currentRound,
+    event_type: 'npc.handoff.promised',
+    payload: {
+      sourceCommandId: handoffCommandId,
+      sourceNpcId: 'p1-frontline-wang-hao',
+      targetNpcId: 'p1-minister-chen-jianguo',
+      summary: handoffSummary,
+    },
+  });
+  assert.equal(handoffSeedError, null, `handoff promise seed failed: ${handoffSeedError?.message ?? ''}`);
+
+  await command(login.token, 'advance_phase');
+  const { data: sentEvents, error: sentLoadError } = await createAdminClient()
+    .from('game_events')
+    .select('round, payload')
+    .eq('session_id', sessionId)
+    .eq('event_type', 'npc.handoff.sent');
+  assert.equal(sentLoadError, null);
+  assert(sentEvents?.some((event) => String((event.payload as Record<string, unknown>).promiseKey) === handoffCommandId));
+
+  const { data: prematureReceived, error: prematureLoadError } = await createAdminClient()
+    .from('game_events')
+    .select('id')
+    .eq('session_id', sessionId)
+    .eq('event_type', 'npc.handoff.received');
+  assert.equal(prematureLoadError, null);
+  assert.equal(prematureReceived?.length ?? 0, 0, 'handoff cannot be received in the same phase in which it is sent');
+
+  await command(login.token, 'advance_phase');
+  const { data: receivedEvents, error: receivedLoadError } = await createAdminClient()
+    .from('game_events')
+    .select('npc_key, round, payload')
+    .eq('session_id', sessionId)
+    .eq('event_type', 'npc.handoff.received')
+    .eq('npc_key', 'p1-minister-chen-jianguo');
+  assert.equal(receivedLoadError, null);
+  assert(receivedEvents?.some((event) => String((event.payload as Record<string, unknown>).summary) === handoffSummary));
 
   const firstHistory = await jsonRequest<{ messages: Array<{ metadata?: { commandId?: string } }> }>(
     `/api/game/sessions/${sessionId}/messages?npcId=p1-frontline-wang-hao`, {}, login.token,
@@ -330,6 +420,28 @@ async function main() {
   assert(review.review.strengths.length > 0);
   assert(review.review.improvements.length > 0);
   assert(review.review.nextActions.length > 0);
+
+  const { data: observedEvents, error: observedEventError } = await createAdminClient()
+    .from('game_events')
+    .select('event_type, payload')
+    .eq('session_id', sessionId);
+  assert.equal(observedEventError, null);
+  const eventsByType = new Map((observedEvents ?? []).map((event) => [event.event_type, event.payload as Record<string, unknown>]));
+  for (const requiredType of ['session.created', 'preparation.completed', 'visit.started', 'visit.completed', 'phase.advanced', 'session.finished']) {
+    assert(eventsByType.has(requiredType), `missing observation event: ${requiredType}`);
+  }
+  const preparationEvent = (observedEvents ?? []).find((event) =>
+    event.event_type === 'preparation.completed'
+    && (event.payload as Record<string, unknown>).type === 'ppt')?.payload as Record<string, unknown>;
+  assert(preparationEvent, 'missing PPT preparation observation');
+  assert.equal(preparationEvent.hasPreparationBrief, true);
+  assert.equal('content' in preparationEvent, false);
+  const visitCompletedEvent = eventsByType.get('visit.completed')!;
+  assert.equal('summary' in visitCompletedEvent, false, 'meeting summary must not be copied to observation payload');
+  assert.equal(typeof visitCompletedEvent.turnCount, 'number');
+  const phaseEvent = eventsByType.get('phase.advanced')!;
+  assert.equal(typeof phaseEvent.fromRound, 'number');
+  assert.equal(typeof phaseEvent.toRound, 'number');
 
   console.log(`project-one simulated-visit e2e passed: session=${sessionId}, result=${currentState.status}`);
   await cleanup();
