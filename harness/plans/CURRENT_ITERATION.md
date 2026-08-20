@@ -42,15 +42,15 @@
 
 - FLOW-003/004 已完成：公开搜索可重复付费且不持久化，不再使用模拟时间；自由文本准备执行确定性五要素语义校验，旧材料仅兼容读取且不进入新互动链路。
 - MULTI-003 已完成本地原子阶段推进、就绪协调、共享客户状态与隐藏进度更新，并覆盖行动点封顶、版本回放/冲突和最终阶段纯函数测试。
-- 已通过 AI Provider、指标、TypeScript、全量 ESLint、Next.js 与 tsup 构建、harness 检查和项目一真实单人 E2E。
-- 尚未执行 `20260819000200_five_stage_multiplayer.sql` 的远端实际推送及双账号 E2E；需获得明确远端数据库写入授权后继续。
+- `20260819000200_five_stage_multiplayer.sql` 已应用到托管 Supabase 开发库，`supabase migration list` 已对齐，远程 `db lint` 为 0 error；双账号 multiplayer E2E 已通过。
+- 已通过 AI Provider、指标、TypeScript、全量 ESLint、Next.js 与 tsup 构建、harness 检查、single-save E2E 和项目一真实单人 E2E。
 
 ## 2026-08-20 独立邀约入口收敛
 
-- 当前问题：联系人卡片和主沟通区同时提供独立“邀约见面”入口，与电话/邮件/微信自然语言沟通中的邀约意图重复，容易让玩家误以为邀约是另一条渠道。
-- 目标行为：移除上述两处独立按钮；玩家在电话、邮件或已申请工作微信后的自然语言消息中表达邀约，继续使用统一的邀约解析、NPC 结果和条件校验；微信申请仍保留 `request_wechat` 路径。
-- 验收条件：联系人卡片与主沟通区不渲染“邀约见面”按钮；电话/邮件/微信自然语言邀约仍能创建统一预约结果；旧 `request_online` 路径不重新出现。
-- 自动化证据：`test-invitation-intent.ts` 覆盖明确邀约与历史见面提及的正反例；`test-five-stage-state.ts` 覆盖三种邀约渠道和旧 `request_online` 契约拒绝；TypeScript、全量 ESLint、生产构建及项目一真实单人 E2E 通过，真实邀约断言仅扣一次行动点。
+- 当前问题：联系人卡片和主沟通区同时提供独立“邀约见面/拜访准备”入口，与电话/邮件/微信自然语言沟通中的邀约意图及准备流程重复，容易让玩家误以为邀约或准备是另一条渠道。
+- 目标行为：移除上述独立“邀约见面/拜访准备”入口；玩家在电话、邮件或已申请工作微信后的自然语言消息中表达邀约，继续使用统一的邀约解析、NPC 结果和条件校验；微信申请仍保留 `request_wechat` 路径。
+- 验收条件：联系人卡片与主沟通区不渲染“邀约见面/拜访准备”按钮；电话/邮件/微信自然语言邀约仍能创建统一预约结果；旧 `request_online` 路径不重新出现。
+- 自动化证据：`test-invitation-intent.ts` 覆盖明确邀约与历史见面提及的正反例；`test-five-stage-state.ts` 覆盖三种邀约渠道和旧 `request_online` 契约拒绝；TypeScript、全量 ESLint、生产构建、single-save E2E、双账号 multiplayer E2E 及项目一真实单人 E2E 通过，真实邀约断言仅扣一次行动点。实现与台账分别已提交于 `149af4d`、`45a335d`。
 
 ## 验收门槛
 
