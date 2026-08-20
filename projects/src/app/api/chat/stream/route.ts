@@ -4,7 +4,9 @@ import { CUSTOMER_CONTEXT, CUSTOMER_PROMPT, type CustomerPromptContext } from '@
 import { evaluateNpcTurn } from '@/lib/ai/npc-evaluation';
 import { authGuard } from '@/lib/auth/guard';
 import { npcChatRequestSchema } from '@/lib/contracts/ai';
+import type { GameCommand } from '@/lib/contracts/game';
 import { getProjectOneNpc, type ContactChannel } from '@/lib/game/project-one';
+import { isNaturalLanguageInvitation } from '@/lib/game/invitation-intent';
 import {
   commitGameCommand,
   appendGameEvent,
@@ -29,6 +31,7 @@ import {
   shouldNpcRespond,
   toPlayerVisibleGameState,
   type GameRuntimeState,
+  executeGameCommand,
 } from '@/lib/game/state';
 import { createServerProbabilitySeed } from '@/lib/game/server-random';
 import { refreshConversationMemory } from '@/lib/game/memory';
@@ -232,6 +235,89 @@ export async function POST(req: NextRequest) {
       consumeCommunicationTime(initialState, channel);
     } catch (error) {
       return jsonResponse(error instanceof Error ? error.message : 'TIME_RESOURCE_INSUFFICIENT', 409);
+    }
+  }
+
+  // Natural-language invitations use the same deterministic command path as
+  // the former dedicated UI. This keeps visit extraction, acceptance or
+  // counter-offers, action-point charging, notifications and idempotency under
+  // the server-side game state machine. The model still handles ordinary
+  // phone/email/WeChat conversation.
+  if (channel !== 'offline' && intent !== 'call_connect' && isNaturalLanguageInvitation(message)) {
+    const invitationCommand: GameCommand = {
+      commandId: createServerProbabilitySeed([gameSessionId, commandId, 'invite']),
+      expectedVersion,
+      type: 'invite',
+      payload: {
+        npcId,
+        channel,
+        rawText: message,
+        attachmentIds,
+      },
+    };
+    try {
+      const execution = executeGameCommand(initialState, invitationCommand);
+      const appointment = execution.result.appointment;
+      const appointmentId = appointment && typeof appointment === 'object' && 'id' in appointment && typeof appointment.id === 'string'
+        ? appointment.id
+        : null;
+      const reply = appointmentId
+        ? initialState.notifications.find((item) => item.id === `invite-response:${appointmentId}`)?.body
+          ?? execution.state.notifications.find((item) => item.id === `invite-response:${appointmentId}`)?.body
+        : undefined;
+      const committed = await commitGameCommand({
+        sessionId: gameSessionId,
+        commandId,
+        commandType: 'invite',
+        expectedVersion,
+        state: execution.state,
+        eventType: execution.eventType,
+        eventPayload: {
+          ...execution.eventPayload,
+          source: 'natural_language_chat',
+          sourceChannel: channel,
+        },
+        result: {
+          ...execution.result,
+          reply: reply ?? '邀约已记录，请留意对方的回复。',
+          deliveryStatus: 'replied',
+          channel,
+          invitation: true,
+          attachmentIds,
+        },
+        chatMessages: [
+          {
+            round: initialState.currentRound,
+            role: 'user',
+            content: message,
+            metadata: { npcId, intent, channel, deliveryStatus: 'sent', invitation: true, attachmentIds },
+          },
+          {
+            round: initialState.currentRound,
+            role: 'assistant',
+            content: reply ?? '邀约已记录，请留意对方的回复。',
+            metadata: { npcId, intent, channel, deliveryStatus: 'replied', invitation: true, appointmentId, attachmentIds },
+          },
+        ],
+      });
+      const visibleState = toPlayerVisibleGameState(committed.state);
+      const visibleReply = reply ?? '邀约已记录，请留意对方的回复。';
+      return immediateSse([
+        { type: 'delta', content: visibleReply },
+        {
+          type: 'result',
+          state: visibleState,
+          deliveryStatus: 'replied',
+          channel,
+          invitation: true,
+          appointment: execution.result.appointment,
+          reply: visibleReply,
+        },
+        { type: 'done' },
+      ]);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : 'INVITATION_FAILED';
+      return jsonResponse(code, code === 'STATE_VERSION_CONFLICT' ? 409 : 400);
     }
   }
 

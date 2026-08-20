@@ -16,6 +16,7 @@
     "supabase:reset": "supabase db reset",
     "ts-check": "tsc -p tsconfig.json",
     "test:game-state": "tsx scripts/test-five-stage-state.ts",
+    "test:invitation-intent": "tsx scripts/test-invitation-intent.ts",
     "test:game-state:legacy": "tsx scripts/test-game-state.ts",
     "test:ai-provider": "tsx scripts/test-ai-provider.ts",
     "test:ai-attitudes": "tsx scripts/test-ai-attitudes.ts",

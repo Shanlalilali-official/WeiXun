@@ -152,6 +152,29 @@ assert.throws(
   'legacy gifts cannot become ordinary email attachments',
 );
 const nonEmailInviteState = connectNpc(createProjectOneState(), 'p1-frontline-wang-hao');
+for (const channel of ['email', 'work_phone', 'wechat'] as const) {
+  const naturalLanguageInvite = gameCommandSchema.parse({
+    commandId: `invite-channel-${channel}`,
+    expectedVersion: 1,
+    type: 'invite',
+    payload: {
+      npcId: 'p1-frontline-wang-hao',
+      channel,
+      rawText: '希望围绕当前客户问题和交付案例安排一次正式沟通。',
+    },
+  });
+  assert.equal(naturalLanguageInvite.type, 'invite');
+  assert.equal(naturalLanguageInvite.payload.channel, channel, `${channel} remains a natural-language invitation channel`);
+}
+assert.throws(
+  () => gameCommandSchema.parse({
+    commandId: 'legacy-online-request',
+    expectedVersion: 1,
+    type: 'request_online',
+    payload: { npcId: 'p1-frontline-wang-hao', message: '旧式线上申请路径不应再存在。' },
+  }),
+  'legacy request_online must not be accepted as an independent invitation/contact command',
+);
 assert.throws(
   () => executeGameCommand(nonEmailInviteState, gameCommandSchema.parse({
     commandId: 'phone-attachment',

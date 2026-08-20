@@ -48,6 +48,39 @@ async function command(
   return { ...response, commandId, expectedVersion };
 }
 
+async function chatInvitation(token: string, message: string, channel: 'email' | 'work_phone' | 'online', attachmentIds: string[] = []) {
+  const response = await fetch(`${baseUrl}/api/chat/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-session': token },
+    body: JSON.stringify({
+      gameSessionId: sessionId,
+      scenarioId: 'project-1',
+      npcId: 'p1-frontline-wang-hao',
+      message,
+      intent: 'message',
+      channel,
+      commandId: makeCommandId('natural-invite'),
+      expectedVersion: currentState.version,
+      contextType: 'online',
+      attachmentIds,
+      usedPreparationIds: [],
+    }),
+  });
+  const raw = await response.text();
+  const events = raw
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('data: ') && line !== 'data: [DONE]')
+    .map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>);
+  if (!response.ok) {
+    const errorEvent = events.find((event) => event.type === 'error');
+    throw new Error(`/api/chat/stream HTTP ${response.status}: ${String(errorEvent?.error ?? raw)}`);
+  }
+  const result = events.find((event) => event.type === 'result') as { state?: GameRuntimeState; [key: string]: unknown } | undefined;
+  assert(result?.state, 'natural invitation chat should return a committed state');
+  currentState = result.state;
+  return { result, events };
+}
+
 async function cleanup() {
   if (!sessionId) return;
   const { error } = await createAdminClient().from('game_sessions').delete().eq('id', sessionId);
@@ -166,18 +199,24 @@ async function main() {
     'next_step',
   ]));
   const preparationId = preparation.id;
+  const invitationChannel = currentState.npcContacts[npcId].initialChannel;
 
   let appointment: GameAppointment | null = null;
   for (let attempt = 0; !appointment && attempt < 8; attempt += 1) {
-    const invited = await command(login.token, 'invite', {
-      npcId,
-      channel: 'email',
-      rawText: '希望围绕一线流程、交付案例和实施风险安排一次正式沟通。',
-      attachmentIds: [preparationId],
-    });
+    const pointsBeforeInvitation: number = currentState.actionPoints;
+    const invited = await chatInvitation(
+      login.token,
+      '希望围绕一线流程、交付案例和实施风险安排一次正式沟通。',
+      invitationChannel,
+      invitationChannel === 'email' ? [preparationId] : [],
+    );
+    assert.equal(invited.result.invitation, true);
+    assert.equal(currentState.actionPoints, pointsBeforeInvitation - 1, 'natural-language invitation charges exactly once');
     const candidate = invited.result.appointment as GameAppointment;
     assert(candidate?.status, 'invite should return a probability result');
     assert(['accepted', 'countered', 'rejected'].includes(candidate.status));
+    assert.equal(candidate.invitationText, '希望围绕一线流程、交付案例和实施风险安排一次正式沟通。');
+    assert.equal(candidate.invitationMethod, 'dedicated');
     if (candidate.status === 'countered') {
       const accepted = await command(login.token, 'update_appointment', {
         appointmentId: candidate.id,
