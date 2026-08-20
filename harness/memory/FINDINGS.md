@@ -53,6 +53,12 @@
 
 ## 本次环境调整
 
+- FLOW-003/004 已完成：公开信息搜索改为不持久化、无时间指标的可重复付费行动；自由文本准备采用确定性五要素语义校验并隔离旧材料。单人真实 E2E 已通过，过程中产生的失败测试会话已清理。
+- MULTI-003 已完成本地原子推进与就绪实现及纯函数测试；远端迁移仅完成 linked dry-run，因未获得明确远端写入授权而未实际推送。
+- 2026-08-20：FLOW-005 复核发现微信申请同时存在 `request_wechat` 确定性命令和聊天流 `request_online` AI 判定两套写路径，可能重复扣点并分叉联系人状态。产品负责人确认保留微信后，已移除聊天流旧路径，以 `request_wechat` 为唯一权威；普通邮件附件同时补齐前端选择、请求契约、服务端库存校验和状态测试。
+
+- 2026-08-19：收到 Supabase `rls_disabled_in_public` 告警后，已在托管项目 `dmxmhmzntbejtekmnfoh` 推送 `20260819000100_lock_down_public_tables.sql`。迁移为 `health_check` 启用 RLS，并将其余 13 张业务表的 public allow-all 策略替换为 service-role-only；远程 db lint 为 0 个问题，anon 查询 `health_check`/`game_sessions` 均返回 0 行，service-role 查询正常。
+
 - 已移除 `coze-coding-dev-sdk`、Coze 启动命令和身份注入依赖。
 - AI 调用改为通用 OpenAI Chat Completions 协议；本地 mock 已覆盖普通与 SSE 流式路径。
 - 已生成本地 Supabase 配置、完整迁移、seed、环境检查与启动脚本。

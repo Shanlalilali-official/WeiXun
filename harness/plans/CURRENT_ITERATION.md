@@ -32,6 +32,19 @@
 - 已验证：`tsc --noEmit`、目标 ESLint（0 error）、`test-game-state.ts`、Next.js 生产构建。
 - 未包含：管理员/教练实时看板；该能力仍为延期项。
 
+## 2026-08-20 FLOW-005 增量验收
+
+- 普通邮件正文可多选当前联系人名下、状态为 ready 的非礼品准备材料；服务端再次校验归属与状态，成功或未回复的已发送邮件都记录附件使用。
+- 微信保留，并以 `request_wechat` 游戏命令作为唯一申请与状态写入路径；聊天 SSE 不再接受 `request_online` 意图。
+- 验证证据：`test-five-stage-state.ts`、`tsc -p tsconfig.json`、`eslint . --quiet`、Next.js 生产构建和 `tsup` 服务端构建通过。
+
+## 2026-08-20 五阶段与多人后端增量验收
+
+- FLOW-003/004 已完成：公开搜索可重复付费且不持久化，不再使用模拟时间；自由文本准备执行确定性五要素语义校验，旧材料仅兼容读取且不进入新互动链路。
+- MULTI-003 已完成本地原子阶段推进、就绪协调、共享客户状态与隐藏进度更新，并覆盖行动点封顶、版本回放/冲突和最终阶段纯函数测试。
+- 已通过 AI Provider、指标、TypeScript、全量 ESLint、Next.js 与 tsup 构建、harness 检查和项目一真实单人 E2E。
+- 尚未执行 `20260819000200_five_stage_multiplayer.sql` 的远端实际推送及双账号 E2E；需获得明确远端数据库写入授权后继续。
+
 ## 验收门槛
 
 - 自动化：TypeScript、目标 lint、AI Provider mock、状态机、指标和生产构建通过。
