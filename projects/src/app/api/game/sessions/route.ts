@@ -3,6 +3,7 @@ import { authGuard } from '@/lib/auth/guard';
 import { createGameSessionRequestSchema } from '@/lib/contracts/game';
 import { createGameSession, listOwnedActiveGameSaves, MAX_ACTIVE_GAME_SAVES } from '@/lib/game/repository';
 import { getProgressionMultiplier } from '@/lib/game/acceptance-mode';
+import { toPlayerVisibleGameState } from '@/lib/game/state';
 
 export const runtime = 'nodejs';
 
@@ -36,7 +37,7 @@ export async function POST(request: NextRequest) {
       getProgressionMultiplier(guard.session.userId),
       parsed.data.replaceExisting,
     );
-    return NextResponse.json({ success: true, gameSession });
+    return NextResponse.json({ success: true, gameSession: { ...gameSession, state: toPlayerVisibleGameState(gameSession.state) } });
   } catch (error) {
     const code = error instanceof Error ? error.message : 'SESSION_CREATE_FAILED';
     const status = code === 'SCENARIO_NOT_CONFIGURED' || code === 'SAVE_LIMIT_REACHED' || code === 'SAVE_REPLACE_FAILED' ? 409 : 503;

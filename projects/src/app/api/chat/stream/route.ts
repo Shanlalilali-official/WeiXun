@@ -1,13 +1,14 @@
 import { NextRequest } from 'next/server';
 import { streamLLM, type ChatMessage } from '@/lib/ai/client';
 import { CUSTOMER_CONTEXT, CUSTOMER_PROMPT, type CustomerPromptContext } from '@/lib/ai/prompts/customer';
-import { decideOnlineContact, evaluateNpcTurn } from '@/lib/ai/npc-evaluation';
+import { evaluateNpcTurn } from '@/lib/ai/npc-evaluation';
 import { authGuard } from '@/lib/auth/guard';
 import { npcChatRequestSchema } from '@/lib/contracts/ai';
 import { getProjectOneNpc, type ContactChannel } from '@/lib/game/project-one';
 import {
   commitGameCommand,
   appendGameEvent,
+  appendCompetitorClaim,
   deliverPendingNpcHandoffs,
   getCommittedGameCommand,
   getNpcConversation,
@@ -16,6 +17,7 @@ import {
 } from '@/lib/game/repository';
 import {
   applyNpcEvaluation,
+  applyPreparationAttachments,
   connectNpc,
   consumeCommunicationTime,
   getGameOutcome,
@@ -24,8 +26,8 @@ import {
   recordMeetingTurn,
   recordNpcOutbound,
   setMeetingWorkTopicOpenedBy,
-  setNpcOnline,
   shouldNpcRespond,
+  toPlayerVisibleGameState,
   type GameRuntimeState,
 } from '@/lib/game/state';
 import { createServerProbabilitySeed } from '@/lib/game/server-random';
@@ -160,6 +162,7 @@ export async function POST(req: NextRequest) {
     intent,
     commandId,
     expectedVersion,
+    attachmentIds,
     usedPreparationIds,
   } = parsed.data;
 
@@ -176,13 +179,13 @@ export async function POST(req: NextRequest) {
     const deliveryStatus = replay.result.deliveryStatus === 'unanswered' ? 'unanswered' : 'replied';
     return immediateSse([
       ...(reply ? [{ type: 'delta', content: reply }] : []),
-      { type: 'result', state: replay.state, deliveryStatus, replayed: true },
+      { type: 'result', state: toPlayerVisibleGameState(replay.state), deliveryStatus, replayed: true },
       { type: 'done' },
     ]);
   }
 
   const { state: initialState } = gameSession;
-  if (initialState.version !== expectedVersion) return jsonResponse('STATE_VERSION_CONFLICT', 409, { state: initialState });
+  if (initialState.version !== expectedVersion) return jsonResponse('STATE_VERSION_CONFLICT', 409, { state: toPlayerVisibleGameState(initialState) });
   if (initialState.scenarioCode !== scenarioId) return jsonResponse('场景与对局不一致', 409);
   if (initialState.status !== 'playing') return jsonResponse('对局已经结束', 409);
   if (!initialState.unlockedNpcIds.includes(npcId)) return jsonResponse('NPC尚未解锁', 403);
@@ -201,13 +204,21 @@ export async function POST(req: NextRequest) {
     if (channel !== 'work_phone') return jsonResponse('CALL_CHANNEL_INVALID', 409);
     if (contact.status === 'known' && channel !== contact.initialChannel) return jsonResponse('CONTACT_CHANNEL_UNAVAILABLE', 409);
     if (contact.status !== 'known' && contact.status !== 'online' && channel !== contact.initialChannel) return jsonResponse('CONTACT_CHANNEL_UNAVAILABLE', 409);
-  } else if (intent === 'request_online') {
-    if (contact.status !== 'connected') return jsonResponse('NPC_NOT_CONNECTED', 409);
-    if (contact.onlineRequestedRound === initialState.currentRound) return jsonResponse('ONLINE_CONTACT_ALREADY_REQUESTED', 409);
   } else if (channel === 'offline') {
     if (!meeting || meeting.npcId !== npcId) return jsonResponse('MEETING_NOT_ACTIVE', 409);
   } else if (!(contact.status === 'connected' && channel === contact.initialChannel) && contact.status !== 'online') {
     return jsonResponse('ONLINE_CONTACT_REQUIRED', 409);
+  }
+
+  if (attachmentIds.length > 0) {
+    if (channel !== 'email') return jsonResponse('EMAIL_ATTACHMENT_CHANNEL_INVALID', 409);
+    try {
+      // Validate against the server snapshot before invoking the model. The
+      // same transition is applied only after a successful response commit.
+      applyPreparationAttachments(initialState, npcId, attachmentIds);
+    } catch (error) {
+      return jsonResponse(error instanceof Error ? error.message : 'EMAIL_ATTACHMENT_NOT_AVAILABLE', 409);
+    }
   }
 
   if (channel !== 'offline') {
@@ -231,49 +242,31 @@ export async function POST(req: NextRequest) {
     return jsonResponse('对话历史读取失败，本轮未调用AI', 503);
   }
 
-  if (intent === 'request_online') {
-    try {
-      const decision = await decideOnlineContact({
-        npcName: npc.name,
-        npcTitle: npc.title,
-        affinity: initialState.npcAffinity[npcId] ?? 35,
-        playerMessage: message,
-        hasPriorReply: recentHistory.some((item) => item.role === 'assistant'),
-      });
-      let changed = channel === 'offline' ? initialState : consumeCommunicationTime(initialState, channel);
-      changed = setNpcOnline(recordNpcOutbound(changed, npcId), npcId, decision.decision.accepted);
-      const committed = await commitGameCommand({
-        sessionId: gameSessionId,
-        commandId,
-        commandType: 'chat.request_online',
-        expectedVersion,
-        state: changed,
-        eventType: 'contact.online_decided',
-        eventPayload: { npcId, channel, accepted: decision.decision.accepted, source: decision.source },
-        result: {
-          reply: decision.decision.response,
-          deliveryStatus: 'replied',
-          onlineAccepted: decision.decision.accepted,
-        },
-        chatMessages: [
-          { round: initialState.currentRound, role: 'user', content: message, metadata: { npcId, intent, channel, deliveryStatus: 'sent' } },
-          { round: initialState.currentRound, role: 'assistant', content: decision.decision.response, metadata: { npcId, intent, channel, deliveryStatus: 'replied', onlineAccepted: decision.decision.accepted, decisionSource: decision.source } },
-        ],
-      });
-      return immediateSse([
-        { type: 'delta', content: decision.decision.response },
-        { type: 'result', state: committed.state, deliveryStatus: 'replied', onlineAccepted: decision.decision.accepted, emotion: 'thinking' },
-        { type: 'done' },
-      ]);
-    } catch (error) {
-      const code = error instanceof Error ? error.message : 'ONLINE_CONTACT_FAILED';
-      return jsonResponse(code, code === 'STATE_VERSION_CONFLICT' ? 409 : 503);
-    }
-  }
-
   if (intent === 'call_connect') {
     if (channel !== 'work_phone') return jsonResponse('CALL_CHANNEL_INVALID', 409);
     try {
+      const callChance = Math.max(35, Math.min(90, 58 + initialState.currentRound * 4 + ((initialState.npcAffinity[npcId] ?? 35) - 35) * 0.5));
+      const connected = shouldNpcRespond(createServerProbabilitySeed([gameSessionId, commandId, npcId, 'phone-connect']), callChance);
+      if (!connected) {
+        let changed = consumeCommunicationTime(initialState, channel);
+        changed = markNpcUnanswered(changed, npcId, channel);
+        const committed = await commitGameCommand({
+          sessionId: gameSessionId,
+          commandId,
+          commandType: 'chat.call_unanswered',
+          expectedVersion,
+          state: changed,
+          eventType: 'npc.call.unanswered',
+          eventPayload: { npcId, channel, callChance },
+          result: { deliveryStatus: 'unanswered', callConnected: false },
+          chatMessages: [{ round: initialState.currentRound, role: 'user', content: '[电话呼出]', metadata: { npcId, intent, channel, deliveryStatus: 'unanswered', hiddenFromTranscript: true } }],
+        });
+        return immediateSse([
+          { type: 'delta', content: '电话暂时无人接听。' },
+          { type: 'result', state: toPlayerVisibleGameState(committed.state), deliveryStatus: 'unanswered', callConnected: false, emotion: 'thinking' },
+          { type: 'done' },
+        ]);
+      }
       const reply = telephoneGreeting(npc.name, npc.title, `${gameSessionId}:${npcId}:${commandId}`);
       let changed = consumeCommunicationTime(initialState, channel);
       changed = connectNpc(recordNpcOutbound(changed, npcId), npcId);
@@ -293,7 +286,7 @@ export async function POST(req: NextRequest) {
       });
       return immediateSse([
         { type: 'delta', content: reply },
-        { type: 'result', state: committed.state, deliveryStatus: 'replied', callConnected: true },
+        { type: 'result', state: toPlayerVisibleGameState(committed.state), deliveryStatus: 'replied', callConnected: true },
         { type: 'done' },
       ]);
     } catch (error) {
@@ -320,6 +313,7 @@ export async function POST(req: NextRequest) {
     try {
       let changed = channel === 'offline' ? initialState : consumeCommunicationTime(initialState, channel);
       changed = markNpcUnanswered(changed, npcId, channel === 'offline' ? undefined : channel);
+      changed = applyPreparationAttachments(changed, npcId, attachmentIds);
       const committed = await commitGameCommand({
         sessionId: gameSessionId,
         commandId,
@@ -328,16 +322,16 @@ export async function POST(req: NextRequest) {
         state: changed,
         eventType: 'npc.message.unanswered',
         eventPayload: { npcId, channel, intent, responseChance },
-        result: { deliveryStatus: 'unanswered', channel },
+        result: { deliveryStatus: 'unanswered', channel, attachmentIds },
         chatMessages: [{
           round: initialState.currentRound,
           role: 'user',
           content: message,
-          metadata: { npcId, intent, channel, deliveryStatus: 'unanswered' },
+          metadata: { npcId, intent, channel, deliveryStatus: 'unanswered', attachmentIds },
         }],
       });
       return immediateSse([
-        { type: 'result', state: committed.state, deliveryStatus: 'unanswered', channel },
+        { type: 'result', state: toPlayerVisibleGameState(committed.state), deliveryStatus: 'unanswered', channel },
         { type: 'done' },
       ]);
     } catch (error) {
@@ -350,9 +344,10 @@ export async function POST(req: NextRequest) {
   await deliverPendingNpcHandoffs(gameSessionId, initialState.currentRound).catch(() => undefined);
   const inbox = await getNpcInbox(gameSessionId, npcId).catch(() => []);
   const attitude = initialState.npcAttitudes[npcId];
+  const requestedPreparationIds = new Set([...usedPreparationIds, ...attachmentIds]);
   const relevantPreparations = initialState.preparations.filter((item) =>
     item.npcId === npcId
-    && (usedPreparationIds.includes(item.id) || meeting?.usedPreparationIds.includes(item.id)));
+    && (requestedPreparationIds.has(item.id) || meeting?.usedPreparationIds.includes(item.id)));
   // Meeting context is authoritative server state. A client cannot label an
   // online message as informal/formal to influence the NPC or score evaluator.
   const meetingType = meeting?.npcId === npcId ? ({
@@ -367,6 +362,8 @@ export async function POST(req: NextRequest) {
     gameSessionId,
     scenarioId,
     npc,
+    competitorPosition: initialState.competitorState.position,
+    playerKnownPersonalInfo: initialState.knownPersonalInfo[npcId] ?? [],
     round: initialState.currentRound,
     maxRounds: initialState.maxRounds,
     phaseName: getPhaseName(initialState.currentRound),
@@ -435,6 +432,7 @@ export async function POST(req: NextRequest) {
         changedState = recordNpcOutbound(changedState, npcId);
         if (intent === 'outreach') changedState = connectNpc(changedState, npcId);
         changedState = applySelectedPreparations(changedState, npcId, usedPreparationIds);
+        changedState = applyPreparationAttachments(changedState, npcId, attachmentIds);
 
         if (channel === 'offline') {
           if (!changedState.activeMeeting) throw new Error('MEETING_NOT_ACTIVE');
@@ -483,6 +481,7 @@ export async function POST(req: NextRequest) {
           result: {
             reply,
             deliveryStatus: 'replied',
+            attachmentIds,
             emotion: evaluation.emotion,
             meetingEnded,
           },
@@ -491,7 +490,7 @@ export async function POST(req: NextRequest) {
               round: initialState.currentRound,
               role: 'user',
               content: message,
-              metadata: { npcId, intent, channel, deliveryStatus: 'sent', meetingId: meeting?.id ?? null, meetingTurn: meeting ? meeting.turnCount + 1 : null },
+              metadata: { npcId, intent, channel, deliveryStatus: 'sent', meetingId: meeting?.id ?? null, meetingTurn: meeting ? meeting.turnCount + 1 : null, attachmentIds },
             },
             {
               round: initialState.currentRound,
@@ -511,10 +510,13 @@ export async function POST(req: NextRequest) {
                 meetingId: meeting?.id ?? null,
                 meetingTurn: meeting ? meeting.turnCount + 1 : null,
                 usedPreparationIds,
+                attachmentIds,
               },
             },
           ],
         });
+
+        await appendCompetitorClaim(gameSessionId, committed.state.companyId, npcId, committed.state.currentRound, reply).catch(() => undefined);
 
         if (validHandoff) {
           await appendGameEvent(gameSessionId, initialState.currentRound, 'npc.handoff.promised', {
@@ -532,7 +534,7 @@ export async function POST(req: NextRequest) {
         }
         emit({
           type: 'result',
-          state: committed.state,
+          state: toPlayerVisibleGameState(committed.state),
           deliveryStatus: 'replied',
           meetingEnded,
           emotion: evaluation.emotion,

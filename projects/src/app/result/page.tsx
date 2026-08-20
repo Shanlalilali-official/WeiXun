@@ -315,8 +315,6 @@ function ResultInner() {
   const cumulativeTime = firstNumber(root, ['cumulativeTimeMinutes', 'totalInvestedMinutes']) ?? 0;
   const cumulativeSpent = firstNumber(root, ['cumulativeSpentPoints', 'totalActionPointsSpent']) ?? 0;
   const completeHybridData = outcome.publicValueScore !== undefined && outcome.personalBenefitScore !== undefined && outcome.decisionChainSupport !== undefined;
-  const deterministicOutcome = getGameOutcome(state);
-  const competitorScore = deterministicOutcome.competitorScore;
   const decisionReplay = attitudes.map((attitude) => {
     const npc = getProjectOneNpc(attitude.npcId);
     const support = attitude.support ?? 0;
@@ -367,9 +365,8 @@ function ResultInner() {
 
         <section className="mt-6 rounded-2xl border border-border bg-card p-6 shadow-sm card-elevated">
           <div className="flex items-center gap-2"><Swords className="h-5 w-5 text-red-600" /><h2 className="text-base font-bold">竞品最终对比</h2></div>
-          <p className="mt-1 text-xs text-muted-foreground">对局中只显示模糊态势；结束后公开双方结算分和竞品动作对决策链的影响。</p>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2"><ComparisonScore label="我方" value={finalScore} winner={finalScore >= competitorScore} tone="blue" /><ComparisonScore label={state.competitorState?.name ?? 'ABC竞品'} value={competitorScore} winner={competitorScore > finalScore} tone="red" /></div>
-          <div className="mt-5 space-y-2">{state.competitorState?.actions.length ? state.competitorState.actions.map((action) => <div key={action.id} className="flex items-start gap-3 rounded-xl border border-border p-3 text-xs"><span className="rounded-full bg-red-50 px-2 py-1 font-semibold text-red-700">第{action.round}阶段</span><div className="min-w-0 flex-1"><p className="leading-5 text-slate-700">{action.summary}</p><div className={`mt-1 text-[10px] ${action.mitigated ? 'text-emerald-700' : 'text-amber-700'}`}>{action.mitigated ? '我方前置行动已部分对冲' : '我方未及时对冲'}</div></div></div>) : <EmptyReport text="本局没有可展示的竞品动作。" />}</div>
+          <p className="mt-1 text-xs text-muted-foreground">竞品过程分属于后台推演依据，不向玩家公开。以下只说明客户决策中可被行为证据支持的竞争影响。</p>
+          <div className="mt-4 rounded-xl border border-border bg-surface-container p-4 text-sm leading-6 text-slate-700">{isWin ? '我方在关键人物支持、客户价值证据或履约表现上形成了更有效的综合优势。' : '客户最终更倾向竞品；请结合下方决策回放检查未核实的信息、未回应的异议和缺失的关键人支持。'}</div>
         </section>
 
         <section className="mt-6 rounded-2xl border border-border bg-card p-6 shadow-sm card-elevated">

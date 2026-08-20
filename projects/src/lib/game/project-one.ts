@@ -1,10 +1,7 @@
 export const PROJECT_ONE_CODE = 'project-1';
 export const PROJECT_ONE_MAX_ROUNDS = 5;
 export const PROJECT_ONE_INITIAL_ACTION_POINTS = 28;
-/**
- * Legacy compatibility only. Game time is no longer derived from wall-clock
- * milliseconds; a phase is one simulated working day.
- */
+/** Legacy time constants are retained only to read old saves. */
 export const PROJECT_ONE_PHASE_DURATION_MS = 0;
 export const PROJECT_ONE_DAY_START_MINUTE = 9 * 60;
 export const PROJECT_ONE_STANDARD_DAY_MINUTES = 8 * 60;
@@ -22,12 +19,21 @@ export const PROJECT_ONE_PHASE_NAMES = [
   '决策冲刺',
 ] as const;
 
-export type ContactChannel = 'email' | 'work_phone' | 'online' | 'offline';
+export type ContactChannel = 'email' | 'work_phone' | 'wechat' | 'online' | 'offline';
 
 export const PROJECT_ONE_COMMUNICATION_MINUTES = {
-  online: 5,
+  wechat: 0,
+  online: 0,
   email: 10,
   work_phone: 15,
+  offline: 0,
+} as const satisfies Record<ContactChannel, number>;
+
+export const PROJECT_ONE_COMMUNICATION_POINTS = {
+  wechat: 1,
+  online: 1,
+  email: 1,
+  work_phone: 1,
   offline: 0,
 } as const satisfies Record<ContactChannel, number>;
 
@@ -38,23 +44,26 @@ export const PROJECT_ONE_VISIT_RULES = {
 } as const;
 
 export const PROJECT_ONE_PREPARATION_RULES = {
-  agenda: { timeMinutes: 10, costPoints: 1, reusable: true },
-  ppt: { timeMinutes: 30, costPoints: 4, reusable: true },
-  materials: { timeMinutes: 15, costPoints: 2, reusable: true },
-  courtesy_gift: { timeMinutes: 10, costPoints: 3, reusable: false },
-  boundary_gift: { timeMinutes: 10, costPoints: 8, reusable: false },
+  visit_preparation: { timeMinutes: 0, costPoints: 3, reusable: true },
+  /** Legacy save compatibility; new clients cannot create these types. */
+  agenda: { timeMinutes: 0, costPoints: 1, reusable: true },
+  ppt: { timeMinutes: 0, costPoints: 4, reusable: true },
+  materials: { timeMinutes: 0, costPoints: 2, reusable: true },
+  courtesy_gift: { timeMinutes: 0, costPoints: 3, reusable: false },
+  boundary_gift: { timeMinutes: 0, costPoints: 8, reusable: false },
 } as const;
 
 export const PROJECT_ONE_PREPARATION_TITLES: Record<keyof typeof PROJECT_ONE_PREPARATION_RULES, string> = {
-  agenda: '明确拜访议程',
-  ppt: '制作方案 PPT',
-  materials: '准备案例 / 技术 / 报价材料',
-  courtesy_gift: '准备合规伴手礼',
-  boundary_gift: '准备高波动边界礼品',
+  visit_preparation: '拜访前准备',
+  agenda: '历史准备记录',
+  ppt: '历史方案材料',
+  materials: '历史项目材料',
+  courtesy_gift: '历史合规伴手礼',
+  boundary_gift: '历史边界礼品',
 };
 
 export const PROJECT_ONE_PUBLIC_RESEARCH_RULE = {
-  timeMinutes: 20,
+  timeMinutes: 0,
   costPoints: 2,
 } as const;
 
@@ -124,6 +133,17 @@ export const PROJECT_ONE_COMPETITORS = [
     project_id: 1,
   },
 ];
+
+/** Private opening knowledge is deliberately asymmetric by company. */
+export const PROJECT_ONE_COMPANY_PERSONAL_INFO: Record<string, Record<string, string[]>> = {
+  'player-company': {
+    'p1-frontline-wang-hao': ['我方曾在公开交流活动中与王浩有过短暂接触，但不了解其项目态度。'],
+  },
+  'abc-company': {
+    'p1-procurement-liu-kai': ['ABC曾参与刘凯经手的另一项供应商材料核验，熟悉其对留痕和验收边界的重视。'],
+    'p1-minister-chen-jianguo': ['ABC通过既有客情知道陈建国近期更关注可量化的部门整体成果。'],
+  },
+};
 
 /** 来源：项目内“各项目人物表.docx”的最新导入版本。 */
 export const PROJECT_ONE_NPCS: ProjectOneNpc[] = [

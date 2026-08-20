@@ -9,7 +9,7 @@ import {
   getOwnedGameSession,
 } from '@/lib/game/repository';
 import { getProjectOneNpc } from '@/lib/game/project-one';
-import { executeGameCommand, getPhaseName } from '@/lib/game/state';
+import { executeGameCommand, getPhaseName, toPlayerVisibleGameState } from '@/lib/game/state';
 import { createServerProbabilitySeed } from '@/lib/game/server-random';
 
 export const runtime = 'nodejs';
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     if (parsed.data.expectedVersion !== gameSession.state.version) {
       return NextResponse.json({
         error: 'STATE_VERSION_CONFLICT',
-        state: gameSession.state,
+        state: toPlayerVisibleGameState(gameSession.state),
       }, { status: 409 });
     }
 
@@ -105,7 +105,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       result: execution.result,
     });
     await deliverPendingNpcHandoffs(id, committed.state.currentRound).catch(() => undefined);
-    return NextResponse.json({ success: true, ...committed });
+    return NextResponse.json({ success: true, ...committed, state: toPlayerVisibleGameState(committed.state) });
   } catch (error) {
     const code = error instanceof Error ? error.message : 'GAME_COMMAND_FAILED';
     const status = code === 'STATE_VERSION_CONFLICT' || code === 'COMMAND_IN_PROGRESS' ? 409 : 400;

@@ -1,15 +1,39 @@
+import { randomBytes } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
+import { createServerClient } from '@/storage/database/supabase-client';
 
-// 延期后台功能（多人房间）：对应数据表尚未建模，先干净降级，避免向客户端泄漏内部错误。
+const DEFAULT_COMPANIES = [
+  { company_id: 'player-company', company_name: '我方公司', initial_personal_info: { 'p1-frontline-wang-hao': ['曾在公开交流活动中短暂接触。'] } },
+  { company_id: 'abc-company', company_name: 'ABC公司', initial_personal_info: { 'p1-procurement-liu-kai': ['熟悉其对采购留痕和验收边界的重视。'], 'p1-minister-chen-jianguo': ['知道其近期关注可量化的部门整体成果。'] } },
+];
+const COACH_ROLES = new Set(['trainer', 'enterprise_admin', 'platform_designer']);
+
 export async function GET(request: NextRequest) {
-  const g = authGuard(request);
-  if (!g.ok) return g.response;
-  return NextResponse.json({ error: '功能未实现' }, { status: 501 });
+  const guard = authGuard(request);
+  if (!guard.ok || !guard.session) return guard.response!;
+  if (!COACH_ROLES.has(guard.session.role)) return NextResponse.json({ error: '权限不足' }, { status: 403 });
+  const { data, error } = await createServerClient().from('multiplayer_rooms').select('*, multiplayer_company_slots(*)').order('created_at', { ascending: false }).limit(100);
+  if (error) return NextResponse.json({ error: 'ROOM_LIST_FAILED' }, { status: 503 });
+  return NextResponse.json({ data });
 }
 
 export async function POST(request: NextRequest) {
-  const g = authGuard(request);
-  if (!g.ok) return g.response;
-  return NextResponse.json({ error: '功能未实现' }, { status: 501 });
+  const guard = authGuard(request);
+  if (!guard.ok || !guard.session) return guard.response!;
+  if (!COACH_ROLES.has(guard.session.role)) return NextResponse.json({ error: '权限不足' }, { status: 403 });
+  const body = await request.json().catch(() => ({})) as Record<string, unknown>;
+  const duration = typeof body.stageDurationSeconds === 'number' && Number.isInteger(body.stageDurationSeconds) && body.stageDurationSeconds >= 60 ? body.stageDurationSeconds : null;
+  const companies = Array.isArray(body.companies) && body.companies.length >= 2
+    ? body.companies.slice(0, 8).map((item, index) => {
+      const row = item as Record<string, unknown>;
+      return { company_id: String(row.id || `company-${index + 1}`).slice(0, 64), company_name: String(row.name || `公司${index + 1}`).slice(0, 128), initial_personal_info: row.initialPersonalInfo ?? {} };
+    }) : DEFAULT_COMPANIES;
+  const roomCode = randomBytes(4).toString('hex').toUpperCase();
+  const supabase = createServerClient();
+  const { data: room, error } = await supabase.from('multiplayer_rooms').insert({ room_code: roomCode, scenario_code: 'project-1', host_user_id: guard.session.userId, stage_duration_seconds: duration }).select('*').single();
+  if (error || !room) return NextResponse.json({ error: 'ROOM_CREATE_FAILED' }, { status: 503 });
+  const { error: slotsError } = await supabase.from('multiplayer_company_slots').insert(companies.map((company) => ({ ...company, room_id: room.id })));
+  if (slotsError) return NextResponse.json({ error: 'ROOM_SLOT_CREATE_FAILED' }, { status: 503 });
+  return NextResponse.json({ data: { ...room, room_code: roomCode, companies } }, { status: 201 });
 }

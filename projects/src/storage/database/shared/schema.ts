@@ -1,4 +1,4 @@
-import { pgTable, serial, timestamp, index, unique, uniqueIndex, pgPolicy, uuid, varchar, integer, text, jsonb, foreignKey, boolean } from "drizzle-orm/pg-core"
+import { check, pgTable, serial, timestamp, index, unique, uniqueIndex, pgPolicy, uuid, varchar, integer, text, jsonb, foreignKey, boolean } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 
@@ -6,7 +6,7 @@ import { sql } from "drizzle-orm"
 export const healthCheck = pgTable("health_check", {
 	id: serial().primaryKey().notNull(),
 	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow(),
-});
+}).enableRLS();
 
 export const decisionMakers = pgTable("decision_makers", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
@@ -31,7 +31,7 @@ export const decisionMakers = pgTable("decision_makers", {
 	index("decision_makers_difficulty_idx").using("btree", table.difficultyMin.asc().nullsLast().op("int4_ops")),
 	index("decision_makers_faction_idx").using("btree", table.faction.asc().nullsLast().op("text_ops")),
 	unique("decision_makers_code_unique").on(table.code),
-	pgPolicy("decision_makers_allow_all", { as: "permissive", for: "all", to: ["public"], using: sql`true`, withCheck: sql`true`  }),
+	pgPolicy("decision_makers_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 export const gameSessions = pgTable("game_sessions", {
@@ -65,7 +65,7 @@ export const gameSessions = pgTable("game_sessions", {
 			foreignColumns: [projectScenarios.id],
 			name: "game_sessions_scenario_id_project_scenarios_id_fk"
 		}).onDelete("cascade"),
-	pgPolicy("game_sessions_allow_all", { as: "permissive", for: "all", to: ["public"], using: sql`true`, withCheck: sql`true`  }),
+	pgPolicy("game_sessions_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 export const projectScenarios = pgTable("project_scenarios", {
@@ -87,7 +87,7 @@ export const projectScenarios = pgTable("project_scenarios", {
 	index("project_scenarios_difficulty_idx").using("btree", table.difficulty.asc().nullsLast().op("int4_ops")),
 	index("project_scenarios_industry_idx").using("btree", table.industry.asc().nullsLast().op("text_ops")),
 	unique("project_scenarios_code_unique").on(table.code),
-	pgPolicy("project_scenarios_allow_all", { as: "permissive", for: "all", to: ["public"], using: sql`true`, withCheck: sql`true`  }),
+	pgPolicy("project_scenarios_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 export const affinityScores = pgTable("affinity_scores", {
@@ -111,7 +111,7 @@ export const affinityScores = pgTable("affinity_scores", {
 			foreignColumns: [decisionMakers.id],
 			name: "affinity_scores_decision_maker_id_decision_makers_id_fk"
 		}).onDelete("cascade"),
-	pgPolicy("affinity_scores_allow_all", { as: "permissive", for: "all", to: ["public"], using: sql`true`, withCheck: sql`true`  }),
+	pgPolicy("affinity_scores_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 export const productKnowledge = pgTable("product_knowledge", {
@@ -131,7 +131,7 @@ export const productKnowledge = pgTable("product_knowledge", {
 }, (table) => [
 	index("product_knowledge_category_idx").using("btree", table.category.asc().nullsLast().op("text_ops")),
 	index("product_knowledge_owner_idx").using("btree", table.ownerId.asc().nullsLast().op("text_ops")),
-	pgPolicy("product_knowledge_allow_all", { as: "permissive", for: "all", to: ["public"], using: sql`true`, withCheck: sql`true`  }),
+	pgPolicy("product_knowledge_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 export const chatMessages = pgTable("chat_messages", {
@@ -160,7 +160,7 @@ export const chatMessages = pgTable("chat_messages", {
 			foreignColumns: [decisionMakers.id],
 			name: "chat_messages_decision_maker_id_decision_makers_id_fk"
 		}).onDelete("set null"),
-	pgPolicy("chat_messages_allow_all", { as: "permissive", for: "all", to: ["public"], using: sql`true`, withCheck: sql`true`  }),
+	pgPolicy("chat_messages_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 export const gameRuntimeStates = pgTable("game_runtime_states", {
@@ -251,7 +251,7 @@ export const playerAbility = pgTable("player_ability", {
 }, (table) => [
 	index("player_ability_user_idx").using("btree", table.userId.asc().nullsLast().op("text_ops")),
 	unique("player_ability_user_id_unique").on(table.userId),
-	pgPolicy("player_ability_allow_all", { as: "permissive", for: "all", to: ["public"], using: sql`true`, withCheck: sql`true`  }),
+	pgPolicy("player_ability_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 // =====================================================
@@ -270,7 +270,7 @@ export const industries = pgTable("industries", {
 	isActive: boolean("is_active").default(true).notNull(),
 }, (table) => [
 	unique("industries_code_unique").on(table.code),
-	pgPolicy("industries_allow_all", { as: "permissive", for: "all", to: ["public"], using: sql`true`, withCheck: sql`true` }),
+	pgPolicy("industries_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 // 2) 产品分类表
@@ -286,7 +286,7 @@ export const productCategories = pgTable("product_categories", {
 }, (table) => [
 	unique("product_categories_code_unique").on(table.code),
 	index("product_categories_parent_idx").using("btree", table.parentCode.asc().nullsLast().op("text_ops")),
-	pgPolicy("product_categories_allow_all", { as: "permissive", for: "all", to: ["public"], using: sql`true`, withCheck: sql`true` }),
+	pgPolicy("product_categories_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 // 3) 标准场景案例表
@@ -311,7 +311,7 @@ export const scenarioTemplates = pgTable("scenario_templates", {
 }, (table) => [
 	unique("scenario_templates_code_unique").on(table.code),
 	index("scenario_templates_industry_idx").using("btree", table.industryCode.asc().nullsLast().op("text_ops")),
-	pgPolicy("scenario_templates_allow_all", { as: "permissive", for: "all", to: ["public"], using: sql`true`, withCheck: sql`true` }),
+	pgPolicy("scenario_templates_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 // 4) 企业信息表
@@ -334,7 +334,7 @@ export const enterprises = pgTable("enterprises", {
 }, (table) => [
 	unique("enterprises_code_unique").on(table.code),
 	index("enterprises_admin_idx").using("btree", table.adminUserId.asc().nullsLast().op("text_ops")),
-	pgPolicy("enterprises_allow_all", { as: "permissive", for: "all", to: ["public"], using: sql`true`, withCheck: sql`true` }),
+	pgPolicy("enterprises_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 // 5) 邀请码记录表
@@ -359,7 +359,7 @@ export const inviteCodes = pgTable("invite_codes", {
 		foreignColumns: [enterprises.id],
 		name: "invite_codes_enterprise_id_enterprises_id_fk"
 	}).onDelete("cascade"),
-	pgPolicy("invite_codes_allow_all", { as: "permissive", for: "all", to: ["public"], using: sql`true`, withCheck: sql`true` }),
+	pgPolicy("invite_codes_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
 // 6) 用户身份表
@@ -390,5 +390,73 @@ export const userIdentities = pgTable("user_identities", {
 		foreignColumns: [enterprises.id],
 		name: "user_identities_enterprise_id_enterprises_id_fk"
 	}).onDelete("set null"),
-	pgPolicy("user_identities_allow_all", { as: "permissive", for: "all", to: ["public"], using: sql`true`, withCheck: sql`true` }),
+	pgPolicy("user_identities_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
+]);
+
+// Multiplayer: one shared customer world with one player-owned runtime per company slot.
+export const multiplayerRooms = pgTable("multiplayer_rooms", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	roomCode: varchar("room_code", { length: 12 }).notNull(),
+	scenarioCode: varchar("scenario_code", { length: 32 }).default('project-1').notNull(),
+	hostUserId: varchar("host_user_id", { length: 64 }).notNull(),
+	status: varchar({ length: 24 }).default('waiting').notNull(),
+	currentStage: integer("current_stage").default(1).notNull(),
+	maxStages: integer("max_stages").default(5).notNull(),
+	stageDurationSeconds: integer("stage_duration_seconds"),
+	stageDeadlineAt: timestamp("stage_deadline_at", { withTimezone: true, mode: 'string' }),
+	sharedCustomerState: jsonb("shared_customer_state").default({}).notNull(),
+	stageVersion: integer("stage_version").default(1).notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	unique("multiplayer_rooms_code_unique").on(table.roomCode),
+	index("multiplayer_rooms_host_idx").on(table.hostUserId),
+	check("multiplayer_rooms_status_check", sql`${table.status} in ('waiting', 'running', 'finished', 'cancelled')`),
+	check("multiplayer_rooms_stage_check", sql`${table.currentStage} between 1 and 5`),
+	check("multiplayer_rooms_max_stages_check", sql`${table.maxStages} = 5`),
+	check("multiplayer_rooms_duration_check", sql`${table.stageDurationSeconds} is null or ${table.stageDurationSeconds} >= 60`),
+	check("multiplayer_rooms_version_check", sql`${table.stageVersion} >= 1`),
+	pgPolicy("multiplayer_rooms_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
+]);
+
+export const multiplayerCompanySlots = pgTable("multiplayer_company_slots", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	roomId: uuid("room_id").notNull(),
+	companyId: varchar("company_id", { length: 64 }).notNull(),
+	companyName: varchar("company_name", { length: 128 }).notNull(),
+	playerUserId: varchar("player_user_id", { length: 64 }),
+	gameSessionId: uuid("game_session_id"),
+	hiddenProgressScore: integer("hidden_progress_score").default(50).notNull(),
+	readyStage: integer("ready_stage"),
+	readyByAdmin: boolean("ready_by_admin").default(false).notNull(),
+	connected: boolean().default(true).notNull(),
+	initialPersonalInfo: jsonb("initial_personal_info").default({}).notNull(),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	unique("multiplayer_company_slots_room_company_unique").on(table.roomId, table.companyId),
+	uniqueIndex("multiplayer_company_slots_room_player_unique").on(table.roomId, table.playerUserId).where(sql`${table.playerUserId} is not null`),
+	check("multiplayer_company_slots_hidden_progress_check", sql`${table.hiddenProgressScore} between 0 and 100`),
+	check("multiplayer_company_slots_ready_stage_check", sql`${table.readyStage} is null or ${table.readyStage} between 1 and 5`),
+	foreignKey({ columns: [table.roomId], foreignColumns: [multiplayerRooms.id], name: "multiplayer_company_slots_room_fk" }).onDelete("cascade"),
+	foreignKey({ columns: [table.gameSessionId], foreignColumns: [gameSessions.id], name: "multiplayer_company_slots_session_fk" }).onDelete("set null"),
+	pgPolicy("multiplayer_company_slots_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
+]);
+
+export const competitorClaims = pgTable("competitor_claims", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	roomId: uuid("room_id"),
+	sessionId: uuid("session_id").notNull(),
+	companyId: varchar("company_id", { length: 64 }).notNull(),
+	npcKey: varchar("npc_key", { length: 128 }).notNull(),
+	stage: integer().notNull(),
+	statement: text().notNull(),
+	truthStatus: varchar("truth_status", { length: 24 }).default('unverified').notNull(),
+	createdAt: timestamp("created_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("competitor_claims_session_idx").on(table.sessionId),
+	check("competitor_claims_stage_check", sql`${table.stage} between 1 and 5`),
+	check("competitor_claims_truth_status_check", sql`${table.truthStatus} in ('unverified', 'corroborated', 'contradicted', 'false')`),
+	foreignKey({ columns: [table.roomId], foreignColumns: [multiplayerRooms.id], name: "competitor_claims_room_fk" }).onDelete("cascade"),
+	foreignKey({ columns: [table.sessionId], foreignColumns: [gameSessions.id], name: "competitor_claims_session_fk" }).onDelete("cascade"),
+	pgPolicy("competitor_claims_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);

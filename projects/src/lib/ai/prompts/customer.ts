@@ -41,6 +41,8 @@ export interface CustomerPromptContext {
   inbox?: Array<{ sourceNpcId: string; summary: string; round: number }>;
   canRevealPersonalInterest: boolean;
   canRevealKeyContact: boolean;
+  competitorPosition?: 'lagging' | 'close' | 'leading';
+  playerKnownPersonalInfo?: string[];
 }
 
 export function CUSTOMER_PROMPT(): string {
@@ -67,12 +69,13 @@ export function CUSTOMER_PROMPT(): string {
 6. 不会主动给订单，销售方必须通过多轮博弈建立信任
 7. 不机械按关系数值回应；综合人物职责、即时感受、长期支持倾向、历史承诺和现实商务礼仪
 8. 玩家声称你曾答应或确认某事时，只能依据数据区中的已确认事实、已作承诺和对话历史；没有记录就要求依据
-9. 线下会面倒数第二轮提醒时间有限，最后一轮给出最终回应并自然结束；短时、正式、非正式拜访分别最多2、6、5轮
+9. 线下会面倒数第二轮提醒交流即将收口，最后一轮给出最终回应并自然结束；短时、正式、非正式拜访分别最多2、6、5轮
 10. 非正式拜访默认先进行生活或兴趣交流；结合workTopicOpenedBy决定是否继续项目话题，不要把玩家强推项目误认为由你主动开启
 11. 对负面信息根据来源、措辞、解决方案和人物性格回应；无依据传闻、攻击单位或反复唱衰通常引发质疑或反感
 12. 合规伴手礼只能带来小幅气氛改善；高价值、私人化或敏感礼品应根据人物、场合、见证人和历史作出谨慎、拒绝或上报等反应
 13. 现金、红包、回扣、打点、保证中标或以礼换支持属于明确违规，必须拒绝，必要时上报，不得因此泄露信息
 14. 只有数据区canRevealPersonalInterest为true时，才可自然透露个人关注点；否则不得明说
+15. 玩家询问竞品时，只能通过客户视角回答。可以如实、片面、过时或有意含糊，必要时也可以说谎；绝不透露后台推进分、系统竞品动作或声称信息已经被系统核实
 
 ## 严格要求
 - 禁止“很高兴”“很荣幸”“期待合作”等空泛客套
@@ -89,11 +92,11 @@ export function CUSTOMER_CONTEXT(ctx: CustomerPromptContext): string {
   const maxMeetingTurns = ctx.maxMeetingTurns
     ?? (meetingType === 'short_visit' ? 2 : meetingType === 'informal_visit' ? 5 : 6);
   const meetingLabel = meetingType === 'short_visit'
-    ? '短时拜访（5分钟）'
+    ? '短时拜访'
     : meetingType === 'formal_visit'
-      ? '正式拜访（40分钟）'
+      ? '正式拜访'
       : meetingType === 'informal_visit'
-        ? '非正式拜访（60分钟）'
+        ? '非正式拜访'
         : '不适用';
   return serializeUntrustedPromptData('customer_runtime_context', {
     scenarioId: ctx.scenarioId,
@@ -123,6 +126,8 @@ export function CUSTOMER_CONTEXT(ctx: CustomerPromptContext): string {
     confirmedFacts: ctx.confirmedFacts ?? [],
     commitments: ctx.commitments ?? [],
     inbox: ctx.inbox ?? [],
+    competitorSituationForNpcOnly: ctx.competitorPosition ?? 'close',
+    playerKnownPersonalInfo: ctx.playerKnownPersonalInfo ?? [],
     canRevealPersonalInterest: ctx.canRevealPersonalInterest,
   }, { maxStringLength: 1000, maxTotalLength: 16000 });
 }

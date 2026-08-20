@@ -4,6 +4,8 @@ import {
   PROJECT_ONE_ACTION_POINT_CAP,
   PROJECT_ONE_CODE,
   PROJECT_ONE_COMMUNICATION_MINUTES,
+  PROJECT_ONE_COMMUNICATION_POINTS,
+  PROJECT_ONE_COMPANY_PERSONAL_INFO,
   PROJECT_ONE_DAY_START_MINUTE,
   PROJECT_ONE_EVENING_END_MINUTE,
   PROJECT_ONE_INITIAL_ACTION_POINTS,
@@ -48,6 +50,27 @@ export type AppointmentStatus =
   | 'completed';
 export type PreparationType = keyof typeof PROJECT_ONE_PREPARATION_RULES;
 
+export const PREPARATION_SEMANTIC_TAGS = [
+  'target_person',
+  'customer_problem',
+  'solution_or_dimension',
+  'evidence',
+  'next_step',
+] as const;
+
+export type PreparationSemanticTag = (typeof PREPARATION_SEMANTIC_TAGS)[number];
+
+export interface PreparationBrief {
+  /** Canonical target from the server-side npcId, optionally plus the player's audience note. */
+  audience: string;
+  problem: string;
+  dimensions: string;
+  evidence: string;
+  nextStep: string;
+  /** Deterministic labels found in the submitted free text. */
+  semanticTags?: PreparationSemanticTag[];
+}
+
 export interface ConversationMemory {
   summary: string;
   summarizedMessageCount: number;
@@ -65,6 +88,8 @@ export interface NpcContactState {
   lastContactRound: number | null;
   lastContactMinute: number | null;
   channelCooldownUntil: Partial<Record<CommunicationChannel, number>>;
+  wechatStatus: 'not_requested' | 'pending' | 'accepted' | 'rejected' | 'later';
+  lastPhoneOutcome: 'connected' | 'unanswered' | 'declined' | 'call_later' | null;
 }
 
 export interface AttitudeHistoryItem {
@@ -103,6 +128,7 @@ export interface GameAppointment {
   invitationText?: string;
   extractedFields?: string[];
   defaultedFields?: string[];
+  attachmentIds?: string[];
 }
 
 export interface GamePreparation {
@@ -112,13 +138,7 @@ export interface GamePreparation {
   type: PreparationType;
   title: string;
   content: string;
-  brief?: {
-    audience: string;
-    problem: string;
-    dimensions: string;
-    evidence: string;
-    nextStep: string;
-  };
+  brief?: PreparationBrief;
   status: 'ready' | 'used';
   costPoints: number;
   timeMinutes: number;
@@ -245,6 +265,14 @@ export interface CompetitorRuntimeState {
   actions: CompetitorActionRecord[];
 }
 
+export interface CompetitorClaimRecord {
+  id: string;
+  npcId: string;
+  stage: number;
+  statement: string;
+  truthStatus: 'unverified' | 'corroborated' | 'contradicted' | 'false';
+}
+
 export interface GamePublicResearchRecord {
   npcId: string;
   facts: string[];
@@ -252,7 +280,6 @@ export interface GamePublicResearchRecord {
   sourceNote: string;
   completedRound: number;
   completedMinute: number;
-  timeMinutes: number;
   costPoints: number;
 }
 
@@ -261,6 +288,12 @@ export interface GameRuntimeState {
   progressionMultiplier: number;
   currentRound: number;
   maxRounds: number;
+  /** Authoritative names for the five-stage rules; round fields are save aliases. */
+  currentStage: number;
+  maxStages: number;
+  gameMode: 'solo' | 'multiplayer';
+  companyId: string;
+  knownPersonalInfo: Record<string, string[]>;
   actionPoints: number;
   status: 'playing' | 'won' | 'lost';
   dimensions: GameDimensions;
@@ -284,6 +317,7 @@ export interface GameRuntimeState {
   complianceRisks: ComplianceRiskEvent[];
   publicResearch: Record<string, GamePublicResearchRecord>;
   competitorState: CompetitorRuntimeState;
+  competitorClaims: CompetitorClaimRecord[];
   submissionReady: boolean;
   processedCommandIds: string[];
 
@@ -418,6 +452,8 @@ function defaultContact(npcId: string): NpcContactState {
     lastContactRound: null,
     lastContactMinute: null,
     channelCooldownUntil: {},
+    wechatStatus: 'not_requested',
+    lastPhoneOutcome: null,
   };
 }
 
@@ -457,6 +493,8 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
       lastContactRound: existing?.lastContactRound ?? null,
       lastContactMinute: existing?.lastContactMinute ?? null,
       channelCooldownUntil: existing?.channelCooldownUntil ?? {},
+      wechatStatus: existing?.wechatStatus ?? (existing?.status === 'online' ? 'accepted' : 'not_requested'),
+      lastPhoneOutcome: existing?.lastPhoneOutcome ?? null,
     } satisfies NpcContactState];
   }));
   const npcAttitudes = Object.fromEntries(PROJECT_ONE_NPCS.map((npc) => {
@@ -475,11 +513,18 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
   return {
     ...state,
     progressionMultiplier: state.progressionMultiplier ?? 1,
+    currentRound: state.currentStage ?? state.currentRound,
+    maxRounds: state.maxStages ?? state.maxRounds,
+    currentStage: state.currentStage ?? state.currentRound,
+    maxStages: state.maxStages ?? state.maxRounds,
+    gameMode: state.gameMode ?? 'solo',
+    companyId: state.companyId ?? 'player-company',
+    knownPersonalInfo: state.knownPersonalInfo ?? PROJECT_ONE_COMPANY_PERSONAL_INFO[state.companyId ?? 'player-company'] ?? {},
     unlockedNpcIds: deriveUnlockedNpcIds(state.unlockedClues ?? []),
-    simulatedClockMinutes: clamp(state.simulatedClockMinutes ?? PROJECT_ONE_DAY_START_MINUTE, PROJECT_ONE_DAY_START_MINUTE, PROJECT_ONE_EVENING_END_MINUTE),
-    dayAvailableMinutes: clamp(state.dayAvailableMinutes ?? PROJECT_ONE_STANDARD_DAY_MINUTES, 0, PROJECT_ONE_STANDARD_DAY_MINUTES),
-    overtimeMinutes: clamp(state.overtimeMinutes ?? 0, 0, PROJECT_ONE_OVERTIME_END_MINUTE - PROJECT_ONE_WORK_END_MINUTE),
-    cumulativeTimeMinutes: Math.max(0, state.cumulativeTimeMinutes ?? 0),
+    simulatedClockMinutes: PROJECT_ONE_DAY_START_MINUTE,
+    dayAvailableMinutes: 0,
+    overtimeMinutes: 0,
+    cumulativeTimeMinutes: 0,
     cumulativeSpentPoints: Math.max(0, state.cumulativeSpentPoints ?? 0),
     appointments: state.appointments ?? [],
     preparations: state.preparations ?? [],
@@ -489,8 +534,12 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
     npcAffinity,
     outcomeEvidence: state.outcomeEvidence ?? { publicValue: [], personalBenefit: [] },
     complianceRisks: state.complianceRisks ?? [],
-    publicResearch: state.publicResearch ?? {},
+    // Public search results are a one-command view, never a contact-card
+    // field. Drop any legacy persisted map while keeping the field in the
+    // runtime shape for old clients and migrations.
+    publicResearch: {},
     competitorState: normalizeCompetitorState(state.competitorState),
+    competitorClaims: state.competitorClaims ?? [],
     submissionReady: state.submissionReady ?? false,
     processedCommandIds: state.processedCommandIds ?? [],
     phaseStartedAt: LEGACY_SIMULATION_MARKER,
@@ -554,6 +603,92 @@ export function createProjectOneState(progressionMultiplier = 1, _legacyNow?: nu
     version: 1,
   };
   return normalizeProjectOneState(initial);
+}
+
+/**
+ * New saves have one free-text preparation type. These helpers deliberately
+ * keep the old preparation types readable for migration, while making it
+ * impossible for an old material or gift row to become a new interaction.
+ */
+export function isCurrentPreparationType(type: string): type is 'visit_preparation' {
+  return type === 'visit_preparation';
+}
+
+function cleanPreparationText(value: string, maxLength = 500): string {
+  return value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+function labeledPreparationValue(text: string, labels: string[]): string | null {
+  const pattern = new RegExp(`(?:${labels.join('|')})\\s*[：:]\\s*([^\\n。；;]+)`, 'i');
+  const match = text.match(pattern);
+  return match?.[1] ? cleanPreparationText(match[1]) : null;
+}
+
+function preparationSegments(text: string): string[] {
+  return text
+    .split(/[\n。；;！!？?]+/)
+    .map((segment) => cleanPreparationText(segment))
+    .filter(Boolean);
+}
+
+function findPreparationSegment(segments: string[], patterns: RegExp[]): string | null {
+  return segments.find((segment) => patterns.some((pattern) => pattern.test(segment))) ?? null;
+}
+
+/**
+ * Extracts the five preparation dimensions using deterministic labels and
+ * keyword fallbacks. This is intentionally independent of the AI provider;
+ * the resulting brief is only a structured explanation of the player's own
+ * text and is never treated as an NPC fact.
+ */
+export function extractPreparationBrief(content: string, npcId: string): PreparationBrief {
+  const text = cleanPreparationText(content, 4000);
+  const segments = preparationSegments(content);
+  const npc = getProjectOneNpc(npcId);
+  const explicitAudience = labeledPreparationValue(text, ['目标人物', '目标对象', '对象', '受众', '给谁看', '面向']);
+  const audienceBase = npc ? `${npc.name}（${npc.title}）` : npcId;
+  const audience = explicitAudience && !explicitAudience.includes(npc?.name ?? npcId)
+    ? `${audienceBase}；玩家补充对象：${explicitAudience}`
+    : audienceBase;
+
+  const explicitProblem = labeledPreparationValue(text, ['客户问题', '问题', '痛点', '现状', '风险', '要解决']);
+  const problemSource = explicitProblem ?? findPreparationSegment(segments, [
+    /问题|痛点|现状|风险|困难|瓶颈|负担|顾虑|重复录入|确认成本/,
+  ]);
+  const problem = problemSource ?? '在会面中核实客户当前问题、风险与优先级';
+
+  const explicitDimensions = labeledPreparationValue(text, ['解决方案', '方案', '维度', '重点', '方向', '措施']);
+  const dimensionsSource = explicitDimensions ?? findPreparationSegment(segments, [
+    /方案|维度|重点|方向|措施|价值|流程|实施|交付|技术|成本|报价|服务|系统/,
+  ]);
+  const dimensions = dimensionsSource ?? '围绕客户问题确认解决方案、实施与价值维度';
+
+  const explicitEvidence = labeledPreparationValue(text, ['证据', '依据', '案例', '数据', '材料', '报告', '证明', '验证', '测算']);
+  const evidenceSource = explicitEvidence ?? findPreparationSegment(segments, [
+    /证据|依据|案例|数据|材料|报告|证明|验证|测算|清单|记录|测试|演示/,
+  ]);
+  const evidence = evidenceSource ?? '补充可核验的案例、数据、材料或交付记录';
+
+  const explicitNextStep = labeledPreparationValue(text, ['下一步', '后续', '跟进', '行动', '安排', '确认', '引荐', '约定']);
+  const nextStepSource = explicitNextStep ?? findPreparationSegment(segments, [
+    /下一步|后续|跟进|行动|安排|确认|引荐|约定|回访|对接/,
+  ]);
+  const nextStep = nextStepSource ?? '确认责任人与下一步沟通安排';
+
+  const semanticTags: PreparationSemanticTag[] = ['target_person'];
+  if (problemSource) semanticTags.push('customer_problem');
+  if (dimensionsSource) semanticTags.push('solution_or_dimension');
+  if (evidenceSource) semanticTags.push('evidence');
+  if (nextStepSource) semanticTags.push('next_step');
+
+  return { audience, problem, dimensions, evidence, nextStep, semanticTags };
+}
+
+/** Require at least three independent semantic signals in addition to the
+ * server-known target person before a new preparation becomes usable. */
+export function hasReliablePreparationSemantics(brief: PreparationBrief): boolean {
+  const contentTags = (brief.semanticTags ?? []).filter((tag) => tag !== 'target_person');
+  return brief.audience.trim().length > 0 && new Set(contentTags).size >= 3;
 }
 
 export function calculateTotalScore(dimensions: GameDimensions): number {
@@ -699,6 +834,15 @@ export function applyNpcEvaluation(
     ? { ...next.activeMeeting, workTopicOpenedBy: next.activeMeeting.workTopicOpenedBy ?? extended.workTopicOpenedBy }
     : next.activeMeeting;
 
+  const competitorClaims = /竞品|ABC|其他厂商/.test(replyContent)
+    ? [...next.competitorClaims, {
+      id: `claim:${npcId}:${next.currentRound}:${next.competitorClaims.length + 1}`,
+      npcId,
+      stage: next.currentRound,
+      statement: replyContent.slice(0, 500),
+      truthStatus: 'unverified' as const,
+    }].slice(-80)
+    : next.competitorClaims;
   return {
     ...next,
     unlockedClues,
@@ -708,6 +852,7 @@ export function applyNpcEvaluation(
       [npcId]: { ...memory, confirmedFacts, commitments },
     },
     outcomeEvidence,
+    competitorClaims,
     activeMeeting,
   };
 }
@@ -743,7 +888,10 @@ export interface ConsumeGameTimeOptions {
   ignoreAppointmentId?: string;
 }
 
-/** Consumes simulated work capacity; wall-clock time is never read. */
+/**
+ * Pure action-point charging. `minutes` remains in the signature so old
+ * commands and saves can be migrated without making time a gameplay limit.
+ */
 export function consumeGameTime(
   state: GameRuntimeState,
   minutes: number,
@@ -752,39 +900,17 @@ export function consumeGameTime(
   if (state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
   if (state.activeMeeting && !options.allowDuringMeeting) throw new Error('MEETING_ALREADY_ACTIVE');
   if (!Number.isInteger(minutes) || minutes < 0) throw new Error('TIME_AMOUNT_INVALID');
-  const current = reconcileMissedAppointments(state);
-  const simulatedClockMinutes = current.simulatedClockMinutes + minutes;
-  const regularMinutes = Math.min(minutes, Math.max(0, PROJECT_ONE_WORK_END_MINUTE - current.simulatedClockMinutes));
-  if (current.dayAvailableMinutes < regularMinutes) throw new Error('DAY_TIME_INSUFFICIENT');
-  const capacityMinutes = Math.min(minutes, current.dayAvailableMinutes);
-  const overtimeNeeded = minutes - regularMinutes;
-  if (overtimeNeeded > 0 && options.allowOvertime === false) throw new Error('DAY_TIME_INSUFFICIENT');
-  const nextOvertime = current.overtimeMinutes + overtimeNeeded;
-  if (nextOvertime > PROJECT_ONE_OVERTIME_END_MINUTE - PROJECT_ONE_WORK_END_MINUTE) throw new Error('OVERTIME_LIMIT_EXCEEDED');
-  const priorBlocks = Math.ceil(current.overtimeMinutes / 30);
-  const nextBlocks = Math.ceil(nextOvertime / 30);
-  const overtimeCost = Math.max(0, nextBlocks - priorBlocks);
-  const pointCost = (options.pointCost ?? 0) + overtimeCost;
-  if (current.actionPoints < pointCost) throw new Error('ACTION_POINTS_INSUFFICIENT');
-  if (simulatedClockMinutes > PROJECT_ONE_OVERTIME_END_MINUTE) throw new Error('OVERTIME_LIMIT_EXCEEDED');
-
-  const overlapsAppointment = current.appointments.some((appointment) =>
-    appointment.id !== options.ignoreAppointmentId
-    &&
-    appointment.status === 'accepted'
-    && appointment.scheduledRound === current.currentRound
-    && current.simulatedClockMinutes < appointment.startMinute + appointment.durationMinutes
-    && simulatedClockMinutes > getAppointmentDepartureMinute(appointment));
-  if (overlapsAppointment) throw new Error('APPOINTMENT_CONFLICT');
+  const pointCost = options.pointCost ?? 0;
+  if (state.actionPoints < pointCost) throw new Error('ACTION_POINTS_INSUFFICIENT');
 
   return {
-    ...current,
-    simulatedClockMinutes,
-    dayAvailableMinutes: current.dayAvailableMinutes - capacityMinutes,
-    overtimeMinutes: nextOvertime,
-    cumulativeTimeMinutes: current.cumulativeTimeMinutes + (options.countAsInvested === false ? 0 : minutes),
-    actionPoints: current.actionPoints - pointCost,
-    cumulativeSpentPoints: current.cumulativeSpentPoints + pointCost,
+    ...state,
+    simulatedClockMinutes: PROJECT_ONE_DAY_START_MINUTE,
+    dayAvailableMinutes: 0,
+    overtimeMinutes: 0,
+    cumulativeTimeMinutes: 0,
+    actionPoints: state.actionPoints - pointCost,
+    cumulativeSpentPoints: state.cumulativeSpentPoints + pointCost,
   };
 }
 
@@ -803,7 +929,9 @@ function chargeOvertimeMinutes(state: GameRuntimeState, minutes: number): GameRu
 }
 
 export function consumeCommunicationTime(state: GameRuntimeState, channel: CommunicationChannel): GameRuntimeState {
-  return consumeGameTime(state, PROJECT_ONE_COMMUNICATION_MINUTES[channel]);
+  return consumeGameTime(state, PROJECT_ONE_COMMUNICATION_MINUTES[channel], {
+    pointCost: PROJECT_ONE_COMMUNICATION_POINTS[channel],
+  });
 }
 
 function advanceClockWithoutInvestment(state: GameRuntimeState, minutes: number): GameRuntimeState {
@@ -1029,7 +1157,7 @@ function processCompetitorAction(state: GameRuntimeState): { state: GameRuntimeS
   }
   const researched = Boolean(state.publicResearch[template.targetNpcId]);
   const completedVisit = state.appointments.some((item) => item.npcId === template.targetNpcId && item.status === 'completed');
-  const usedMaterial = state.preparations.some((item) => item.npcId === template.targetNpcId && item.usedCount > 0 && ['ppt', 'materials'].includes(item.type));
+  const usedMaterial = state.preparations.some((item) => item.npcId === template.targetNpcId && item.usedCount > 0);
   const mitigationCount = Number(researched) + Number(completedVisit) + Number(usedMaterial);
   const supportImpact = -Math.max(0, 3 - mitigationCount);
   const pressureDelta = Math.max(1, template.pressureDelta - mitigationCount);
@@ -1052,17 +1180,6 @@ function processCompetitorAction(state: GameRuntimeState): { state: GameRuntimeS
       pressureScore: clamp(next.competitorState.pressureScore + pressureDelta),
       actions: [...next.competitorState.actions, action],
     },
-    notifications: [...next.notifications, {
-      id: action.id,
-      npcId: action.targetNpcId,
-      kind: 'project',
-      title: '竞品动态',
-      body: `${action.summary}${action.mitigated ? ' 你此前的调研、拜访或材料准备减弱了这次影响。' : ' 当前缺少针对性准备，竞争压力有所上升。'}`,
-      round: state.currentRound,
-      minute: state.simulatedClockMinutes,
-      isRead: false,
-      targetId: action.id,
-    }],
   };
   return { state: refreshCompetitivePosition(next), action };
 }
@@ -1074,6 +1191,21 @@ export function getWinConditions(state: GameRuntimeState) {
     totalScore: outcome.finalScore,
     hasDecisionClue: state.unlockedClues.includes('decision_process'),
     keyAffinity: state.npcAttitudes['p1-minister-chen-jianguo']?.support ?? state.npcAffinity['p1-minister-chen-jianguo'] ?? 0,
+  };
+}
+
+/** Never serialize hidden competitor progress or AI stage actions to a player. */
+export function toPlayerVisibleGameState(state: GameRuntimeState): GameRuntimeState {
+  return {
+    ...state,
+    publicResearch: {},
+    competitorClaims: [],
+    competitorState: {
+      name: state.competitorState.name,
+      pressureScore: 0,
+      position: 'close',
+      actions: [],
+    },
   };
 }
 
@@ -1150,24 +1282,6 @@ export function connectNpc(state: GameRuntimeState, npcId: string): GameRuntimeS
   };
 }
 
-export function setNpcOnline(state: GameRuntimeState, npcId: string, accepted: boolean): GameRuntimeState {
-  const contact = state.npcContacts[npcId];
-  if (!contact || contact.status === 'known') throw new Error('NPC_NOT_CONNECTED');
-  return {
-    ...state,
-    npcContacts: {
-      ...state.npcContacts,
-      [npcId]: {
-        ...contact,
-        status: accepted ? 'online' : contact.status,
-        onlineRequestedRound: state.currentRound,
-        lastContactRound: state.currentRound,
-        lastContactMinute: state.simulatedClockMinutes,
-      },
-    },
-  };
-}
-
 export function markNpcUnanswered(state: GameRuntimeState, npcId: string, channel?: CommunicationChannel): GameRuntimeState {
   const contact = state.npcContacts[npcId];
   if (!contact) throw new Error('NPC_UNKNOWN');
@@ -1180,6 +1294,7 @@ export function markNpcUnanswered(state: GameRuntimeState, npcId: string, channe
       [npcId]: {
         ...contact,
         unansweredRound: state.currentRound,
+        lastPhoneOutcome: selectedChannel === 'work_phone' ? 'unanswered' : contact.lastPhoneOutcome,
         outboundCount: contact.outboundCount + 1,
         channelCooldownUntil: {
           ...contact.channelCooldownUntil,
@@ -1204,6 +1319,34 @@ export function recordNpcOutbound(state: GameRuntimeState, npcId: string): GameR
         lastContactMinute: state.simulatedClockMinutes,
       },
     },
+  };
+}
+
+/**
+ * Apply preparation attachments sent in an ordinary email. The preparation
+ * inventory is authoritative; callers may not attach another NPC's item,
+ * an already-used item, or a gift through the chat channel.
+ */
+export function applyPreparationAttachments(
+  state: GameRuntimeState,
+  npcId: string,
+  attachmentIds: string[],
+): GameRuntimeState {
+  const ids = Array.from(new Set(attachmentIds));
+  if (ids.length === 0) return state;
+  const selected = state.preparations.filter((item) => ids.includes(item.id));
+  if (selected.length !== ids.length || selected.some((item) =>
+    item.npcId !== npcId
+    || item.status !== 'ready'
+    || !isCurrentPreparationType(item.type))) {
+    throw new Error('EMAIL_ATTACHMENT_NOT_AVAILABLE');
+  }
+  const selectedIds = new Set(ids);
+  return {
+    ...state,
+    preparations: state.preparations.map((item) => selectedIds.has(item.id)
+      ? { ...item, usedCount: item.usedCount + 1, status: item.reusable ? 'ready' as const : 'used' as const }
+      : item),
   };
 }
 
@@ -1325,36 +1468,17 @@ export function advanceRound(state: GameRuntimeState, _legacyNow?: number, proba
   if (state.activeMeeting) throw new Error('MEETING_ALREADY_ACTIVE');
   let next = processComplianceRisks(state, false, probabilitySeed);
   next = processCompetitorAction(next).state;
-  const missedToday = next.appointments.filter((appointment) =>
-    appointment.scheduledRound === state.currentRound && appointment.status === 'accepted');
-  for (const appointment of missedToday) {
-    next = applyNpcAttitudeDelta(next, appointment.npcId, {
-      pleasantnessDelta: -5,
-      supportDelta: -4,
-      reason: '预约未赴约，客户对履约可靠性产生疑虑',
-      source: `missed:${appointment.id}`,
-    });
-  }
-  next = {
-    ...next,
-    appointments: next.appointments.map((appointment) =>
-      appointment.scheduledRound === state.currentRound && appointment.status === 'accepted'
-        ? { ...appointment, status: 'missed' as const, reservedMinutes: 0 }
-        : appointment),
-  };
   if (state.currentRound >= state.maxRounds) {
     return refreshCompetitivePosition({ ...next, submissionReady: true, lastAction: 'submission_check' });
   }
   const currentRound = state.currentRound + 1;
-  const reservedMinutes = next.appointments
-    .filter((appointment) => appointment.scheduledRound === currentRound && appointment.status === 'accepted')
-    .reduce((sum, appointment) => sum + appointment.durationMinutes, 0);
   return {
     ...next,
     currentRound,
+    currentStage: currentRound,
     actionPoints: Math.min(PROJECT_ONE_ACTION_POINT_CAP, next.actionPoints + PROJECT_ONE_PHASE_ACTION_POINT_GAIN),
     simulatedClockMinutes: PROJECT_ONE_DAY_START_MINUTE,
-    dayAvailableMinutes: Math.max(0, PROJECT_ONE_STANDARD_DAY_MINUTES - reservedMinutes),
+    dayAvailableMinutes: 0,
     overtimeMinutes: 0,
     phaseStartedAt: LEGACY_SIMULATION_MARKER,
     phaseEndsAt: LEGACY_SIMULATION_MARKER,
@@ -1446,8 +1570,7 @@ function resolveInvitationPayload(
   (payload.visitType || /吃饭|晚餐|午餐|咖啡|茶|茶叙|正式|汇报|演示|方案|PPT|会议/.test(text) ? extractedFields : defaultedFields).push('visitType');
 
   const roundMatch = text.match(/第\s*([1-5])\s*(?:阶段|天)/);
-  const scheduledRound = payload.scheduledRound
-    ?? (roundMatch ? Number(roundMatch[1]) : Math.min(state.currentRound + 1, state.maxRounds));
+  const scheduledRound = state.currentRound;
   (payload.scheduledRound || roundMatch || /明天|次日/.test(text) ? extractedFields : defaultedFields).push('scheduledRound');
 
   const timeMatch = text.match(/(?:(上午|下午|晚上)\s*(\d{1,2})(?:[:：点时](\d{1,2})?)?|(\d{1,2})[:：点时](\d{1,2})?)/);
@@ -1459,10 +1582,7 @@ function resolveInvitationPayload(
     if ((prefix.includes('下午') || prefix.includes('晚上')) && hour < 12) hour += 12;
     startMinute = hour * 60 + minute;
   }
-  if (startMinute == null) startMinute = visitType === 'informal' ? 18 * 60 : 14 * 60;
-  if (scheduledRound === state.currentRound && startMinute < state.simulatedClockMinutes) {
-    startMinute = Math.min(PROJECT_ONE_OVERTIME_END_MINUTE - PROJECT_ONE_VISIT_RULES[visitType].durationMinutes, state.simulatedClockMinutes + 60);
-  }
+  if (startMinute == null) startMinute = PROJECT_ONE_DAY_START_MINUTE;
   (payload.startMinute != null || timeMatch ? extractedFields : defaultedFields).push('startMinute');
 
   const venueMatch = text.match(/(?:在|到)([^，。；]{2,24}?)(?:见面|聊|碰面|会面|沟通|交流)/);
@@ -1494,37 +1614,22 @@ function createAppointmentFromCommand(
     throw new Error('TWO_WAY_CONTACT_REQUIRED');
   }
   if (!state.unlockedNpcIds.includes(payload.npcId)) throw new Error('NPC_LOCKED');
-  if (resolved.scheduledRound < state.currentRound) throw new Error('APPOINTMENT_PHASE_INVALID');
-  const departureMinute = resolved.startMinute;
-  const earliestDepartureMinute = resolved.scheduledRound === state.currentRound
-    ? state.simulatedClockMinutes
-    : PROJECT_ONE_DAY_START_MINUTE;
-  if (departureMinute < earliestDepartureMinute) {
-    throw new Error('APPOINTMENT_TIME_INVALID');
+  if (payload.attachmentIds.length > 0 && payload.channel !== 'email') {
+    throw new Error('EMAIL_ATTACHMENT_NOT_AVAILABLE');
   }
   const rules = PROJECT_ONE_VISIT_RULES[resolved.visitType];
-  const eveningInformal = resolved.visitType === 'informal' && resolved.startMinute >= 18 * 60;
-  if (eveningInformal) {
-    const eveningCount = state.appointments.filter((item) =>
-      item.scheduledRound === resolved.scheduledRound
-      && item.visitType === 'informal'
-      && item.startMinute >= 18 * 60
-      && ['accepted', 'active', 'completed'].includes(item.status)).length;
-    if (eveningCount >= 1) throw new Error('EVENING_VISIT_LIMIT_REACHED');
-  }
-  const appointmentEnd = resolved.startMinute + rules.durationMinutes;
-  if (eveningInformal) {
-    if (appointmentEnd > PROJECT_ONE_EVENING_END_MINUTE) throw new Error('APPOINTMENT_TIME_INVALID');
-  } else if (appointmentEnd > PROJECT_ONE_OVERTIME_END_MINUTE) {
-    throw new Error('APPOINTMENT_TIME_INVALID');
+  const attachments = state.preparations.filter((item) => payload.attachmentIds.includes(item.id));
+  if (attachments.length !== payload.attachmentIds.length || attachments.some((item) =>
+    item.npcId !== payload.npcId
+    || item.status !== 'ready'
+    || !isCurrentPreparationType(item.type))) {
+    throw new Error('EMAIL_ATTACHMENT_NOT_AVAILABLE');
   }
   const chance = invitationChance(state, command);
   const accepted = shouldNpcRespond(`${command.commandId}:accepted`, chance);
   const countered = !accepted && shouldNpcRespond(`${command.commandId}:countered`, 65);
   const status: AppointmentStatus = accepted ? 'accepted' : countered ? 'countered' : 'rejected';
-  const counteredStartMinute = countered
-    ? Math.min(eveningInformal ? PROJECT_ONE_EVENING_END_MINUTE - rules.durationMinutes : PROJECT_ONE_OVERTIME_END_MINUTE - rules.durationMinutes, resolved.startMinute + 60)
-    : resolved.startMinute;
+  const counteredStartMinute = resolved.startMinute;
   const conditions = countered
     ? [resolved.visitType === 'formal' ? '请先发送议程或案例材料' : '请重新确认合适时间']
     : [];
@@ -1541,19 +1646,15 @@ function createAppointmentFromCommand(
     maxTurns: rules.maxTurns,
     status,
     conditions,
-    reservedMinutes: accepted ? rules.durationMinutes : 0,
+    reservedMinutes: 0,
     workTopicOpenedBy: null,
     invitationCommandId: command.commandId,
     invitationText: resolved.invitationText,
     extractedFields: resolved.extractedFields,
     defaultedFields: resolved.defaultedFields,
+    attachmentIds: payload.attachmentIds,
   };
   let next = { ...state, appointments: [...state.appointments, appointment] };
-  if (accepted) {
-    assertEveningVisitLimit(state, appointment);
-    assertAppointmentSlotAvailable(state, appointment);
-    next = reserveAppointmentTime(next, appointment);
-  }
   next = {
     ...next,
     notifications: [...next.notifications, {
@@ -1562,9 +1663,9 @@ function createAppointmentFromCommand(
       kind: 'appointment',
       title: accepted ? '邀约已接受' : countered ? 'NPC提出改期条件' : '邀约被拒绝',
       body: accepted
-        ? `可以，就按你说的安排。第${appointment.scheduledRound}阶段 ${String(Math.floor(appointment.startMinute / 60)).padStart(2, '0')}:${String(appointment.startMinute % 60).padStart(2, '0')}，我们在${appointment.venue}见。`
+        ? `可以，本阶段可以直接安排一次${PROJECT_ONE_PREPARATION_TITLES.visit_preparation.replace('拜访前准备', '') || ''}${appointment.visitType === 'formal' ? '正式拜访' : appointment.visitType === 'informal' ? '非正式拜访' : '短时拜访'}，地点就按${appointment.venue}。`
         : countered
-          ? `这个时间我不太方便，建议调整到第${appointment.scheduledRound}阶段 ${String(Math.floor(appointment.startMinute / 60)).padStart(2, '0')}:${String(appointment.startMinute % 60).padStart(2, '0')}。另外，${conditions[0]}。`
+          ? `可以继续谈，但请先处理这个条件：${conditions[0]}。完成后本阶段即可拜访。`
           : '谢谢你的邀请，不过我目前暂时安排不开。等项目条件更明确一些，我们再找合适时间沟通。',
       round: state.currentRound,
       minute: next.simulatedClockMinutes,
@@ -1585,11 +1686,11 @@ function prepareForVisit(
     const appointment = state.appointments.find((item) => item.id === payload.appointmentId);
     if (!appointment || appointment.npcId !== payload.npcId) throw new Error('APPOINTMENT_NOT_FOUND');
   }
-  if (['ppt', 'materials'].includes(payload.preparationType)) {
-    const structuredValid = payload.brief
-      && Object.values(payload.brief).every((value) => value.trim().length >= 2);
-    if (!structuredValid && payload.content.trim().length < 12) throw new Error('PREPARATION_BRIEF_REQUIRED');
-  }
+  if (payload.content.trim().length < 10) throw new Error('PREPARATION_BRIEF_REQUIRED');
+  const brief = isCurrentPreparationType(payload.preparationType)
+    ? extractPreparationBrief(payload.content, payload.npcId)
+    : undefined;
+  if (brief && !hasReliablePreparationSemantics(brief)) throw new Error('PREPARATION_BRIEF_REQUIRED');
   const rule = PROJECT_ONE_PREPARATION_RULES[payload.preparationType];
   const next = consumeGameTime(state, rule.timeMinutes, { pointCost: rule.costPoints });
   const preparation: GamePreparation = {
@@ -1601,7 +1702,7 @@ function prepareForVisit(
     // server-side so player-controlled text cannot masquerade as system context.
     title: PROJECT_ONE_PREPARATION_TITLES[payload.preparationType],
     content: payload.content,
-    brief: payload.brief,
+    brief,
     status: 'ready',
     costPoints: rule.costPoints,
     timeMinutes: rule.timeMinutes,
@@ -1619,44 +1720,10 @@ function startVisit(
   if (state.activeMeeting) throw new Error('MEETING_ALREADY_ACTIVE');
   const appointment = state.appointments.find((item) => item.id === command.payload.appointmentId);
   if (!appointment || appointment.status !== 'accepted') throw new Error('APPOINTMENT_NOT_ACCEPTED');
-  if (appointment.scheduledRound !== state.currentRound) throw new Error('APPOINTMENT_NOT_TODAY');
-  const eveningInformal = appointment.visitType === 'informal' && appointment.startMinute >= 18 * 60;
-  if (!eveningInformal && appointment.startMinute + appointment.durationMinutes > PROJECT_ONE_OVERTIME_END_MINUTE) {
-    throw new Error('APPOINTMENT_TIME_INVALID');
-  }
-  const hospitalityCost = getAppointmentHospitalityCost(appointment);
-  const travelStartMinute = getAppointmentDepartureMinute(appointment);
-  if (state.simulatedClockMinutes > travelStartMinute) throw new Error('APPOINTMENT_MISSED');
-  let next = advanceIdleClockTo(state, travelStartMinute, appointment.id);
-  if (eveningInformal) {
-    const visitCost = hospitalityCost;
-    if (next.actionPoints < visitCost) throw new Error('ACTION_POINTS_INSUFFICIENT');
-    next = {
-      ...next,
-      simulatedClockMinutes: travelStartMinute,
-      // Once the player leaves for an evening engagement, unused daytime
-      // opportunities are gone. The engagement itself remains overtime-exempt.
-      dayAvailableMinutes: 0,
-      cumulativeTimeMinutes: next.cumulativeTimeMinutes,
-      actionPoints: next.actionPoints - visitCost,
-      cumulativeSpentPoints: next.cumulativeSpentPoints + visitCost,
-    };
-  } else {
-    if (hospitalityCost > 0) {
-      next = consumeGameTime(next, 0, { pointCost: hospitalityCost, ignoreAppointmentId: appointment.id });
-    }
-  }
-  const meetingStartMinute = appointment.startMinute;
-  const meetingEndMinute = meetingStartMinute + appointment.durationMinutes;
-  if (!eveningInformal && meetingEndMinute > PROJECT_ONE_OVERTIME_END_MINUTE) throw new Error('OVERTIME_LIMIT_EXCEEDED');
-  if (eveningInformal && meetingEndMinute > PROJECT_ONE_EVENING_END_MINUTE) throw new Error('APPOINTMENT_TIME_INVALID');
-  const meetingOvertimeMinutes = eveningInformal
-    ? 0
-    : Math.max(0, meetingEndMinute - Math.max(meetingStartMinute, PROJECT_ONE_WORK_END_MINUTE));
-  next = chargeOvertimeMinutes({ ...next, simulatedClockMinutes: meetingStartMinute }, meetingOvertimeMinutes);
+  const next = state;
   const selectedPreparationIds = command.payload.preparationIds ?? [];
   const usable = new Set(next.preparations
-    .filter((item) => item.npcId === appointment.npcId && item.status === 'ready')
+    .filter((item) => item.npcId === appointment.npcId && item.status === 'ready' && isCurrentPreparationType(item.type))
     .map((item) => item.id));
   if (selectedPreparationIds.some((id) => !usable.has(id))) throw new Error('PREPARATION_NOT_AVAILABLE');
   const activeMeeting: ActiveMeeting = {
@@ -1668,7 +1735,7 @@ function startVisit(
     turnCount: 0,
     maxTurns: appointment.maxTurns,
     durationMinutes: appointment.durationMinutes,
-    startedAt: `round:${state.currentRound}:minute:${next.simulatedClockMinutes}`,
+    startedAt: `stage:${state.currentRound}`,
     workTopicOpenedBy: appointment.workTopicOpenedBy,
     usedPreparationIds: selectedPreparationIds,
   };
@@ -1851,7 +1918,6 @@ function researchPublicInfo(
   npcId: string,
 ): { state: GameRuntimeState; record: GamePublicResearchRecord } {
   if (!state.unlockedNpcIds.includes(npcId)) throw new Error('NPC_UNKNOWN');
-  if (state.publicResearch[npcId]) throw new Error('PUBLIC_INFO_ALREADY_RESEARCHED');
   const profile = PROJECT_ONE_PUBLIC_PROFILES[npcId];
   if (!profile) throw new Error('PUBLIC_INFO_UNAVAILABLE');
   const next = consumeGameTime(state, PROJECT_ONE_PUBLIC_RESEARCH_RULE.timeMinutes, {
@@ -1864,13 +1930,11 @@ function researchPublicInfo(
     sourceNote: profile.sourceNote,
     completedRound: state.currentRound,
     completedMinute: next.simulatedClockMinutes,
-    timeMinutes: PROJECT_ONE_PUBLIC_RESEARCH_RULE.timeMinutes,
     costPoints: PROJECT_ONE_PUBLIC_RESEARCH_RULE.costPoints,
   };
   return {
     state: {
       ...next,
-      publicResearch: { ...next.publicResearch, [npcId]: record },
       lastAction: 'research_public_info',
     },
     record,
@@ -1905,10 +1969,59 @@ export function executeGameCommand(
     case 'contact': {
       if (!state.unlockedNpcIds.includes(command.payload.npcId)) throw new Error('NPC_LOCKED');
       state = consumeCommunicationTime(state, command.payload.channel);
-      state = connectNpc(recordNpcOutbound(state, command.payload.npcId), command.payload.npcId);
-      result = { npcId: command.payload.npcId, channel: command.payload.channel };
+      state = recordNpcOutbound(state, command.payload.npcId);
+      let outcome: 'connected' | 'unanswered' | 'declined' | 'call_later' = 'connected';
+      if (command.payload.channel === 'work_phone') {
+        const contactChance = 58 + state.currentRound * 4 + Math.round(((state.npcAttitudes[command.payload.npcId]?.support ?? 35) - 35) / 3);
+        if (!shouldNpcRespond(`${command.commandId}:phone`, contactChance)) {
+          outcome = shouldNpcRespond(`${command.commandId}:declined`, 30) ? 'declined'
+            : shouldNpcRespond(`${command.commandId}:later`, 35) ? 'call_later' : 'unanswered';
+        }
+      }
+      if (outcome === 'connected') state = connectNpc(state, command.payload.npcId);
+      state = {
+        ...state,
+        npcContacts: {
+          ...state.npcContacts,
+          [command.payload.npcId]: { ...state.npcContacts[command.payload.npcId], lastPhoneOutcome: command.payload.channel === 'work_phone' ? outcome : state.npcContacts[command.payload.npcId].lastPhoneOutcome },
+        },
+      };
+      result = { npcId: command.payload.npcId, channel: command.payload.channel, outcome };
       eventType = 'contact.completed';
-      eventPayload = { ...eventPayload, npcId: command.payload.npcId, channel: command.payload.channel };
+      eventPayload = { ...eventPayload, npcId: command.payload.npcId, channel: command.payload.channel, outcome };
+      break;
+    }
+    case 'request_wechat': {
+      const npcId = command.payload.npcId;
+      if (!state.unlockedNpcIds.includes(npcId)) throw new Error('NPC_LOCKED');
+      const contact = state.npcContacts[npcId];
+      if (!contact || contact.status !== 'connected') throw new Error('NPC_NOT_CONNECTED');
+      if (contact.wechatStatus === 'accepted') throw new Error('WECHAT_ALREADY_ADDED');
+      if (contact.onlineRequestedRound === state.currentRound) throw new Error('WECHAT_REQUEST_ALREADY_MADE_THIS_STAGE');
+      state = consumeGameTime(state, 0, { pointCost: PROJECT_ONE_COMMUNICATION_POINTS.wechat });
+      const support = state.npcAttitudes[npcId]?.support ?? 35;
+      const accepted = shouldNpcRespond(`${command.commandId}:wechat`, 18 + state.currentRound * 8 + Math.max(0, support - 35));
+      const wechatStatus: NpcContactState['wechatStatus'] = accepted ? 'accepted'
+        : shouldNpcRespond(`${command.commandId}:pending`, 35) ? 'pending'
+          : shouldNpcRespond(`${command.commandId}:later`, 50) ? 'later' : 'rejected';
+      // Connect exactly once on acceptance. The resulting snapshot is the
+      // sole authority for both status and the request audit fields.
+      const connectedState = accepted ? connectNpc(state, npcId) : state;
+      state = {
+        ...connectedState,
+        npcContacts: {
+          ...connectedState.npcContacts,
+          [npcId]: {
+            ...connectedState.npcContacts[npcId],
+            status: accepted ? 'online' : connectedState.npcContacts[npcId].status,
+            wechatStatus,
+            onlineRequestedRound: state.currentRound,
+          },
+        },
+      };
+      result = { npcId, status: wechatStatus };
+      eventType = `wechat.${wechatStatus}`;
+      eventPayload = { ...eventPayload, npcId, status: wechatStatus };
       break;
     }
     case 'invite': {
@@ -1948,16 +2061,13 @@ export function executeGameCommand(
         const hasRequiredMaterial = state.preparations.some((item) =>
           item.npcId === appointment.npcId
           && (item.appointmentId === null || item.appointmentId === appointment.id)
-          && ['agenda', 'ppt', 'materials'].includes(item.type)
           && item.status === 'ready');
         if (requiresMaterial && !hasRequiredMaterial) throw new Error('APPOINTMENT_CONDITION_UNMET');
-        const accepted = { ...appointment, status: 'accepted' as const, reservedMinutes: appointment.durationMinutes };
-        assertEveningVisitLimit(state, accepted, appointment.id);
-        assertAppointmentSlotAvailable(state, accepted, appointment.id);
-        state = reserveAppointmentTime({
+        const accepted = { ...appointment, status: 'accepted' as const, reservedMinutes: 0 };
+        state = ({
           ...state,
           appointments: state.appointments.map((item) => item.id === appointment.id ? accepted : item),
-        }, accepted);
+        });
       }
       result = { appointment: state.appointments.find((item) => item.id === appointment.id) };
       eventType = command.payload.action === 'cancel' ? 'appointment.cancelled' : 'appointment.accepted';
@@ -2091,7 +2201,7 @@ export function executeGameCommand(
         if (!state.activeMeeting || state.activeMeeting.npcId !== payload.npcId) throw new Error('MEETING_NOT_ACTIVE');
         if (payload.appointmentId && payload.appointmentId !== state.activeMeeting.appointmentId) throw new Error('APPOINTMENT_NOT_ACTIVE');
         const preparation = state.preparations.find((item) => item.id === payload.preparationId);
-        if (!preparation || preparation.npcId !== payload.npcId || preparation.status !== 'ready' || preparation.type.endsWith('gift')) {
+        if (!preparation || preparation.npcId !== payload.npcId || preparation.status !== 'ready' || !isCurrentPreparationType(preparation.type)) {
           throw new Error('PREPARATION_NOT_AVAILABLE');
         }
         state = {
@@ -2128,7 +2238,7 @@ export function executeGameCommand(
         item.npcId !== payload.npcId
         || (item.appointmentId !== null && item.appointmentId !== completedAppointment.id)
         || item.status !== 'ready'
-        || item.type.endsWith('gift'))) {
+        || !isCurrentPreparationType(item.type))) {
         throw new Error('PREPARATION_NOT_AVAILABLE');
       }
       state = consumeCommunicationTime(state, payload.channel);
@@ -2164,7 +2274,10 @@ export function executeGameCommand(
       state = advanceRound(state, undefined, command.commandId);
       const outcome = state.status === 'playing' ? null : getGameOutcome(state);
       const competitorAction = state.competitorState.actions.find((item) => item.round === fromRound) ?? null;
-      result = { fromRound, toRound: state.currentRound, status: state.status, submissionReady: state.submissionReady, competitorAction, outcome };
+      // Competitor actions are internal simulation evidence. Keep only the
+      // coarse kind/mitigation flags in the audit event; never return the
+      // action record through the player-facing command result.
+      result = { fromRound, toRound: state.currentRound, status: state.status, submissionReady: state.submissionReady, outcome };
       eventType = state.status === 'playing' ? 'phase.advanced' : 'session.finished';
       eventPayload = {
         ...eventPayload,
@@ -2232,7 +2345,6 @@ export function executeGameCommand(
         npcId: command.payload.npcId,
         factCount: researched.record.facts.length,
         weakSignalCount: researched.record.weakSignals.length,
-        timeMinutes: researched.record.timeMinutes,
         costPoints: researched.record.costPoints,
       };
       break;

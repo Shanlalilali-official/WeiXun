@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
 import { appendGameEvent, deleteOwnedActiveGameSave, getOwnedGameSession } from '@/lib/game/repository';
+import { toPlayerVisibleGameState } from '@/lib/game/state';
 
 export const runtime = 'nodejs';
 
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
         hasActiveMeeting: Boolean(gameSession.state.activeMeeting),
       }).catch(() => undefined);
     }
-    return NextResponse.json({ success: true, gameSession });
+    return NextResponse.json({ success: true, gameSession: { ...gameSession, state: toPlayerVisibleGameState(gameSession.state) } });
   } catch {
     return NextResponse.json({ error: '对局不存在或无权访问' }, { status: 404 });
   }

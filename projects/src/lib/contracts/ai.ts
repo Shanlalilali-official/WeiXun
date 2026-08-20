@@ -12,16 +12,12 @@ export const npcChatRequestSchema = z.object({
   message: z.string().trim().min(1).max(4000),
   commandId: z.string().trim().min(8).max(128),
   expectedVersion: z.number().int().min(1),
-  intent: z.enum(['outreach', 'message', 'request_online', 'call_connect']).default('message'),
+  intent: z.enum(['outreach', 'message', 'call_connect']).default('message'),
   channel: z.enum(['email', 'work_phone', 'online', 'offline']).optional(),
   contextType: z.enum(['online', 'short_visit', 'formal_visit', 'informal_visit']).optional(),
   appointmentId: z.string().trim().min(1).max(128).optional(),
+  attachmentIds: z.array(z.string().trim().min(1).max(128)).max(8).default([]),
   usedPreparationIds: z.array(z.string().trim().min(1).max(128)).max(12).default([]),
-});
-
-export const onlineContactDecisionSchema = z.object({
-  accepted: z.boolean(),
-  response: z.string().trim().min(1).max(160),
 });
 
 export const npcSemanticFlagsSchema = z.object({
@@ -144,5 +140,4 @@ export type NpcSemanticFlags = z.infer<typeof npcSemanticFlagsSchema>;
 export type GiftAssessment = z.infer<typeof giftAssessmentSchema>;
 export type GiftCommandDecision = z.infer<typeof giftCommandDecisionSchema>;
 export type NpcTurnEvaluation = z.infer<typeof npcTurnEvaluationSchema>;
-export type OnlineContactDecision = z.infer<typeof onlineContactDecisionSchema>;
 export type GeneratedScenario = z.infer<typeof generatedScenarioSchema>;

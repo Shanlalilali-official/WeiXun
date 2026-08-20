@@ -141,6 +141,7 @@ export async function listOwnedActiveGameSaves(userId: string, scenarioCode?: st
     .select('id, current_round, max_round, started_at, created_at, game_runtime_states!inner(scenario_code, updated_at)')
     .eq('user_id', userId)
     .eq('status', 'playing')
+    .eq('multiplayer', false)
     .order('created_at', { ascending: false })
     .limit(MAX_ACTIVE_GAME_SAVES);
   if (scenarioCode) query = query.eq('game_runtime_states.scenario_code', scenarioCode);
@@ -399,6 +400,28 @@ export async function appendGameEvent(
     payload,
   });
   if (error) throw new Error('EVENT_APPEND_FAILED');
+}
+
+export async function appendCompetitorClaim(
+  sessionId: string,
+  companyId: string,
+  npcId: string,
+  stage: number,
+  statement: string,
+): Promise<void> {
+  if (!/竞品|ABC|其他厂商/.test(statement)) return;
+  const supabase = createServerClient();
+  const { data: slot } = await supabase.from('multiplayer_company_slots').select('room_id').eq('game_session_id', sessionId).maybeSingle();
+  const { error } = await supabase.from('competitor_claims').insert({
+    room_id: slot?.room_id ?? null,
+    session_id: sessionId,
+    company_id: companyId,
+    npc_key: npcId,
+    stage,
+    statement: statement.slice(0, 2000),
+    truth_status: 'unverified',
+  });
+  if (error) throw new Error('COMPETITOR_CLAIM_SAVE_FAILED');
 }
 
 export async function deliverPendingNpcHandoffs(sessionId: string, currentRound: number) {

@@ -37,8 +37,15 @@ export const contactGameCommandSchema = z.object({
   type: z.literal('contact'),
   payload: z.object({
     npcId: npcIdSchema,
-    channel: z.enum(['email', 'work_phone', 'online']),
+    channel: z.enum(['email', 'work_phone', 'wechat', 'online']),
+    content: textSchema.optional(),
   }),
+});
+
+export const requestWechatGameCommandSchema = z.object({
+  ...commandBaseSchema,
+  type: z.literal('request_wechat'),
+  payload: z.object({ npcId: npcIdSchema, message: textSchema }),
 });
 
 export const inviteGameCommandSchema = z.object({
@@ -46,8 +53,9 @@ export const inviteGameCommandSchema = z.object({
   type: z.literal('invite'),
   payload: z.object({
     npcId: npcIdSchema,
-    channel: z.enum(['email', 'work_phone', 'online']),
+    channel: z.enum(['email', 'work_phone', 'wechat', 'online']),
     rawText: textSchema.optional(),
+    attachmentIds: z.array(entityIdSchema).max(8).default([]),
     // Legacy structured fields remain optional for old clients and tests. New
     // player flows send natural language and let the server resolve defaults.
     invitationMethod: z.enum(['dedicated', 'drop_in']).optional(),
@@ -65,16 +73,9 @@ export const prepareGameCommandSchema = z.object({
   payload: z.object({
     npcId: npcIdSchema,
     appointmentId: entityIdSchema.nullable().optional(),
-    preparationType: z.enum(['agenda', 'ppt', 'materials', 'courtesy_gift', 'boundary_gift']),
-    title: z.string().trim().min(1).max(120),
-    content: z.string().trim().max(2000).default(''),
-    brief: z.object({
-      audience: z.string().trim().min(2).max(200),
-      problem: z.string().trim().min(4).max(500),
-      dimensions: z.string().trim().min(4).max(500),
-      evidence: z.string().trim().min(2).max(500),
-      nextStep: z.string().trim().min(2).max(500),
-    }).optional(),
+    preparationType: z.enum(['visit_preparation', 'agenda', 'ppt', 'materials', 'courtesy_gift', 'boundary_gift']).default('visit_preparation'),
+    title: z.string().trim().min(1).max(120).default('拜访前准备'),
+    content: z.string().trim().min(10).max(4000),
   }),
 });
 
@@ -124,7 +125,7 @@ export const followUpGameCommandSchema = z.object({
       action: z.literal('message').default('message'),
       npcId: npcIdSchema,
       appointmentId: entityIdSchema,
-      channel: z.enum(['email', 'work_phone', 'online']),
+      channel: z.enum(['email', 'work_phone', 'wechat', 'online']),
       content: textSchema,
       preparationIds: z.array(entityIdSchema).max(8).default([]),
     }),
@@ -153,16 +154,17 @@ export const updateMeetingMinutesGameCommandSchema = z.object({
   }),
 });
 
-export const waitGameCommandSchema = z.object({
-  ...commandBaseSchema,
-  type: z.literal('wait'),
-  payload: z.object({ minutes: z.number().int().min(5).max(13 * 60) }),
-});
-
 export const advancePhaseGameCommandSchema = z.object({
   ...commandBaseSchema,
   type: z.literal('advance_phase'),
   payload: emptyPayloadSchema,
+});
+
+/** Legacy no-op retained so an old open client does not corrupt a save. */
+export const waitGameCommandSchema = z.object({
+  ...commandBaseSchema,
+  type: z.literal('wait'),
+  payload: z.object({ minutes: z.number().int().min(1).max(13 * 60) }),
 });
 
 export const submitGameCommandSchema = z.object({
@@ -186,6 +188,7 @@ export const researchPublicInfoGameCommandSchema = z.object({
 /** Versioned deterministic commands used by the unified game command API. */
 export const gameCommandSchema = z.discriminatedUnion('type', [
   contactGameCommandSchema,
+  requestWechatGameCommandSchema,
   inviteGameCommandSchema,
   updateAppointmentGameCommandSchema,
   prepareGameCommandSchema,

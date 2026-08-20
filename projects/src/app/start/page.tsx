@@ -98,6 +98,11 @@ export default function StartPage() {
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
   const [identity, setIdentity] = useState<{ displayName: string; role: string } | null>(null);
   const [competitors, setCompetitors] = useState<{company_name: string; features: string; more_info: string; project_id: number}[]>([]);
+  const [playMode, setPlayMode] = useState<'solo' | 'multiplayer'>('solo');
+  const [roomCode, setRoomCode] = useState('');
+  const [companyId, setCompanyId] = useState('player-company');
+  const [joining, setJoining] = useState(false);
+  const [joinError, setJoinError] = useState('');
 
   // 读取身份（顶栏显示个人名）
   useEffect(() => {
@@ -155,9 +160,24 @@ export default function StartPage() {
 
   const sideHotspots = projects;
 
-  const handleStart = () => {
+  const handleStart = async () => {
     if (!selected) return;
     if (selected.id !== 'project-1') return;
+    if (playMode === 'multiplayer') {
+      if (!roomCode.trim()) { setJoinError('请输入联机房间码'); return; }
+      setJoining(true);
+      setJoinError('');
+      try {
+        const response = await fetch('/api/multiplayer/join', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-session': localStorage.getItem('weixun_session') || '' }, body: JSON.stringify({ roomCode, companyId }) });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '加入房间失败');
+        router.push(`/game?location=${selected.id}&mode=multiplayer&roomId=${encodeURIComponent(data.data.roomId)}&sessionId=${encodeURIComponent(data.data.sessionId)}`);
+      } catch (error) {
+        setJoinError(error instanceof Error ? error.message : '加入房间失败');
+        setJoining(false);
+      }
+      return;
+    }
     router.push(`/game?location=${selected.id}&budget=${selected.budget}`);
   };
 
@@ -301,7 +321,7 @@ export default function StartPage() {
 
                 {/* 竞品公司特点表 */}
                 {competitors.filter(c => c.project_id === selected.projectId).length > 0 && (
-                  <div className="mb-4 p-4 rounded-xl bg-gradient-to-br from-primary/5 to-transparent border border-primary/20">
+                  <div className="hidden mb-4 p-4 rounded-xl bg-gradient-to-br from-primary/5 to-transparent border border-primary/20">
                     <div className="text-xs font-semibold text-foreground mb-3 flex items-center gap-2 uppercase tracking-wider">
                       <svg className="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -399,6 +419,16 @@ export default function StartPage() {
                   </div>
                 </div>
 
+                <div className="mx-6 mb-2 rounded-xl border border-border bg-surface-container p-4">
+                  <div className="text-xs font-semibold text-foreground">游戏模式</div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button onClick={() => setPlayMode('solo')} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${playMode === 'solo' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card'}`}>单机 · ABC由AI推演</button>
+                    <button onClick={() => setPlayMode('multiplayer')} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${playMode === 'multiplayer' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card'}`}>联机 · 公司均由玩家控制</button>
+                  </div>
+                  {playMode === 'multiplayer' && <div className="mt-3 grid grid-cols-2 gap-2"><input value={roomCode} onChange={(event) => setRoomCode(event.target.value.toUpperCase())} placeholder="房间码" className="rounded-lg border border-border bg-card px-3 py-2 text-xs" /><select value={companyId} onChange={(event) => setCompanyId(event.target.value)} className="rounded-lg border border-border bg-card px-3 py-2 text-xs"><option value="player-company">我方公司</option><option value="abc-company">ABC公司</option></select></div>}
+                  {joinError && <div className="mt-2 text-[11px] text-red-600">{joinError}</div>}
+                </div>
+
                 {/* 操作按钮 - 固定在底部 */}
                 </div>
                 <div className="p-6 pt-4 flex-shrink-0 border-t border-border flex gap-2">
@@ -410,10 +440,10 @@ export default function StartPage() {
                   </button>
                   <button
                     onClick={handleStart}
-                    disabled={selected.id !== 'project-1'}
+                    disabled={selected.id !== 'project-1' || joining}
                     className="flex-1 py-2.5 rounded-lg btn-primary text-sm font-semibold"
                   >
-                    {selected.id === 'project-1' ? '开始攻略此目标' : '本期暂未开放'}
+                    {selected.id === 'project-1' ? joining ? '正在加入...' : playMode === 'solo' ? '开始单机模式' : '加入联机模式' : '本期暂未开放'}
                   </button>
                 </div>
               </div>

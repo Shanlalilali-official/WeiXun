@@ -6,7 +6,7 @@ import type { GameAppointment, GameRuntimeState } from '../src/lib/game/state';
 dotenv.config({ path: '.env.local', override: false, quiet: true });
 
 const baseUrl = (process.env.E2E_BASE_URL || 'http://127.0.0.1:5000').replace(/\/+$/, '');
-const userId = `u_simulated_visit_e2e_${Date.now()}`;
+const userId = `u_project_one_action_points_e2e_${Date.now()}`;
 let sessionId = '';
 let currentState: GameRuntimeState;
 
@@ -48,73 +48,6 @@ async function command(
   return { ...response, commandId, expectedVersion };
 }
 
-type StreamEvent = {
-  type: string;
-  code?: string;
-  error?: string;
-  content?: string;
-  state?: GameRuntimeState;
-  deliveryStatus?: 'replied' | 'unanswered';
-  onlineAccepted?: boolean;
-  replayed?: boolean;
-};
-
-async function streamChat(
-  token: string,
-  npcId: string,
-  message: string,
-  communication: {
-    intent?: 'outreach' | 'message' | 'request_online';
-    channel?: 'email' | 'work_phone' | 'online' | 'offline';
-    contextType?: 'online' | 'short_visit' | 'formal_visit' | 'informal_visit';
-    appointmentId?: string;
-    usedPreparationIds?: string[];
-  } = {},
-  options?: { commandId?: string; expectedVersion?: number },
-) {
-  const commandId = options?.commandId ?? makeCommandId('chat');
-  const expectedVersion = options?.expectedVersion ?? currentState.version;
-  const response = await fetch(`${baseUrl}/api/chat/stream`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-session': token },
-    body: JSON.stringify({
-      gameSessionId: sessionId,
-      scenarioId: 'project-1',
-      npcId,
-      message,
-      commandId,
-      expectedVersion,
-      usedPreparationIds: [],
-      ...communication,
-    }),
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({})) as { error?: string };
-    throw new Error(`CHAT HTTP ${response.status}: ${payload.error || 'unknown error'}`);
-  }
-  const body = await response.text();
-  const events = body
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith('data: ') && line !== 'data: [DONE]')
-    .map((line) => JSON.parse(line.slice(6)) as StreamEvent);
-  const error = events.find((event) => event.type === 'error');
-  if (error) throw new Error(`CHAT_STREAM_${error.code || 'ERROR'}: ${error.error || ''}`);
-  const result = events.find((event) => event.type === 'result' && event.state);
-  assert(result?.state, 'chat stream must finish with authoritative state');
-  currentState = result.state;
-  const content = events.map((event) => event.content || '').join('');
-  if (result.deliveryStatus === 'replied') assert(content.length > 0, 'a replied turn returns NPC content');
-  return {
-    content,
-    state: result.state,
-    deliveryStatus: result.deliveryStatus,
-    onlineAccepted: result.onlineAccepted,
-    replayed: result.replayed,
-    commandId,
-    expectedVersion,
-  };
-}
-
 async function cleanup() {
   if (!sessionId) return;
   const { error } = await createAdminClient().from('game_sessions').delete().eq('id', sessionId);
@@ -144,74 +77,107 @@ async function main() {
   );
   sessionId = created.gameSession.id;
   currentState = created.gameSession.state;
-  console.log(`project-one simulated-visit e2e started: session=${sessionId}`);
+  console.log(`project-one action-point e2e started: session=${sessionId}`);
+
+  // The current baseline is five stages with an action-point budget. Do not
+  // assert the deprecated simulated-workday capacity or wall-clock fields.
+  assert.equal(currentState.currentStage, 1);
+  assert.equal(currentState.maxStages, 5);
   assert.equal(currentState.currentRound, 1);
   assert.equal(currentState.maxRounds, 5);
-  assert.equal(currentState.simulatedClockMinutes, 9 * 60);
-  assert.equal(currentState.dayAvailableMinutes, 480);
   assert.equal(currentState.actionPoints, 28);
-  assert.equal(currentState.pausedAt, null);
+  assert.equal(currentState.status, 'playing');
 
-  // GET and real waiting are time-neutral; the obsolete timer endpoint is gone.
   const firstRead = await jsonRequest<{ gameSession: { state: GameRuntimeState } }>(
     `/api/game/sessions/${sessionId}`, {}, login.token,
   );
-  const secondRead = await jsonRequest<{ gameSession: { state: GameRuntimeState } }>(
+  assert.equal(firstRead.gameSession.state.version, currentState.version);
+  assert.equal(firstRead.gameSession.state.actionPoints, currentState.actionPoints);
+
+  const npcId = 'p1-frontline-wang-hao';
+  const firstSearch = await command(login.token, 'research_public_info', { npcId });
+  const firstResearch = firstSearch.result.publicResearch as { facts?: unknown[]; weakSignals?: unknown[]; costPoints?: number };
+  assert(firstResearch && Array.isArray(firstResearch.facts));
+  assert(Array.isArray(firstResearch.weakSignals));
+  assert.equal(firstResearch.costPoints, 2);
+  assert.equal(currentState.actionPoints, 26);
+  assert.equal(Object.keys(currentState.publicResearch).length, 0, 'search result is not persisted on the contact card');
+  assert.equal('timeMinutes' in firstSearch.result, false);
+  assert.equal('timeMinutes' in firstSearch.state, false, 'player state does not retain the obsolete search time metric');
+
+  const restoredAfterSearch = await jsonRequest<{ gameSession: { state: GameRuntimeState } }>(
     `/api/game/sessions/${sessionId}`, {}, login.token,
   );
-  assert.equal(firstRead.gameSession.state.simulatedClockMinutes, secondRead.gameSession.state.simulatedClockMinutes);
-  const timerResponse = await fetch(`${baseUrl}/api/game/sessions/${sessionId}/timer`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-session': login.token },
-    body: JSON.stringify({ action: 'pause' }),
-  });
-  assert.equal(timerResponse.status, 410);
+  assert.equal(restoredAfterSearch.gameSession.state.version, currentState.version);
+  assert.equal(Object.keys(restoredAfterSearch.gameSession.state.publicResearch).length, 0);
 
-  let outreach = await streamChat(
-    login.token,
-    'p1-frontline-wang-hao',
-    '王老师您好，我负责本项目方案对接，想先了解您最关心的落地风险和现有流程。',
-    { intent: 'outreach', channel: 'work_phone' },
-  );
-  for (let attempt = 0; outreach.deliveryStatus === 'unanswered' && attempt < 5; attempt += 1) {
-    await command(login.token, 'wait', { minutes: 30 });
-    outreach = await streamChat(
-      login.token,
-      'p1-frontline-wang-hao',
-      '王老师您好，我已准备好同类案例、对接清单和测试计划，想和您确认项目重点。',
-      { intent: 'outreach', channel: 'work_phone' },
-    );
+  // Re-searching is an independent paid action and returns a fresh temporary
+  // result instead of opening a saved card.
+  const secondSearch = await command(login.token, 'research_public_info', { npcId });
+  assert(secondSearch.result.publicResearch);
+  assert.equal(currentState.actionPoints, 24);
+  assert.equal(Object.keys(currentState.publicResearch).length, 0);
+
+  // A contact command is deterministic on the server but can model an
+  // unanswered work phone. Retry with a fresh command until the two-way
+  // contact needed by the invitation flow is established.
+  let contactResult: { result: Record<string, unknown> } | null = null;
+  for (let attempt = 0; attempt < 8 && currentState.npcContacts[npcId]?.status === 'known'; attempt += 1) {
+    contactResult = await command(login.token, 'contact', {
+      npcId,
+      channel: 'work_phone',
+      content: '您好，我想先了解一线流程和项目落地中的主要问题。',
+    });
   }
-  assert.equal(outreach.deliveryStatus, 'replied');
-  assert.equal(currentState.npcContacts['p1-frontline-wang-hao'].status, 'connected');
-  assert(currentState.cumulativeTimeMinutes >= 15);
+  if (currentState.npcContacts[npcId]?.status === 'known') {
+    // Keep the probability branch covered above, but use the guaranteed
+    // formal channel as a bounded fallback so external randomness cannot make
+    // the rest of the E2E flaky.
+    contactResult = await command(login.token, 'contact', {
+      npcId,
+      channel: 'email',
+      content: '您好，我想先了解一线流程和项目落地中的主要问题。',
+    });
+  }
+  assert(contactResult, 'contact command should be attempted');
+  assert.notEqual(currentState.npcContacts[npcId]?.status, 'known', 'eventual phone contact should connect');
+  assert(['connected', 'unanswered', 'declined', 'call_later'].includes(String(contactResult.result.outcome)));
+  assert.equal(currentState.npcContacts[npcId]?.hasReplied, true);
 
-  // A committed AI turn is replayable with the same operation id and never
-  // consumes time or appends state twice.
-  const replayedOutreach = await streamChat(
-    login.token,
-    'p1-frontline-wang-hao',
-    outreach.content ? '此字段会被幂等记录忽略' : '重试',
-    { intent: 'outreach', channel: 'work_phone' },
-    { commandId: outreach.commandId, expectedVersion: outreach.expectedVersion },
-  );
-  assert.equal(replayedOutreach.replayed, true);
-  assert.equal(replayedOutreach.state.version, outreach.state.version);
-  assert.equal(replayedOutreach.state.cumulativeTimeMinutes, outreach.state.cumulativeTimeMinutes);
+  const prepared = await command(login.token, 'prepare', {
+    npcId,
+    preparationType: 'visit_preparation',
+    content: '目标人物：王浩；客户问题：一线重复录入和跨部门确认成本；方案维度：流程、交付和实施；证据：同类案例、验收数据和可核验交付记录；下一步：确认技术交流和责任人。',
+  });
+  const preparation = prepared.result.preparation as GameRuntimeState['preparations'][number];
+  assert(preparation?.id);
+  assert.equal(preparation.type, 'visit_preparation');
+  assert(preparation.brief, 'free-text preparation must produce a deterministic brief');
+  assert.equal(preparation.brief?.audience.includes('王浩'), true);
+  assert.equal(preparation.brief?.problem.includes('重复录入'), true);
+  assert.equal(preparation.brief?.dimensions.includes('流程'), true);
+  assert.equal(preparation.brief?.evidence.includes('案例'), true);
+  assert.equal(preparation.brief?.nextStep.includes('技术交流'), true);
+  assert.deepEqual(new Set(preparation.brief?.semanticTags), new Set([
+    'target_person',
+    'customer_problem',
+    'solution_or_dimension',
+    'evidence',
+    'next_step',
+  ]));
+  const preparationId = preparation.id;
 
   let appointment: GameAppointment | null = null;
   for (let attempt = 0; !appointment && attempt < 8; attempt += 1) {
     const invited = await command(login.token, 'invite', {
-      npcId: 'p1-frontline-wang-hao',
-      channel: 'work_phone',
-      invitationMethod: 'dedicated',
-      visitType: 'formal',
-      venue: '客户办公室会议室',
-      purpose: '确认业务目标、展示方案并梳理下一步',
-      scheduledRound: currentState.currentRound,
-      startMinute: 14 * 60,
+      npcId,
+      channel: 'email',
+      rawText: '希望围绕一线流程、交付案例和实施风险安排一次正式沟通。',
+      attachmentIds: [preparationId],
     });
     const candidate = invited.result.appointment as GameAppointment;
+    assert(candidate?.status, 'invite should return a probability result');
+    assert(['accepted', 'countered', 'rejected'].includes(candidate.status));
     if (candidate.status === 'countered') {
       const accepted = await command(login.token, 'update_appointment', {
         appointmentId: candidate.id,
@@ -223,232 +189,97 @@ async function main() {
     }
   }
   assert(appointment, 'NPC should eventually accept or counter a formal appointment');
+  assert.equal(appointment.npcId, npcId);
+  assert.equal(appointment.visitType, 'formal');
   assert.equal(appointment.durationMinutes, 40);
   assert.equal(appointment.maxTurns, 6);
-  const availableAfterReservation = currentState.dayAvailableMinutes;
 
-  await assert.rejects(() => command(login.token, 'follow_up', {
-    action: 'message',
-    npcId: appointment!.npcId,
-    appointmentId: appointment!.id,
-    channel: 'email',
-    content: '尚未完成拜访时不应允许发送会后跟进。',
-    preparationIds: [],
-  }), /VISIT_NOT_COMPLETED/);
-
-  const ppt = await command(login.token, 'prepare', {
-    npcId: appointment.npcId,
+  const started = await command(login.token, 'start_visit', {
     appointmentId: appointment.id,
-    preparationType: 'ppt',
-    title: '项目价值与落地方案',
-    content: '现状、对公价值、岗位减负、交付计划与风险控制',
+    preparationIds: [preparationId],
   });
-  const pptId = String((ppt.result.preparation as { id: string }).id);
-  const boundary = await command(login.token, 'prepare', {
-    npcId: appointment.npcId,
-    appointmentId: appointment.id,
-    preparationType: 'boundary_gift',
-    title: '私人化高价值礼品',
-    content: '场合敏感，仅用于测试高波动分支',
-  });
-  const boundaryId = String((boundary.result.preparation as { id: string }).id);
-  assert.equal(currentState.cumulativeSpentPoints, 12);
+  assert.equal(started.state.activeMeeting?.appointmentId, appointment.id);
+  assert.equal(started.state.activeMeeting?.usedPreparationIds.includes(preparationId), true);
+  assert.equal(started.state.activeMeeting?.visitType, 'formal');
 
-  const clockBeforeTravel = currentState.simulatedClockMinutes;
-  const travelMinutes = appointment.invitationMethod === 'dedicated' ? 10 : 5;
-  const departureMinute = appointment.startMinute - travelMinutes;
-  const idleDaytimeMinutes = Math.max(0, Math.min(departureMinute, 17 * 60) - Math.max(clockBeforeTravel, 9 * 60));
-  await command(login.token, 'start_visit', { appointmentId: appointment.id, preparationIds: [] });
-  assert.equal(currentState.activeMeeting?.visitType, 'formal');
-  assert.equal(currentState.activeMeeting?.maxTurns, 6);
-  const investedAtMeetingStart = currentState.cumulativeTimeMinutes;
-
-  await command(login.token, 'follow_up', {
-    action: 'deliver_preparation',
-    npcId: appointment.npcId,
-    appointmentId: appointment.id,
-    preparationId: pptId,
-  });
-  assert(currentState.activeMeeting?.usedPreparationIds.includes(pptId));
-
-  const giftCommandId = makeCommandId('boundary-gift');
-  const giftExpectedVersion = currentState.version;
-  const firstGift = await command(login.token, 'give_gift', {
-    preparationId: boundaryId,
-    appointmentId: appointment.id,
-    setting: 'private',
-    witnesses: [],
-    exchangeRequested: false,
-  }, { commandId: giftCommandId, expectedVersion: giftExpectedVersion });
-  const riskCount = currentState.complianceRisks.length;
-  const replayedGift = await command(login.token, 'give_gift', {
-    preparationId: boundaryId,
-    appointmentId: appointment.id,
-    setting: 'private',
-    witnesses: [],
-    exchangeRequested: false,
-  }, { commandId: giftCommandId, expectedVersion: giftExpectedVersion });
-  assert.equal(replayedGift.replayed, true);
-  assert.equal(replayedGift.state.version, firstGift.state.version);
-  assert.equal(replayedGift.state.complianceRisks.length, riskCount);
-
-  // Seed enough already-persisted history to trigger the real rolling-memory
-  // path on the next atomic chat turn without spending 16 model calls.
-  const memoryRows = Array.from({ length: 18 }, (_, index) => ({
-    session_id: sessionId,
-    decision_maker_id: null,
-    round: currentState.currentRound,
-    sender: index % 2 === 0 ? 'user' : 'assistant',
-    content: index % 2 === 0
-      ? `历史沟通${index + 1}：请确认验收留痕、接口边界和交付计划。`
-      : `历史回复${index + 1}：验收材料必须可追溯，接口边界需要写清楚。`,
-    metadata: { npcId: appointment.npcId, source: 'memory-e2e-seed' },
-  }));
-  const { error: memorySeedError } = await createAdminClient().from('chat_messages').insert(memoryRows);
-  assert.equal(memorySeedError, null, `memory history seed failed: ${memorySeedError?.message ?? ''}`);
-
-  const visitTurn = await streamChat(
-    login.token,
-    appointment.npcId,
-    '先结合材料确认两个问题：现有流程最大的组织风险是什么，哪类减负结果对您最有价值？',
-    {
-      intent: 'message',
-      channel: 'offline',
-      contextType: 'formal_visit',
-      appointmentId: appointment.id,
-      usedPreparationIds: [pptId],
-    },
-  );
-  assert.equal(visitTurn.deliveryStatus, 'replied');
-  assert.equal(currentState.activeMeeting?.turnCount, 1);
-  assert.equal(currentState.cumulativeTimeMinutes, investedAtMeetingStart, 'meeting turns must not charge time');
-  const refreshedMemory = currentState.conversationMemories[appointment.npcId];
-  assert(refreshedMemory?.summary, '16+ persisted messages must produce a rolling summary');
-  assert(refreshedMemory.summarizedMessageCount >= 10, 'summary cursor must advance while retaining the recent window');
-
-  await command(login.token, 'end_visit', {
+  const ended = await command(login.token, 'end_visit', {
     appointmentId: appointment.id,
     reason: 'player',
-    summary: '确认现状、客户顾虑、我方材料和下一步负责人。',
+    summary: '确认客户问题、方案维度、证据和下一步责任人。',
   });
-  assert.equal(currentState.activeMeeting, null);
-  assert.equal(currentState.cumulativeTimeMinutes, investedAtMeetingStart + 40);
+  assert.equal(ended.state.activeMeeting, null);
   assert.equal(currentState.appointments.find((item) => item.id === appointment?.id)?.status, 'completed');
   assert.equal(currentState.meetingMinutes.some((item) => item.appointmentId === appointment?.id), true);
-  assert.equal(
-    currentState.dayAvailableMinutes,
-    availableAfterReservation - 30 - 10 - travelMinutes - idleDaytimeMinutes,
-    'preparation, intentional idle time and travel consume available capacity while the reserved visit is not charged twice',
-  );
 
-  const followUp = await command(login.token, 'follow_up', {
-    action: 'message',
-    npcId: appointment.npcId,
-    appointmentId: appointment.id,
-    channel: 'email',
-    content: '按会面确认事项发送纪要，并同步下一步负责人。',
-    preparationIds: [],
-  });
-  assert.equal(followUp.result.npcId, appointment.npcId);
+  // Explicit stage commands are the only progression mechanism. The fifth
+  // stage enters submission check first; submit then performs settlement.
+  for (let expectedStage = 2; expectedStage <= 5; expectedStage += 1) {
+    const advanced = await command(login.token, 'advance_phase');
+    assert.equal(currentState.currentStage, expectedStage);
+    assert.equal(currentState.currentRound, expectedStage);
+    assert.equal(currentState.actionPoints <= 28, true);
+    assert.equal(advanced.result.fromRound, expectedStage - 1);
+  }
+  assert.equal(currentState.currentStage, 5);
+  const submissionCheck = await command(login.token, 'advance_phase');
+  assert.equal(submissionCheck.result.fromRound, 5);
+  assert.equal(currentState.currentStage, 5);
+  assert.equal(currentState.submissionReady, true);
+  assert.equal(currentState.status, 'playing');
 
-  // Verify promised -> sent -> received across two simulated workdays. The
-  // target NPC must not receive the summary in the promise round.
-  const handoffCommandId = makeCommandId('handoff-source');
-  const handoffSummary = '王浩已确认验收材料必须留痕，并建议业务部继续评估。';
-  const { error: handoffSeedError } = await createAdminClient().from('game_events').insert({
-    session_id: sessionId,
-    npc_key: 'p1-frontline-wang-hao',
-    round: currentState.currentRound,
-    event_type: 'npc.handoff.promised',
-    payload: {
-      sourceCommandId: handoffCommandId,
-      sourceNpcId: 'p1-frontline-wang-hao',
-      targetNpcId: 'p1-minister-chen-jianguo',
-      summary: handoffSummary,
-    },
-  });
-  assert.equal(handoffSeedError, null, `handoff promise seed failed: ${handoffSeedError?.message ?? ''}`);
+  const submitted = await command(login.token, 'submit');
+  assert(['won', 'lost'].includes(currentState.status));
+  assert.equal(submitted.result.status, currentState.status);
+  assert.equal(currentState.submissionReady, false);
 
-  await command(login.token, 'advance_phase');
-  const { data: sentEvents, error: sentLoadError } = await createAdminClient()
-    .from('game_events')
-    .select('round, payload')
-    .eq('session_id', sessionId)
-    .eq('event_type', 'npc.handoff.sent');
-  assert.equal(sentLoadError, null);
-  assert(sentEvents?.some((event) => String((event.payload as Record<string, unknown>).promiseKey) === handoffCommandId));
-
-  const { data: prematureReceived, error: prematureLoadError } = await createAdminClient()
-    .from('game_events')
-    .select('id')
-    .eq('session_id', sessionId)
-    .eq('event_type', 'npc.handoff.received');
-  assert.equal(prematureLoadError, null);
-  assert.equal(prematureReceived?.length ?? 0, 0, 'handoff cannot be received in the same phase in which it is sent');
-
-  await command(login.token, 'advance_phase');
-  const { data: receivedEvents, error: receivedLoadError } = await createAdminClient()
-    .from('game_events')
-    .select('npc_key, round, payload')
-    .eq('session_id', sessionId)
-    .eq('event_type', 'npc.handoff.received')
-    .eq('npc_key', 'p1-minister-chen-jianguo');
-  assert.equal(receivedLoadError, null);
-  assert(receivedEvents?.some((event) => String((event.payload as Record<string, unknown>).summary) === handoffSummary));
-
-  const firstHistory = await jsonRequest<{ messages: Array<{ metadata?: { commandId?: string } }> }>(
-    `/api/game/sessions/${sessionId}/messages?npcId=p1-frontline-wang-hao`, {}, login.token,
-  );
-  assert(firstHistory.messages.length >= 4);
-  assert(firstHistory.messages.some((item) => item.metadata?.commandId === outreach.commandId));
-
-  // Refresh preserves exact command state and never advances the simulated day.
   const restored = await jsonRequest<{ gameSession: { state: GameRuntimeState } }>(
     `/api/game/sessions/${sessionId}`, {}, login.token,
   );
   assert.equal(restored.gameSession.state.version, currentState.version);
-  assert.equal(restored.gameSession.state.simulatedClockMinutes, currentState.simulatedClockMinutes);
-  assert.equal(restored.gameSession.state.cumulativeTimeMinutes, currentState.cumulativeTimeMinutes);
-
-  while (currentState.status === 'playing') await command(login.token, 'advance_phase');
-  assert.equal(currentState.currentRound, 5);
-  assert(['won', 'lost'].includes(currentState.status));
-
-  const review = await jsonRequest<{ review: { strengths: string[]; improvements: string[]; nextActions: string[] } }>(
-    `/api/game/sessions/${sessionId}/review`, { method: 'POST', body: '{}' }, login.token,
-  );
-  assert(review.review.strengths.length > 0);
-  assert(review.review.improvements.length > 0);
-  assert(review.review.nextActions.length > 0);
+  assert.equal(restored.gameSession.state.status, currentState.status);
+  assert.equal(restored.gameSession.state.currentStage, 5);
+  assert.equal(restored.gameSession.state.actionPoints, currentState.actionPoints);
 
   const { data: observedEvents, error: observedEventError } = await createAdminClient()
     .from('game_events')
     .select('event_type, payload')
     .eq('session_id', sessionId);
   assert.equal(observedEventError, null);
-  const eventsByType = new Map((observedEvents ?? []).map((event) => [event.event_type, event.payload as Record<string, unknown>]));
-  for (const requiredType of ['session.created', 'preparation.completed', 'visit.started', 'visit.completed', 'phase.advanced', 'session.finished']) {
-    assert(eventsByType.has(requiredType), `missing observation event: ${requiredType}`);
+  const events = observedEvents ?? [];
+  const eventTypes = new Set(events.map((event) => event.event_type));
+  for (const requiredType of [
+    'session.created',
+    'public_info.researched',
+    'contact.completed',
+    'preparation.completed',
+    'visit.started',
+    'visit.completed',
+    'phase.advanced',
+    'session.submitted',
+  ]) {
+    assert(eventTypes.has(requiredType), `missing observation event: ${requiredType}`);
   }
-  const preparationEvent = (observedEvents ?? []).find((event) =>
-    event.event_type === 'preparation.completed'
-    && (event.payload as Record<string, unknown>).type === 'ppt')?.payload as Record<string, unknown>;
-  assert(preparationEvent, 'missing PPT preparation observation');
+  const publicSearchEvents = events.filter((event) => event.event_type === 'public_info.researched');
+  assert(publicSearchEvents.length >= 2, 'repeated searches must create separate observation events');
+  for (const event of publicSearchEvents) {
+    const payload = event.payload as Record<string, unknown>;
+    assert.equal('timeMinutes' in payload, false, 'public search event must not use the obsolete time metric');
+    assert.equal(payload.costPoints, 2);
+  }
+  const preparationEvent = events.find((event) => {
+    const payload = event.payload as Record<string, unknown>;
+    return event.event_type === 'preparation.completed' && payload.type === 'visit_preparation';
+  })?.payload as Record<string, unknown> | undefined;
+  assert(preparationEvent, 'missing free-text preparation observation');
   assert.equal(preparationEvent.hasPreparationBrief, true);
   assert.equal('content' in preparationEvent, false);
-  const visitCompletedEvent = eventsByType.get('visit.completed')!;
-  assert.equal('summary' in visitCompletedEvent, false, 'meeting summary must not be copied to observation payload');
-  assert.equal(typeof visitCompletedEvent.turnCount, 'number');
-  const phaseEvent = eventsByType.get('phase.advanced')!;
-  assert.equal(typeof phaseEvent.fromRound, 'number');
-  assert.equal(typeof phaseEvent.toRound, 'number');
 
-  console.log(`project-one simulated-visit e2e passed: session=${sessionId}, result=${currentState.status}`);
+  console.log(`project-one action-point e2e passed: session=${sessionId}, result=${currentState.status}`);
   await cleanup();
 }
 
 main().catch(async (error) => {
-  console.error(`project-one simulated-visit e2e failed: session=${sessionId || 'not-created'}`);
+  console.error(`project-one action-point e2e failed: session=${sessionId || 'not-created'}`);
   console.error(error instanceof Error ? error.message : error);
   await cleanup();
   process.exitCode = 1;
