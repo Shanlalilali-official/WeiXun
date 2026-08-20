@@ -5,10 +5,12 @@ import { gameCommandSchema, type GameCommand } from '@/lib/contracts/game';
 import {
   commitGameCommand,
   deliverPendingNpcHandoffs,
+  assertOwnedMultiplayerRoomRunning,
   getCommittedGameCommand,
   getOwnedGameSession,
 } from '@/lib/game/repository';
 import { getProjectOneNpc } from '@/lib/game/project-one';
+import { assertMultiplayerCommandAllowed } from '@/lib/game/multiplayer';
 import { executeGameCommand, getPhaseName, toPlayerVisibleGameState } from '@/lib/game/state';
 import { createServerProbabilitySeed } from '@/lib/game/server-random';
 
@@ -28,12 +30,21 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const replay = await getCommittedGameCommand(id, parsed.data.commandId);
     if (replay) return NextResponse.json({ success: true, ...replay });
 
+    const allowFinishedRoom = parsed.data.type === 'mark_notification_read'
+      || (parsed.data.type === 'submit' && gameSession.state.submissionReady);
+    await assertOwnedMultiplayerRoomRunning(id, gameSession.state, allowFinishedRoom);
+
     if (parsed.data.expectedVersion !== gameSession.state.version) {
       return NextResponse.json({
         error: 'STATE_VERSION_CONFLICT',
         state: toPlayerVisibleGameState(gameSession.state),
       }, { status: 409 });
     }
+
+    // A room transition locks every company runtime, grants AP once, and
+    // resets readiness atomically. Letting a generic session command advance
+    // here would bypass that coordination and split the shared room state.
+    assertMultiplayerCommandAllowed(gameSession.state.gameMode, parsed.data.type);
 
     // Probability decisions use an HMAC seed that the browser cannot predict
     // or enumerate. The original command ID remains the idempotency key.
@@ -108,7 +119,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     return NextResponse.json({ success: true, ...committed, state: toPlayerVisibleGameState(committed.state) });
   } catch (error) {
     const code = error instanceof Error ? error.message : 'GAME_COMMAND_FAILED';
-    const status = code === 'STATE_VERSION_CONFLICT' || code === 'COMMAND_IN_PROGRESS' ? 409 : 400;
+    const status = code === 'STATE_VERSION_CONFLICT' || code === 'COMMAND_IN_PROGRESS' || code === 'MULTIPLAYER_ROOM_NOT_RUNNING' ? 409 : 400;
     return NextResponse.json({ error: code }, { status });
   }
 }

@@ -1,5 +1,6 @@
 import { createServerClient } from '@/storage/database/supabase-client';
 import { getProgressionMultiplier } from '@/lib/game/acceptance-mode';
+import { assertMultiplayerRoomRunning } from '@/lib/game/multiplayer';
 import { createProjectOneState, getGameOutcome, normalizeProjectOneState, reconcileNarrativeDiscoveries, type GameRuntimeState } from '@/lib/game/state';
 import type { GameReview } from '@/lib/contracts/game';
 
@@ -40,6 +41,34 @@ export interface OwnedGameSession {
   id: string;
   userId: string;
   state: GameRuntimeState;
+}
+
+/**
+ * Multiplayer state is coordinated by the room, not merely by a session row.
+ * The subsequent commit still carries a runtime version precondition, so a
+ * concurrent coach start/end cannot race past this read and write stale state.
+ */
+export async function assertOwnedMultiplayerRoomRunning(
+  sessionId: string,
+  state: GameRuntimeState,
+  allowFinished = false,
+): Promise<void> {
+  if (state.gameMode !== 'multiplayer') return;
+  const supabase = createServerClient();
+  const { data: slot, error: slotError } = await supabase
+    .from('multiplayer_company_slots')
+    .select('room_id')
+    .eq('game_session_id', sessionId)
+    .maybeSingle();
+  if (slotError || !slot?.room_id) throw new Error('MULTIPLAYER_ROOM_NOT_RUNNING');
+  const { data: room, error: roomError } = await supabase
+    .from('multiplayer_rooms')
+    .select('status')
+    .eq('id', slot.room_id)
+    .maybeSingle();
+  if (roomError) throw new Error('MULTIPLAYER_ROOM_NOT_RUNNING');
+  if (allowFinished && room?.status === 'finished') return;
+  assertMultiplayerRoomRunning(state.gameMode, room?.status);
 }
 
 export interface GameSaveSummary {

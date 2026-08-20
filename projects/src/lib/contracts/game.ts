@@ -5,6 +5,12 @@ export const createGameSessionRequestSchema = z.object({
   replaceExisting: z.boolean().default(false),
 });
 
+/** Version/stage precondition for the multiplayer room-owned stage advance. */
+export const multiplayerReadyRequestSchema = z.object({
+  expectedStage: z.number().int().min(1).max(5),
+  expectedVersion: z.number().int().min(1),
+});
+
 export const relationshipActionRequestSchema = z.object({
   npcId: z.string().trim().min(1).max(128),
   actionId: z.enum(['gift', 'dinner', 'tea', 'festival', 'roadshow', 'visit', 'sample', 'video']),

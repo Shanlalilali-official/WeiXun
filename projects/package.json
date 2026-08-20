@@ -21,6 +21,7 @@
     "test:ai-provider": "tsx scripts/test-ai-provider.ts",
     "test:ai-attitudes": "tsx scripts/test-ai-attitudes.ts",
     "test:e2e": "tsx scripts/test-project-one-e2e.ts",
+    "test:multiplayer-e2e": "tsx scripts/test-multiplayer-e2e.ts",
     "test:single-save-e2e": "tsx scripts/test-single-save-e2e.ts",
     "test:metrics": "tsx scripts/test-metrics.ts",
     "validate": "pnpm run --parallel '/^(ts-check|lint:build)$/'"

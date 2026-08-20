@@ -747,7 +747,14 @@ function GameInner() {
         body: JSON.stringify({ commandId, expectedVersion: gameState.version, type, payload }),
       });
       const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.error || '操作失败，请稍后重试');
+      if (!response.ok) {
+        if (data?.error === 'STATE_VERSION_CONFLICT' && data?.state) {
+          applyServerState(data.state as GameRuntimeState);
+          setCommandFeedback('房间状态已同步，请确认后重试刚才的操作。');
+          return false;
+        }
+        throw new Error(data?.error || '操作失败，请稍后重试');
+      }
       const nextState = data?.state ?? data?.gameSession?.state;
       if (nextState) applyServerState(nextState);
       retryCommandRef.current = null;
@@ -967,11 +974,20 @@ function GameInner() {
     setShowEndDayCheck(false);
     if (gameState?.gameMode === 'multiplayer' && multiplayerRoomId) {
       try {
-        const response = await fetch(`/api/multiplayer/rooms/${multiplayerRoomId}/ready`, { method: 'POST', headers: { 'x-session': localStorage.getItem('weixun_session') || '' } });
+        const response = await fetch(`/api/multiplayer/rooms/${multiplayerRoomId}/ready`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-session': localStorage.getItem('weixun_session') || '' },
+          body: JSON.stringify({ expectedStage: gameState.currentStage, expectedVersion: gameState.roomStageVersion ?? 1 }),
+        });
         const data = await response.json().catch(() => null);
         if (!response.ok) throw new Error(data?.error || '阶段确认失败');
         setCommandFeedback(data?.advanced ? '全体已确认，房间已进入下一阶段，请刷新同步。' : '已确认结束，等待其他公司。');
       } catch (error) {
+        if (error instanceof Error && error.message === 'ROOM_VERSION_CONFLICT' && gameSessionId) {
+          await openSave(gameSessionId, true);
+          setCommandFeedback('房间已发生阶段同步，已刷新当前状态，请再次确认。');
+          return;
+        }
         alert(error instanceof Error ? error.message : '阶段确认失败');
       }
       return;

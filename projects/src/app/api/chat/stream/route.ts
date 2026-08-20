@@ -11,6 +11,7 @@ import {
   commitGameCommand,
   appendGameEvent,
   appendCompetitorClaim,
+  assertOwnedMultiplayerRoomRunning,
   deliverPendingNpcHandoffs,
   getCommittedGameCommand,
   getNpcConversation,
@@ -185,6 +186,13 @@ export async function POST(req: NextRequest) {
       { type: 'result', state: toPlayerVisibleGameState(replay.state), deliveryStatus, replayed: true },
       { type: 'done' },
     ]);
+  }
+
+  try {
+    await assertOwnedMultiplayerRoomRunning(gameSessionId, gameSession.state);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'MULTIPLAYER_ROOM_NOT_RUNNING';
+    return jsonResponse(code === 'MULTIPLAYER_ROOM_NOT_RUNNING' ? code : 'MULTIPLAYER_ROOM_NOT_RUNNING', 409);
   }
 
   const { state: initialState } = gameSession;

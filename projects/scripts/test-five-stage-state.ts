@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { gameCommandSchema } from '../src/lib/contracts/game';
 import {
   applyPreparationAttachments,
@@ -15,7 +16,10 @@ import {
   advanceMultiplayerRuntime,
   allCompaniesOccupied,
   calculateHiddenProgressDelta,
+  assertMultiplayerCommandAllowed,
+  assertMultiplayerRoomRunning,
   decideMultiplayerStageVersion,
+  decideMultiplayerReadyRetry,
   nextStageDeadline,
   shouldAdvanceSharedStage,
   updateSharedCustomerState,
@@ -226,6 +230,7 @@ assert.equal(state.notifications.some((item) => item.title === '竞品动态'), 
 const visibleState = toPlayerVisibleGameState({ ...state, competitorClaims: [{ id: 'claim-1', npcId: 'p1-frontline-wang-hao', stage: 1, statement: '内部竞品主张', truthStatus: 'unverified' }] });
 assert.deepEqual(visibleState.competitorClaims, [], 'player state does not expose competitor claims');
 assert.equal(visibleState.competitorState.actions.length, 0, 'player state does not expose competitor actions');
+assert.equal(normalizeProjectOneState({ ...createProjectOneState(), gameMode: 'multiplayer', roomStageVersion: 4 }).roomStageVersion, 4, 'room stage concurrency token survives player-state normalization');
 const duplicate = executeGameCommand(state, { commandId: 'advance-1', expectedVersion: state.version, type: 'advance_phase', payload: {} });
 assert.equal(duplicate.result.duplicate, true);
 assert.equal(duplicate.state.currentStage, 2);
@@ -241,6 +246,27 @@ assert.equal(nextStageDeadline(null, 0), null);
 assert.equal(decideMultiplayerStageVersion(3, 3), 'advance');
 assert.equal(decideMultiplayerStageVersion(4, 3), 'replay');
 assert.equal(decideMultiplayerStageVersion(5, 3), 'conflict', 'older retries must not be treated as idempotent');
+assert.equal(decideMultiplayerReadyRetry(1, 3, 1, 3, false), 'mark_ready');
+assert.equal(decideMultiplayerReadyRetry(1, 3, 1, 3, true), 'ready_replay', 'same slot retry remains idempotent before the stage moves');
+assert.equal(decideMultiplayerReadyRetry(2, 4, 1, 3, false), 'stage_replay', 'lost last-ready response returns the advanced room');
+assert.equal(decideMultiplayerReadyRetry(5, 6, 5, 5, false, true), 'stage_replay', 'terminal transition can replay without a sixth stage');
+assert.equal(decideMultiplayerReadyRetry(3, 5, 1, 3, false), 'conflict', 'a stale ready request must not mark a later stage ready');
+assert.throws(
+  () => assertMultiplayerCommandAllowed('multiplayer', 'advance_phase'),
+  /MULTIPLAYER_STAGE_ADVANCE_REQUIRES_ROOM_READY/,
+  'the generic session command API cannot bypass room readiness',
+);
+assert.doesNotThrow(() => assertMultiplayerCommandAllowed('solo', 'advance_phase'));
+assert.throws(() => assertMultiplayerRoomRunning('multiplayer', 'waiting'), /MULTIPLAYER_ROOM_NOT_RUNNING/, 'multiplayer writes are blocked before room start');
+assert.throws(() => assertMultiplayerRoomRunning('multiplayer', 'finished'), /MULTIPLAYER_ROOM_NOT_RUNNING/, 'multiplayer writes are blocked after room end');
+assert.doesNotThrow(() => assertMultiplayerRoomRunning('multiplayer', 'running'));
+assert.doesNotThrow(() => assertMultiplayerRoomRunning('solo', 'waiting'));
+const multiplayerMigration = readFileSync(new URL('../supabase/migrations/20260819000200_five_stage_multiplayer.sql', import.meta.url), 'utf8');
+assert.match(multiplayerMigration, /WHERE user_id = p_user_id AND status = 'playing' AND multiplayer = false/, 'solo save replacement excludes multiplayer sessions');
+assert.match(multiplayerMigration, /CREATE OR REPLACE FUNCTION public\.mark_multiplayer_ready\([\s\S]*p_expected_stage integer,[\s\S]*p_expected_version integer/, 'ready RPC requires stage and version preconditions');
+assert.match(multiplayerMigration, /CREATE OR REPLACE FUNCTION public\.create_multiplayer_room/, 'room and slots are created atomically by RPC');
+assert.match(multiplayerMigration, /IF r\.status <> 'waiting' THEN RAISE EXCEPTION 'ROOM_NOT_MUTABLE'/, 'player removal is limited to the lobby until running-room backfill exists');
+assert.match(multiplayerMigration, /SELECT \* INTO runtime_row FROM public\.game_runtime_states[\s\S]*WHERE session_id = s\.game_session_id FOR UPDATE[\s\S]*last_action = 'multiplayer_player_removed', version = version \+ 1/, 'lobby removal locks and invalidates the detached runtime before replacing its session');
 const advancedRuntime = advanceMultiplayerRuntime({
   actionPoints: 23,
   version: 7,

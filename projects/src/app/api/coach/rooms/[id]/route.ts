@@ -20,19 +20,25 @@ export async function PUT(request: NextRequest, context: { params: Promise<{ id:
   const { id } = await context.params;
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   const supabase = createServerClient();
-  const { data: room } = await supabase.from('multiplayer_rooms').select('host_user_id,status,current_stage').eq('id', id).single();
+  const { data: room } = await supabase.from('multiplayer_rooms').select('host_user_id').eq('id', id).single();
   if (!room || (room.host_user_id !== g.session.userId && !COACH_ROLES.has(g.session.role))) return NextResponse.json({ error: '权限不足' }, { status: 403 });
+  const expectedStage = body.expectedStage;
+  const expectedVersion = body.expectedVersion;
+  if (!Number.isInteger(expectedVersion) || !Number.isSafeInteger(expectedVersion) || Number(expectedVersion) < 1) {
+    return NextResponse.json({ error: 'ROOM_VERSION_INVALID' }, { status: 400 });
+  }
   if (body.action === 'force_ready' && typeof body.slotId === 'string') {
-    const stage = body.stage === undefined ? room.current_stage : body.stage;
-    if (!Number.isInteger(stage) || stage !== room.current_stage || stage < 1 || stage > 5 || room.status !== 'running') {
-      return NextResponse.json({ error: 'ROOM_STAGE_INVALID' }, { status: 400 });
-    }
-    const { error } = await supabase.from('multiplayer_company_slots').update({ ready_stage: stage, ready_by_admin: true, updated_at: new Date().toISOString() }).eq('id', body.slotId).eq('room_id', id);
-    return error ? NextResponse.json({ error: 'FORCE_READY_FAILED' }, { status: 503 }) : NextResponse.json({ success: true });
+    if (!Number.isInteger(expectedStage) || Number(expectedStage) < 1 || Number(expectedStage) > 5) return NextResponse.json({ error: 'ROOM_STAGE_INVALID' }, { status: 400 });
+    const { data, error } = await supabase.rpc('force_multiplayer_ready', {
+      p_room_id: id, p_slot_id: body.slotId, p_expected_stage: expectedStage, p_expected_version: expectedVersion,
+    });
+    if (error || !data) return NextResponse.json({ error: error?.message?.startsWith('ROOM_VERSION_CONFLICT') ? 'ROOM_VERSION_CONFLICT' : 'FORCE_READY_FAILED' }, { status: error?.message?.startsWith('ROOM_VERSION_CONFLICT') ? 409 : 503 });
+    return NextResponse.json(data);
   }
   if (body.action === 'remove_player' && typeof body.slotId === 'string') {
-    const { error } = await supabase.from('multiplayer_company_slots').update({ player_user_id: null, game_session_id: null, connected: false, ready_stage: null, ready_by_admin: false, updated_at: new Date().toISOString() }).eq('id', body.slotId).eq('room_id', id);
-    return error ? NextResponse.json({ error: 'REMOVE_PLAYER_FAILED' }, { status: 503 }) : NextResponse.json({ success: true });
+    const { data, error } = await supabase.rpc('remove_multiplayer_player', { p_room_id: id, p_slot_id: body.slotId, p_expected_version: expectedVersion });
+    if (error || !data) return NextResponse.json({ error: error?.message?.startsWith('ROOM_VERSION_CONFLICT') ? 'ROOM_VERSION_CONFLICT' : 'REMOVE_PLAYER_FAILED' }, { status: error?.message?.startsWith('ROOM_VERSION_CONFLICT') ? 409 : 503 });
+    return NextResponse.json({ success: true, data });
   }
   return NextResponse.json({ error: 'ROOM_ACTION_INVALID' }, { status: 400 });
 }

@@ -30,6 +30,30 @@ export interface AdvancedMultiplayerRuntime extends MultiplayerRuntimeSnapshot {
 }
 
 export type MultiplayerStageVersionDecision = 'advance' | 'replay' | 'conflict';
+export type MultiplayerReadyDecision = 'mark_ready' | 'ready_replay' | 'stage_replay' | 'conflict';
+
+/**
+ * A multiplayer runtime is owned by its room. A generic session command may
+ * mutate its own actions, but it must never move the shared stage directly.
+ */
+export function assertMultiplayerCommandAllowed(
+  gameMode: 'solo' | 'multiplayer',
+  commandType: string,
+): void {
+  if (gameMode === 'multiplayer' && commandType === 'advance_phase') {
+    throw new Error('MULTIPLAYER_STAGE_ADVANCE_REQUIRES_ROOM_READY');
+  }
+}
+
+/** A joined company may write only while its shared room is running. */
+export function assertMultiplayerRoomRunning(
+  gameMode: 'solo' | 'multiplayer',
+  roomStatus: string | null | undefined,
+): void {
+  if (gameMode === 'multiplayer' && roomStatus !== 'running') {
+    throw new Error('MULTIPLAYER_ROOM_NOT_RUNNING');
+  }
+}
 
 /**
  * A transition retry is idempotent only for the immediately preceding version.
@@ -42,6 +66,25 @@ export function decideMultiplayerStageVersion(
 ): MultiplayerStageVersionDecision {
   if (currentVersion === expectedVersion) return 'advance';
   if (currentVersion === expectedVersion + 1) return 'replay';
+  return 'conflict';
+}
+
+/** Pure contract mirror for mark_multiplayer_ready's stale-retry handling. */
+export function decideMultiplayerReadyRetry(
+  currentStage: number,
+  currentVersion: number,
+  expectedStage: number,
+  expectedVersion: number,
+  alreadyReady: boolean,
+  roomFinished = false,
+): MultiplayerReadyDecision {
+  if (currentVersion === expectedVersion && currentStage === expectedStage) {
+    return alreadyReady ? 'ready_replay' : 'mark_ready';
+  }
+  if (currentVersion === expectedVersion + 1
+    && (currentStage === expectedStage + 1 || (roomFinished && currentStage === expectedStage))) {
+    return 'stage_replay';
+  }
   return 'conflict';
 }
 

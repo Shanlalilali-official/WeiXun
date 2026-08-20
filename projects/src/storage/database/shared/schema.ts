@@ -59,7 +59,7 @@ export const gameSessions = pgTable("game_sessions", {
 	index("game_sessions_scenario_idx").using("btree", table.scenarioId.asc().nullsLast().op("uuid_ops")),
 	index("game_sessions_status_idx").using("btree", table.status.asc().nullsLast().op("text_ops")),
 	index("game_sessions_user_idx").using("btree", table.userId.asc().nullsLast().op("text_ops")),
-	uniqueIndex("game_sessions_one_playing_per_user_idx").on(table.userId).where(sql`${table.status} = 'playing'`),
+	uniqueIndex("game_sessions_one_solo_playing_per_user_idx").on(table.userId).where(sql`${table.status} = 'playing' and ${table.multiplayer} = false`),
 	foreignKey({
 			columns: [table.scenarioId],
 			foreignColumns: [projectScenarios.id],

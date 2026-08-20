@@ -31,9 +31,12 @@ export async function POST(request: NextRequest) {
     }) : DEFAULT_COMPANIES;
   const roomCode = randomBytes(4).toString('hex').toUpperCase();
   const supabase = createServerClient();
-  const { data: room, error } = await supabase.from('multiplayer_rooms').insert({ room_code: roomCode, scenario_code: 'project-1', host_user_id: guard.session.userId, stage_duration_seconds: duration }).select('*').single();
-  if (error || !room) return NextResponse.json({ error: 'ROOM_CREATE_FAILED' }, { status: 503 });
-  const { error: slotsError } = await supabase.from('multiplayer_company_slots').insert(companies.map((company) => ({ ...company, room_id: room.id })));
-  if (slotsError) return NextResponse.json({ error: 'ROOM_SLOT_CREATE_FAILED' }, { status: 503 });
-  return NextResponse.json({ data: { ...room, room_code: roomCode, companies } }, { status: 201 });
+  const { data, error } = await supabase.rpc('create_multiplayer_room', {
+    p_host_user_id: guard.session.userId,
+    p_room_code: roomCode,
+    p_stage_duration_seconds: duration,
+    p_companies: companies,
+  });
+  if (error || !data) return NextResponse.json({ error: 'ROOM_CREATE_FAILED' }, { status: 503 });
+  return NextResponse.json({ data }, { status: 201 });
 }

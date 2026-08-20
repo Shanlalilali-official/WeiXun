@@ -293,6 +293,8 @@ export interface GameRuntimeState {
   maxStages: number;
   gameMode: 'solo' | 'multiplayer';
   companyId: string;
+  /** Shared-room concurrency token; distinct from the personal runtime version. */
+  roomStageVersion?: number;
   knownPersonalInfo: Record<string, string[]>;
   actionPoints: number;
   status: 'playing' | 'won' | 'lost';
@@ -519,6 +521,9 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
     maxStages: state.maxStages ?? state.maxRounds,
     gameMode: state.gameMode ?? 'solo',
     companyId: state.companyId ?? 'player-company',
+    roomStageVersion: state.gameMode === 'multiplayer'
+      ? Math.max(1, Math.floor(state.roomStageVersion ?? 1))
+      : undefined,
     knownPersonalInfo: state.knownPersonalInfo ?? PROJECT_ONE_COMPANY_PERSONAL_INFO[state.companyId ?? 'player-company'] ?? {},
     unlockedNpcIds: deriveUnlockedNpcIds(state.unlockedClues ?? []),
     simulatedClockMinutes: PROJECT_ONE_DAY_START_MINUTE,
@@ -1956,6 +1961,9 @@ export function executeGameCommand(
   }
   if (command.expectedVersion !== state.version) throw new Error('STATE_VERSION_CONFLICT');
   if (state.status !== 'playing' && command.type !== 'mark_notification_read') throw new Error('GAME_ALREADY_FINISHED');
+  if (state.gameMode === 'multiplayer' && command.type === 'advance_phase') {
+    throw new Error('MULTIPLAYER_STAGE_ADVANCE_REQUIRES_ROOM_READY');
+  }
   if (state.submissionReady && !['submit', 'mark_notification_read'].includes(command.type)) throw new Error('SUBMISSION_CHECK_REQUIRED');
   if (state.activeMeeting && !['end_visit', 'give_gift', 'follow_up', 'mark_notification_read'].includes(command.type)) {
     throw new Error('MEETING_ALREADY_ACTIVE');
