@@ -1,5 +1,5 @@
 import type { EmailAttachment, NpcTurnEvaluation } from '@/lib/contracts/ai';
-import { verifyNpcEvaluationSources } from '@/lib/ai/npc-evaluation';
+import { verifyNpcEvaluationSources } from '@/lib/ai/npc-evaluation-sources';
 import type { GameCommand } from '@/lib/contracts/game';
 import {
   PROJECT_ONE_ACTION_POINT_CAP,

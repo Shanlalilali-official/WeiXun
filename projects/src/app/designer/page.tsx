@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Wand2, Building2, Users, FileText, Save, ArrowLeft, Megaphone, UserCog, BarChart3, Copy, Plus, Trash2, Pencil, X, LogOut, ShieldCheck, FlaskConical } from 'lucide-react';
+import { Wand2, Building2, Users, FileText, Save, ArrowLeft, Megaphone, UserCog, BarChart3, Copy, Plus, Trash2, Pencil, X, LogOut, ShieldCheck, FlaskConical, Library, Database, ImageIcon, FileBarChart, TestTube2, PlayCircle, ClipboardList, Upload, Sparkles, FolderOpen } from 'lucide-react';
 import { aMetrics, bMetrics, cMetrics } from '@/lib/metrics-data';
 import { projectNames, keyPeopleByProject as keyPeopleByProjectData } from '@/lib/key-people-data';
 import { ROLE_COLOR, ROLE_LABEL } from '@/components/app-shell';
@@ -67,7 +67,9 @@ export default function DesignerPage() {
   const [selectedProject, setSelectedProject] = useState<number>(1);
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedModule, setSelectedModule] = useState<'client' | 'vendor' | 'scenario' | 'metrics' | null>('client');
+  const [selectedModule, setSelectedModule] = useState<'assets' | 'data' | 'scenario' | 'reports' | 'testing'>('assets');
+  const [selectedDataTab, setSelectedDataTab] = useState<'project' | 'competitors' | 'metrics'>('project');
+  const [selectedScenarioTab, setSelectedScenarioTab] = useState<'images' | 'prompts'>('images');
   const [selectedMetricTab, setSelectedMetricTab] = useState('A类基础指标');
   const [a, setA] = useState(aMetrics);
   const [b, setB] = useState(bMetrics);
@@ -192,10 +194,6 @@ export default function DesignerPage() {
   const currentProject = projects.find(p => p.id === selectedProject);
   const currentCompetitors = competitors.filter(c => c.project_id === selectedProject);
 
-  const handleSave = async () => {
-    alert('配置已保存（功能开发中）');
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen bg-role-designer flex items-center justify-center text-muted-foreground">
@@ -303,7 +301,7 @@ export default function DesignerPage() {
               </div>
               <div>
                 <div className="text-sm font-semibold text-foreground">游戏设计师工作台</div>
-                <div className="text-[10px] text-muted-foreground">配置甲方 · 乙方 · 场景 · AI 提示词</div>
+                <div className="text-[10px] text-muted-foreground">管理游戏素材 · 数据 · 场景 · 报告 · 测试</div>
               </div>
             </div>
           </div>
@@ -315,12 +313,6 @@ export default function DesignerPage() {
               <ShieldCheck className="w-3.5 h-3.5" />
               <span>{ROLE_LABEL.platform_designer}</span>
             </div>
-            <button
-              onClick={handleSave}
-              className="btn-primary px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5"
-            >
-              <Save className="w-4 h-4" /> 保存配置
-            </button>
             <button
               onClick={() => {
                 document.cookie = 'weixun_session=; path=/; max-age=0';
@@ -358,63 +350,272 @@ export default function DesignerPage() {
           </div>
         </div>
 
-        {/* 顶部三模块：甲方模块 | 乙方模块 | 场景 - 小方块样式 */}
-        <div className="mb-6 flex items-center gap-4">
-          <span className="text-sm font-semibold text-foreground">模块选择：</span>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setSelectedModule('client')}
-              className={`px-4 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                selectedModule === 'client'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-card text-muted-foreground hover:text-foreground border border-border'
-              }`}
-            >
-              <Building2 className="w-4 h-4" /> 甲方模块
-            </button>
-            <button
-              onClick={() => setSelectedModule('vendor')}
-              className={`px-4 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                selectedModule === 'vendor'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-card text-muted-foreground hover:text-foreground border border-border'
-              }`}
-            >
-              <Users className="w-4 h-4" /> 乙方模块
-            </button>
-            <button
-              onClick={() => setSelectedModule('scenario')}
-              className={`px-4 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                selectedModule === 'scenario'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-card text-muted-foreground hover:text-foreground border border-border'
-              }`}
-            >
-              <FileText className="w-4 h-4" /> 场景
-            </button>
-            <button
-              onClick={() => setSelectedModule('metrics')}
-              className={`px-4 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-2 ${
-                selectedModule === 'metrics'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-card text-muted-foreground hover:text-foreground border border-border'
-              }`}
-            >
-              <BarChart3 className="w-4 h-4" /> 指标
-            </button>
-          </div>
-        </div>
+        {/* 一级工作区 */}
+        <nav aria-label="设计师工作区" className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+          {[
+            { id: 'assets' as const, label: '素材库', hint: '人物资料与提示词', icon: Library },
+            { id: 'data' as const, label: '数据', hint: '项目、竞品与指标', icon: Database },
+            { id: 'scenario' as const, label: '场景', hint: '场景图片与提示词', icon: ImageIcon },
+            { id: 'reports' as const, label: '报告', hint: '玩家生成的报告', icon: FileBarChart },
+            { id: 'testing' as const, label: '测试', hint: '实际测试与模型回复', icon: TestTube2 },
+          ].map((section) => {
+            const Icon = section.icon;
+            const active = selectedModule === section.id;
+            return (
+              <button
+                key={section.id}
+                onClick={() => setSelectedModule(section.id)}
+                aria-current={active ? 'page' : undefined}
+                className={`group flex items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all ${
+                  active
+                    ? 'border-role-designer bg-role-designer/10 text-role-designer shadow-sm'
+                    : 'border-border bg-card text-muted-foreground hover:border-role-designer/40 hover:bg-muted hover:text-foreground'
+                }`}
+              >
+                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${active ? 'bg-role-designer text-white' : 'bg-muted text-muted-foreground group-hover:text-role-designer'}`}>
+                  <Icon className="h-4 w-4" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold">{section.label}</span>
+                  <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">{section.hint}</span>
+                </span>
+              </button>
+            );
+          })}
+        </nav>
 
-        {/* 根据选中的模块显示不同内容 */}
-        {selectedModule === 'client' && (
-          <div className="bg-card rounded-xl border border-border p-6 mb-6">
-            <div className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
-              <Building2 className="w-4 h-4 text-primary" /> 甲方模块配置
+        {selectedModule === 'data' && (
+          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-4 py-3">
+            <span className="mr-2 text-xs font-semibold text-foreground">数据分类</span>
+            {[
+              { id: 'project' as const, label: '项目数据', icon: Building2 },
+              { id: 'competitors' as const, label: '竞品数据', icon: Users },
+              { id: 'metrics' as const, label: '指标体系', icon: BarChart3 },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const active = selectedDataTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setSelectedDataTab(tab.id)}
+                  className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                    active ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" /> {tab.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {selectedModule === 'assets' && (
+          <div className="space-y-4 animate-fade-up">
+            <div className="flex items-start justify-between gap-4 rounded-xl border border-border bg-card p-5">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-role-designer/10 text-role-designer">
+                  <Library className="h-5 w-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-semibold text-foreground">素材库</h2>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">集中管理人物资料、人物提示词和后续可复用的视觉素材。</p>
+                </div>
+              </div>
+              <span className="rounded-full bg-success/10 px-2.5 py-1 text-[10px] font-medium text-success">当前项目 · {currentProject?.name || '项目一'}</span>
             </div>
-            
-            {/* 底部六入口 */}
-            <div className="grid grid-cols-6 gap-4">
-              {/* 甲方基本信息 */}
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <button
+                onClick={() => router.push('/designer/key-persons')}
+                className="group rounded-xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md"
+              >
+                <div className="mb-4 flex items-center justify-between">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary"><UserCog className="h-5 w-5" /></span>
+                  <span className="rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">人物</span>
+                </div>
+                <div className="text-sm font-semibold text-foreground">人物资料</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">维护关键人的基础信息、性格和沟通画像。</p>
+                <div className="mt-4 text-xs font-medium text-primary">{currentProject?.keyPersons.length || 0} 位人物 · 查看资料 →</div>
+              </button>
+
+              <button
+                onClick={() => router.push('/designer/eval-prompts')}
+                className="group rounded-xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md"
+              >
+                <div className="mb-4 flex items-center justify-between">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600"><Megaphone className="h-5 w-5" /></span>
+                  <span className="rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">提示词</span>
+                </div>
+                <div className="text-sm font-semibold text-foreground">人物评估提示词</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">配置玩家表现评估和人物反馈所使用的提示词。</p>
+                <div className="mt-4 text-xs font-medium text-primary">打开提示词配置 →</div>
+              </button>
+
+              <button
+                onClick={() => router.push('/designer/dialogue-prompts')}
+                className="group rounded-xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-violet-400/60 hover:shadow-md"
+              >
+                <div className="mb-4 flex items-center justify-between">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600"><FlaskConical className="h-5 w-5" /></span>
+                  <span className="rounded-full bg-violet-500/10 px-2 py-1 text-[10px] text-violet-600">模型</span>
+                </div>
+                <div className="text-sm font-semibold text-foreground">人物对话提示词</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">管理张建国当面拜访的对话提示词和测试剧本。</p>
+                <div className="mt-4 text-xs font-medium text-violet-600">打开模型回复测试 →</div>
+              </button>
+
+              <div className="rounded-xl border border-dashed border-border bg-muted/40 p-5">
+                <div className="mb-4 flex items-center justify-between">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-500/10 text-slate-500"><ImageIcon className="h-5 w-5" /></span>
+                  <span className="rounded-full bg-slate-500/10 px-2 py-1 text-[10px] text-slate-500">空状态</span>
+                </div>
+                <div className="text-sm font-semibold text-foreground">人物图片素材</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">暂未上传人物肖像或状态图，后续可在此集中维护。</p>
+                <button disabled className="mt-4 flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground/60">
+                  <Upload className="h-3.5 w-3.5" /> 上传图片（待开放）
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-border bg-card p-5">
+              <div className="mb-3 flex items-center gap-2">
+                <FolderOpen className="h-4 w-4 text-primary" />
+                <span className="text-sm font-semibold text-foreground">素材使用说明</span>
+              </div>
+              <div className="grid gap-3 text-xs leading-5 text-muted-foreground md:grid-cols-3">
+                <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">人物资料</span><br />用于维护人物主档和游戏中的可披露信息。</div>
+                <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">人物提示词</span><br />分为评估提示词与对话提示词，按用途独立维护。</div>
+                <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">图片素材</span><br />当前保留空状态，不影响文字和模型测试流程。</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {selectedModule === 'scenario' && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-5 py-3">
+            <div className="flex items-center gap-2">
+              <ImageIcon className="h-4 w-4 text-primary" />
+              <span className="text-sm font-semibold text-foreground">场景资源</span>
+              <span className="text-xs text-muted-foreground">图片素材为主，提示词独立维护</span>
+            </div>
+            <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
+              <button
+                onClick={() => setSelectedScenarioTab('images')}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${selectedScenarioTab === 'images' ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                场景图片
+              </button>
+              <button
+                onClick={() => setSelectedScenarioTab('prompts')}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${selectedScenarioTab === 'prompts' ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                场景提示词
+              </button>
+            </div>
+          </div>
+        )}
+
+        {selectedModule === 'scenario' && selectedScenarioTab === 'images' && (
+          <div className="space-y-4 animate-fade-up">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {[
+                { title: '项目地图', description: '项目一的整体场景与流程背景。', image: '/game-map.webp' },
+                { title: '会面环境', description: '拜访流程使用的空场景背景。', image: '/images/game/visit-meeting-room-empty-v1.png' },
+                { title: '对话场景', description: '人物对话时使用的场景素材。', image: '/images/game/visit-dialogue-scene-v1.png' },
+              ].map((scene) => (
+                <article key={scene.title} className="overflow-hidden rounded-xl border border-border bg-card">
+                  <div className="h-40 bg-muted bg-cover bg-center" style={{ backgroundImage: `url('${scene.image}')` }} role="img" aria-label={scene.title} />
+                  <div className="p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-sm font-semibold text-foreground">{scene.title}</h3>
+                      <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] text-success">已就绪</span>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{scene.description}</p>
+                  </div>
+                </article>
+              ))}
+            </div>
+            <div className="flex items-center justify-between rounded-xl border border-dashed border-border bg-muted/40 px-5 py-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-500/10 text-slate-500"><ImageIcon className="h-4 w-4" /></div>
+                <div>
+                  <div className="text-sm font-medium text-foreground">更多场景图片</div>
+                  <div className="text-xs text-muted-foreground">上传入口暂未开放，当前先使用项目内置素材。</div>
+                </div>
+              </div>
+              <button disabled className="flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground/60"><Upload className="h-3.5 w-3.5" /> 上传图片（待开放）</button>
+            </div>
+          </div>
+        )}
+
+        {selectedModule === 'reports' && (
+          <div className="rounded-xl border border-border bg-card p-8 text-center animate-fade-up">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-role-designer/10 text-role-designer"><FileBarChart className="h-6 w-6" /></div>
+            <h2 className="mt-4 text-base font-semibold text-foreground">玩家生成报告</h2>
+            <p className="mx-auto mt-2 max-w-md text-xs leading-5 text-muted-foreground">完成对局并生成复盘报告后，报告会集中出现在这里。当前暂无可查看的玩家报告。</p>
+            <div className="mx-auto mt-6 grid max-w-xl gap-3 text-left sm:grid-cols-3">
+              {['对局复盘', '能力诊断', '行动记录'].map((item) => (
+                <div key={item} className="rounded-lg border border-dashed border-border bg-muted/40 p-3">
+                  <div className="text-xs font-medium text-muted-foreground">{item}</div>
+                  <div className="mt-2 text-[10px] text-muted-foreground/70">暂无记录</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {selectedModule === 'testing' && (
+          <div className="space-y-4 animate-fade-up">
+            <div className="rounded-xl border border-border bg-card p-5">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-role-designer/10 text-role-designer"><TestTube2 className="h-5 w-5" /></div>
+                <div>
+                  <h2 className="text-base font-semibold text-foreground">测试中心</h2>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">按测试目标选择实际测试或模型回复测试，测试记录与正式数据分开。</p>
+                </div>
+              </div>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <button
+                onClick={() => router.push('/project-one-preview')}
+                className="group rounded-xl border border-border bg-card p-6 text-left transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary/10 text-primary"><PlayCircle className="h-6 w-6" /></span>
+                  <span className="rounded-full bg-success/10 px-2.5 py-1 text-[10px] font-medium text-success">可用</span>
+                </div>
+                <h3 className="mt-4 text-sm font-semibold text-foreground">实际测试</h3>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">进入项目一五人版前端测试页，体验完整作战台和真实 AI 交互预览。</p>
+                <div className="mt-5 text-xs font-medium text-primary">进入实际测试 →</div>
+              </button>
+              <button
+                onClick={() => router.push('/designer/dialogue-prompts')}
+                className="group rounded-xl border border-border bg-card p-6 text-left transition-all hover:-translate-y-0.5 hover:border-violet-400/60 hover:shadow-md"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600"><ClipboardList className="h-6 w-6" /></span>
+                  <span className="rounded-full bg-violet-500/10 px-2.5 py-1 text-[10px] font-medium text-violet-600">双轨</span>
+                </div>
+                <h3 className="mt-4 text-sm font-semibold text-foreground">模型回复测试</h3>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">使用同一输入对比 DeepSeek Flash 与豆包的 NPC 回复、评估和状态变化。</p>
+                <div className="mt-5 text-xs font-medium text-violet-600">进入模型回复测试 →</div>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 根据选中的工作区显示不同内容 */}
+        {selectedModule === 'data' && selectedDataTab === 'project' && (
+          <div className="bg-card rounded-xl border border-border p-6 mb-6">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Building2 className="w-4 h-4 text-primary" />
+                <span className="text-sm font-semibold text-foreground">项目数据</span>
+              </div>
+              <span className="text-[10px] text-muted-foreground">{currentProject?.name || '项目一'} · 项目配置</span>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
               <button
                 onClick={() => router.push('/designer/client-info')}
                 className="bg-muted rounded-xl border border-border p-4 hover:border-primary/50 hover:shadow-md transition-all text-left"
@@ -426,50 +627,36 @@ export default function DesignerPage() {
                 <div className="text-[10px] text-muted-foreground mt-1">预算、介绍、产品</div>
               </button>
 
-              {/* 关键人信息 */}
-              <button
-                onClick={() => router.push('/designer/key-persons')}
-                className="bg-muted rounded-xl border border-border p-4 hover:border-primary/50 hover:shadow-md transition-all text-left"
-              >
-                <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center mb-3">
-                  <UserCog className="w-5 h-5 text-primary" />
+              <div className="bg-muted rounded-xl border border-border p-4">
+                <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-success/10">
+                  <FileText className="w-5 h-5 text-success" />
                 </div>
-                <div className="text-sm font-semibold text-foreground">关键人信息</div>
-                <div className="text-[10px] text-muted-foreground mt-1">{currentProject?.keyPersons.length || 0} 人</div>
-              </button>
-
-              {/* AI评估提示词 */}
-              <button
-                onClick={() => router.push('/designer/eval-prompts')}
-                className="bg-muted rounded-xl border border-border p-4 hover:border-primary/50 hover:shadow-md transition-all text-left"
-              >
-                <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center mb-3">
-                  <Megaphone className="w-5 h-5 text-primary" />
+                <div className="text-sm font-semibold text-foreground">项目概览</div>
+                <div className="mt-2 space-y-1 text-[10px] leading-5 text-muted-foreground">
+                  <div>预算：{currentProject?.budget ? `${currentProject.budget} 万元` : '待配置'}</div>
+                  <div>产品：{currentProject?.products || '待配置'}</div>
                 </div>
-                <div className="text-sm font-semibold text-foreground">AI评估提示词</div>
-                <div className="text-[10px] text-muted-foreground mt-1">玩家评估</div>
-              </button>
+              </div>
 
-              {/* 张建国提示词 A/B 测试 */}
-              <button
-                onClick={() => router.push('/designer/dialogue-prompts')}
-                className="bg-muted rounded-xl border border-border p-4 hover:border-primary/50 hover:shadow-md transition-all text-left"
-              >
-                <div className="w-10 h-10 rounded-lg bg-violet-500/10 flex items-center justify-center mb-3">
-                  <FlaskConical className="w-5 h-5 text-violet-600" />
+              <div className="bg-muted rounded-xl border border-border p-4">
+                <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-role-designer/10">
+                  <Sparkles className="w-5 h-5 text-role-designer" />
                 </div>
-                <div className="text-sm font-semibold text-foreground">提示词 A/B 测试</div>
-                <div className="text-[10px] text-muted-foreground mt-1">张建国 · 当面拜访 · DeepSeek / 豆包</div>
-              </button>
-
+                <div className="text-sm font-semibold text-foreground">配置状态</div>
+                <div className="mt-2 space-y-1 text-[10px] leading-5 text-muted-foreground">
+                  <div>关键人物：{currentProject?.keyPersons.length || 0} 人</div>
+                  <div>竞品记录：{currentCompetitors.length} 家</div>
+                </div>
+              </div>
             </div>
           </div>
         )}
 
-        {selectedModule === 'vendor' && (
+        {selectedModule === 'data' && selectedDataTab === 'competitors' && (
           <div className="bg-card rounded-xl border border-border p-6 mb-6">
             <div className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
-              <Users className="w-4 h-4 text-primary" /> 乙方模块配置
+              <Users className="w-4 h-4 text-primary" /> 竞品数据
+              <span className="ml-auto text-[10px] font-normal text-muted-foreground">当前项目 · {currentCompetitors.length} 家</span>
             </div>
             {currentCompetitors.length > 0 ? (
               <div className="space-y-3">
@@ -497,7 +684,7 @@ export default function DesignerPage() {
           </div>
         )}
 
-        {selectedModule === 'scenario' && (
+        {selectedModule === 'scenario' && selectedScenarioTab === 'prompts' && (
           <div className="bg-card rounded-xl border border-border mb-6">
             {/* Header */}
             <div className="px-6 py-4 border-b border-border flex items-center gap-2">
@@ -705,10 +892,10 @@ export default function DesignerPage() {
           </div>
         )}
 
-        {selectedModule === 'metrics' && (
+        {selectedModule === 'data' && selectedDataTab === 'metrics' && (
           <div className="bg-card rounded-xl border border-border p-6 mb-6">
             <div className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-primary" /> 指标配置
+              <BarChart3 className="w-4 h-4 text-primary" /> 指标体系
               <span className="text-[10px] text-muted-foreground font-normal ml-auto">A/B/C 三级指标体系</span>
             </div>
 

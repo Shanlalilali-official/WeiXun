@@ -174,12 +174,6 @@ importers:
         specifier: ^4.3.5
         version: 4.3.6
     devDependencies:
-      '@react-dev-inspector/babel-plugin':
-        specifier: ^2.0.1
-        version: 2.0.1(supports-color@8.1.1)
-      '@react-dev-inspector/middleware':
-        specifier: ^2.0.1
-        version: 2.0.1(eslint@9.39.2(jiti@2.6.1)(supports-color@8.1.1))(supports-color@8.1.1)(typescript@5.9.3)(webpack@5.104.1(esbuild@0.27.3)(lightningcss@1.30.2)(postcss@8.5.6))
       '@tailwindcss/postcss':
         specifier: ^4
         version: 4.1.18
@@ -204,9 +198,6 @@ importers:
       only-allow:
         specifier: ^1.2.2
         version: 1.2.2
-      react-dev-inspector:
-        specifier: ^2.0.1
-        version: 2.0.1(@types/react@19.2.10)(eslint@9.39.2(jiti@2.6.1)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@5.9.3)(webpack@5.104.1(esbuild@0.27.3)(lightningcss@1.30.2)(postcss@8.5.6))
       shadcn:
         specifier: latest
         version: 4.16.2(@cfworker/json-schema@4.1.1)(supports-color@8.1.1)(typescript@5.9.3)

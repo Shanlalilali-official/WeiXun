@@ -107,6 +107,14 @@
 - 验收证据：专项测试、AI Provider 与五人预览回归、TypeScript、目标 ESLint、Next.js 生产构建通过；浏览器确认 `/designer/dialogue-prompts` 双栏首屏、状态卡、NPC 区和 TEST DEBUG 区正常渲染。
 - 已知边界：测试状态为进程内临时态，不写正式 Supabase；本批未使用真实豆包 Key 发起外部调用，真实联调需用户在 `.env.local` 填写方舟 API Key 和其账号可用的 Model ID/Endpoint ID 后重启。
 
+## 2026-09-07 游戏设计师工作台入口整理（用户已批准）
+
+- 当前问题：设计师首页按甲方、乙方、场景、指标并列，人物资料、提示词、测试和数据混在旧业务模块中；报告、人物图片和实际测试缺少清晰入口。
+- 目标行为：一级按工作任务组织为“素材库、数据、场景、报告、测试”。素材库承载人物资料、人物提示词和人物图片；数据承载项目、竞品和指标；场景以图片素材为默认视图并保留提示词二级页签；测试只包含实际测试和模型回复测试。
+- 影响范围：仅整理 `projects/src/app/designer/page.tsx` 的信息架构与入口，不新增数据表、上传能力或报告查询接口。
+- 验收条件：五个一级入口均可切换；现有可用页面保持可达；人物图片、报告与上传能力在无生产模型时显示诚实空状态；不显示假保存成功；TypeScript 与 diff 检查通过。
+- 验证证据：场景引用的三张图片均存在；TypeScript、全量 ESLint、AI Provider、五阶段状态机、指标、排名时间戳、复盘上下文、Next.js/tsup 生产构建、`git diff --check` 与 harness 检查通过。一键启动完成环境与数据库检查并启动当前 build，`/api/health/startup` 返回 `database: ok`。验收期间发现并修复 React Dev Inspector/Babel 冲突、客户端状态模块间接导入 `node:async_hooks` 和依赖目录缺失 AJV 链接。
+
 ## 验收门槛
 
 - 自动化：TypeScript、目标 lint、AI Provider mock、状态机、指标和生产构建通过。
