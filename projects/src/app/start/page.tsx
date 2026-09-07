@@ -34,10 +34,10 @@ const DEFAULT_PROJECTS: Hotspot[] = [
     difficultyLabel: '新手入门',
     left: '20%', top: '40%',
     type: 'side',
-    leader: { name: '赵峰', style: '老虎型，年富力强', title: '分管业务副主任' },
-    technicalDifficulties: ['人物关系链短', '信息挖掘门槛低', '适合零基础销售'],
-    customerNeeds: ['办公配套升级', '预算固定', '日常使用需求清晰'],
-    aiAdvice: '单位内部人员层级简单，新任分管领导刚接手业务。当前决策链尚不明确，应先从基层和采购验证流程，再识别真正拍板人。',
+    leader: { name: '张建国', style: '重视协同与交付闭环', title: '主管副总经理' },
+    technicalDifficulties: ['五人组织关系梳理', '公开信息持续沉淀', '多渠道沟通与拜访策略'],
+    customerNeeds: ['项目可落地', '采购流程合规', '一线使用顺畅'],
+    aiAdvice: '新版项目一采用张建国、李明辉、王德福、赵晓晨、刘思琪五人结构。先理解组织与公开事实，再围绕交付、合规和使用场景制定人物化策略。',
     expectedProfit: 25,
     winRate: 70,
   },
@@ -178,7 +178,7 @@ export default function StartPage() {
       }
       return;
     }
-    router.push(`/game?location=${selected.id}&budget=${selected.budget}`);
+    router.push('/project-one-preview');
   };
 
   return (
@@ -422,9 +422,10 @@ export default function StartPage() {
                 <div className="mx-6 mb-2 rounded-xl border border-border bg-surface-container p-4">
                   <div className="text-xs font-semibold text-foreground">游戏模式</div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
-                    <button onClick={() => setPlayMode('solo')} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${playMode === 'solo' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card'}`}>单机 · ABC由AI推演</button>
+                    <button onClick={() => setPlayMode('solo')} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${playMode === 'solo' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card'}`}>单机 · 五人前端测试版</button>
                     <button onClick={() => setPlayMode('multiplayer')} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${playMode === 'multiplayer' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card'}`}>联机 · 公司均由玩家控制</button>
                   </div>
+                  {playMode === 'solo' && <div className="mt-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">单机将进入新版五人真实 AI 预览：计划、NPC 沟通与拜访接入项目 AI Provider；预览会话暂不写入正式数据库存档。</div>}
                   {playMode === 'multiplayer' && <div className="mt-3 grid grid-cols-2 gap-2"><input value={roomCode} onChange={(event) => setRoomCode(event.target.value.toUpperCase())} placeholder="房间码" className="rounded-lg border border-border bg-card px-3 py-2 text-xs" /><select value={companyId} onChange={(event) => setCompanyId(event.target.value)} className="rounded-lg border border-border bg-card px-3 py-2 text-xs"><option value="player-company">我方公司</option><option value="abc-company">ABC公司</option></select></div>}
                   {joinError && <div className="mt-2 text-[11px] text-red-600">{joinError}</div>}
                 </div>

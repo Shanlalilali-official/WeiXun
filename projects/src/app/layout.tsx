@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Inspector } from 'react-dev-inspector';
+import { FastTestPanel } from '@/components/testing/FastTestPanel';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body className="antialiased">
         {process.env.NODE_ENV === 'development' && <Inspector />}
         {children}
+        <FastTestPanel />
       </body>
     </html>
   );

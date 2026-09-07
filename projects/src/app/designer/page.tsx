@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Wand2, Building2, Users, FileText, Save, ArrowLeft, Megaphone, UserCog, BarChart3, Copy, Plus, Trash2, Pencil, X, LogOut, ShieldCheck } from 'lucide-react';
+import { Wand2, Building2, Users, FileText, Save, ArrowLeft, Megaphone, UserCog, BarChart3, Copy, Plus, Trash2, Pencil, X, LogOut, ShieldCheck, FlaskConical } from 'lucide-react';
 import { aMetrics, bMetrics, cMetrics } from '@/lib/metrics-data';
 import { projectNames, keyPeopleByProject as keyPeopleByProjectData } from '@/lib/key-people-data';
 import { ROLE_COLOR, ROLE_LABEL } from '@/components/app-shell';
@@ -448,6 +448,18 @@ export default function DesignerPage() {
                 </div>
                 <div className="text-sm font-semibold text-foreground">AI评估提示词</div>
                 <div className="text-[10px] text-muted-foreground mt-1">玩家评估</div>
+              </button>
+
+              {/* 张建国提示词 A/B 测试 */}
+              <button
+                onClick={() => router.push('/designer/dialogue-prompts')}
+                className="bg-muted rounded-xl border border-border p-4 hover:border-primary/50 hover:shadow-md transition-all text-left"
+              >
+                <div className="w-10 h-10 rounded-lg bg-violet-500/10 flex items-center justify-center mb-3">
+                  <FlaskConical className="w-5 h-5 text-violet-600" />
+                </div>
+                <div className="text-sm font-semibold text-foreground">提示词 A/B 测试</div>
+                <div className="text-[10px] text-muted-foreground mt-1">张建国 · 当面拜访 · DeepSeek / 豆包</div>
               </button>
 
             </div>
