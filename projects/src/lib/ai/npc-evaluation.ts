@@ -86,7 +86,7 @@ const evaluatorSystemPrompt = `你是销售谈判游戏的独立评分器，不�
 
 语义与证据：
 - semanticFlags必须包含negativeInformation、negativeInformationType、riskyConduct、giftMentioned、explicitQuidProQuo、repeatedPressure；除negativeInformationType外均为布尔值。negativeInformationType只能是none/sourced_risk/generalized_pessimism/unsupported_rumor/insult_or_attack。
-- publicValueEvidence最多3项，只能记录NPC实际认可或材料已证明的组织价值，如合规、风险、回报、落地和组织绩效。personalBenefitEvidence最多3项，只能记录NPC实际认可的减负、职业安全、绩效、专业声誉或成长；礼品和违规利益绝不能算个人收益。
+- publicValueEvidence最多3项，只能记录NPC实际认可的组织价值，如合规、风险、回报、落地和组织绩效。personalBenefitEvidence最多3项，只能记录NPC实际认可的减负、职业安全、绩效、专业声誉或成长；礼品和违规利益绝不能算个人收益。每项必须是{"statement":"可在NPC实际回复中逐字找到的原句或短句","strength":1到5}，不能用同一句同时写入两类证据。
 - workTopicOpenedBy只能是none/player/npc。非正式拜访默认不谈工作；结合历史状态、本轮玩家输入和NPC回复判断是谁首次开启工作话题。NPC可以自然开启，但不能把玩家强行提项目误记为NPC开启。
 - giftAssessment必须包含giftType、outcome、riskLevel、riskReason，riskReason不超过160字。giftType只能是none/compliant/boundary；outcome只能是not_applicable/accepted/accepted_cautiously/politely_refused/firmly_refused/refused_and_reported/accepted_then_exposed；riskLevel只能是none/low/medium/high/critical。没有礼品时使用giftType=none、outcome=not_applicable、riskLevel=none。
 
@@ -99,7 +99,7 @@ const evaluatorSystemPrompt = `你是销售谈判游戏的独立评分器，不�
 - emotion只能是greeting/thinking/excited/annoyed。
 
 固定人物ID：p1-frontline-wang-hao、p1-procurement-liu-kai、p1-minister-chen-jianguo、p1-deputy-zhao-feng。
-字符串上限：affinityReason 120字；confirmedFacts/commitments每项160字；publicValueEvidence/personalBenefitEvidence每项180字；handoff.summary 180字。
+字符串上限：affinityReason 120字；confirmedFacts/commitments每项160字；publicValueEvidence/personalBenefitEvidence的statement每项180字；handoff.summary 180字。
 必须包含：affinityDelta、affinityReason、pleasureDelta、supportDelta、dimensionDeltas、cluesUnlocked、confirmedFacts、commitments、publicValueEvidence、personalBenefitEvidence、workTopicOpenedBy、semanticFlags、giftAssessment、handoff、emotion。
 
 合法JSON示例：
@@ -127,9 +127,91 @@ const improperBenefitPattern = /现金|红包|回扣|返点|好处费|辛苦费|
 const corruptProjectActionPattern = /打点|利益输送|走后门|搞定领导|保证中标|确保中标|内定|串标|围标|陪标|泄标/;
 const workTopicPattern = /项目|方案|采购|招标|中标|预算|报价|合同|交付|技术|业务|工作/;
 const pressurePattern = /必须|务必|赶紧|马上|别再|再说一次|已经问过|给个准话|现在就|今天必须/;
+const publicValuePattern = /合规|风险|回报|成本|效率|落地|组织|预算|交付|绩效/;
+const personalBenefitPattern = /减负|工作量|职业安全|专业声誉|声誉|成长|省事|个人绩效|重复录入/;
+const valueAcknowledgementPattern = /认可|可行|有帮助|有用|确实|可以|能够|降低|提升|减少|支持|符合|值得|愿意|同意|改善/;
+const commitmentPattern = /会在|会把|会给|将(?:会)?|安排|提供|发送|反馈|确认|跟进|联系|转告|尽快|稍后/;
 
 function clampDelta(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function normalizeSourceText(value: string): string {
+  return value
+    .replace(/[\s\p{P}\p{S}]/gu, '')
+    .toLocaleLowerCase('zh-CN');
+}
+
+function replySentences(reply: string): string[] {
+  return reply.split(/[。！？；\n]/u).map((sentence) => sentence.trim()).filter(Boolean);
+}
+
+/**
+ * Scored memory must be traceable to an NPC sentence, not merely to a model
+ * paraphrase or the player's assertion.  Exact normalized containment keeps
+ * this deterministic and makes the source check independently reproducible.
+ */
+function findNpcReplySourceSentence(statement: string, reply: string): number {
+  const normalizedStatement = normalizeSourceText(statement);
+  if (normalizedStatement.length < 2) return -1;
+  return replySentences(reply).findIndex((sentence) =>
+    normalizeSourceText(sentence).includes(normalizedStatement));
+}
+
+function hasNpcReplySource(statement: string, reply: string): boolean {
+  return findNpcReplySourceSentence(statement, reply) >= 0;
+}
+
+function hasUnnegatedSemanticToken(source: string, pattern: RegExp): boolean {
+  const matches = source.matchAll(new RegExp(pattern.source, 'gu'));
+  for (const match of matches) {
+    const prefix = source.slice(Math.max(0, (match.index ?? 0) - 8), match.index ?? 0);
+    if (!/(?:不|未|无|难以|无法|不能|不可|没有|别|拒绝|否认)/u.test(prefix)) return true;
+  }
+  return false;
+}
+
+/**
+ * Deterministically remove model-proposed ledger claims that cannot be found
+ * in the NPC's real response.  The function is exported so state persistence
+ * can repeat the check as a defence-in-depth boundary.
+ */
+export function verifyNpcEvaluationSources(evaluation: NpcTurnEvaluation, npcReply: string): NpcTurnEvaluation {
+  const confirmedFacts = evaluation.confirmedFacts.filter((fact) => hasNpcReplySource(fact, npcReply));
+  const commitments = evaluation.commitments.filter((commitment) => {
+    const sourceSentence = findNpcReplySourceSentence(commitment, npcReply);
+    return sourceSentence >= 0 && hasUnnegatedSemanticToken(
+      replySentences(npcReply)[sourceSentence] ?? '',
+      commitmentPattern,
+    );
+  });
+  const usedReplySentences = new Set<number>();
+  const filterEvidence = (
+    candidates: NpcTurnEvaluation['publicValueEvidence'],
+    category: 'public' | 'personal',
+  ) => candidates.filter((candidate) => {
+    const sourceSentence = findNpcReplySourceSentence(candidate.statement, npcReply);
+    if (sourceSentence < 0 || usedReplySentences.has(sourceSentence)) return false;
+    const isPersonal = personalBenefitPattern.test(candidate.statement);
+    const isPublic = publicValuePattern.test(candidate.statement);
+    const source = replySentences(npcReply)[sourceSentence] ?? '';
+    const isValidCategory = category === 'personal'
+      ? isPersonal && !giftPattern.test(candidate.statement) && !improperBenefitPattern.test(candidate.statement)
+      : isPublic && !isPersonal;
+    if (!isValidCategory || !hasUnnegatedSemanticToken(source, valueAcknowledgementPattern)) return false;
+    usedReplySentences.add(sourceSentence);
+    return true;
+  });
+
+  return {
+    ...evaluation,
+    confirmedFacts,
+    commitments,
+    // A response sentence has one outcome meaning only.  Giving it a public
+    // value score and a personal-benefit score would inflate the settlement.
+    publicValueEvidence: filterEvidence(evaluation.publicValueEvidence, 'public'),
+    personalBenefitEvidence: filterEvidence(evaluation.personalBenefitEvidence, 'personal'),
+  };
 }
 
 function disavowsImproperBenefit(text: string): boolean {
@@ -283,7 +365,7 @@ function normalizeEvaluation(evaluation: NpcTurnEvaluation, ctx: NpcEvaluationCo
   }
   const detectedWorkTopicOpener = inferWorkTopicOpener(ctx);
 
-  return {
+  const normalized: NpcTurnEvaluation = {
     ...evaluation,
     affinityDelta: supportDelta,
     pleasureDelta,
@@ -292,13 +374,14 @@ function normalizeEvaluation(evaluation: NpcTurnEvaluation, ctx: NpcEvaluationCo
     personalBenefitEvidence: flags.explicitQuidProQuo
       ? []
       : (evaluation.personalBenefitEvidence ?? []).filter((evidence) =>
-          !giftPattern.test(evidence) && !improperBenefitPattern.test(evidence)),
+          !giftPattern.test(evidence.statement) && !improperBenefitPattern.test(evidence.statement)),
     workTopicOpenedBy: detectedWorkTopicOpener !== 'none'
       ? detectedWorkTopicOpener
       : evaluation.workTopicOpenedBy ?? 'none',
     semanticFlags: flags,
     giftAssessment,
   };
+  return verifyNpcEvaluationSources(normalized, ctx.npcReply);
 }
 
 export function parseNpcTurnEvaluation(raw: string, ctx: NpcEvaluationContext): { evaluation: NpcTurnEvaluation | null; errors: string[] } {
@@ -463,10 +546,10 @@ export function createFallbackNpcEvaluation(ctx: NpcEvaluationContext): NpcTurnE
 
   const acknowledged = /认可|可行|有帮助|有用|确实|可以解决|能够降低|能够提升|符合/.test(reply);
   const publicValueEvidence = acknowledged && /合规|风险|预算|回报|成本|效率|落地|绩效|交付/.test(reply)
-    ? [reply.slice(0, 180)]
+    ? [{ statement: reply.slice(0, 180), strength: 3 }]
     : [];
   const personalBenefitEvidence = !flags.giftMentioned && acknowledged && /减负|工作量|职业安全|绩效|声誉|成长|省事/.test(reply)
-    ? [reply.slice(0, 180)]
+    ? [{ statement: reply.slice(0, 180), strength: 3 }]
     : [];
 
   return normalizeEvaluation({
@@ -533,6 +616,18 @@ function stablePercent(seed: string): number {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0) % 100;
+}
+
+function policyGiftSeverity(
+  disposition: GiftCommandDecision['disposition'],
+  priorBoundaryGiftCount: number,
+  exchangeRequested: boolean,
+): number {
+  if (exchangeRequested || disposition === 'reported') return 5;
+  if (disposition === 'cautious_acceptance') return 5;
+  if (disposition === 'delighted_acceptance') return 4;
+  if (disposition === 'firm_rejection') return priorBoundaryGiftCount > 0 ? 4 : 3;
+  return priorBoundaryGiftCount > 0 ? 3 : 2;
 }
 
 export function createFallbackGiftDecision(ctx: GiftDecisionContext): GiftCommandDecision {
@@ -658,7 +753,9 @@ function normalizeGiftDecision(decision: GiftCommandDecision, ctx: GiftDecisionC
     ...decision,
     pleasureDelta,
     supportDelta,
-    severity: clampDelta(decision.severity, 1, 5),
+    // Severity is a policy output.  A model can describe the NPC's wording,
+    // but cannot select the persisted compliance tier.
+    severity: policyGiftSeverity(decision.disposition, ctx.priorBoundaryGiftCount, ctx.exchangeRequested),
   };
 }
 

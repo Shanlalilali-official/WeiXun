@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { gameCommandSchema } from '../src/lib/contracts/game';
 import {
   applyPreparationAttachments,
+  advanceRound,
   connectNpc,
   createProjectOneState,
   executeGameCommand,
@@ -29,6 +30,14 @@ let state = createProjectOneState();
 assert.equal(state.currentStage, 1);
 assert.equal(state.maxStages, 5);
 assert.equal(state.dayAvailableMinutes, 0);
+
+// GAME-014 regression: stages are pure action-point transitions.  Legacy
+// wall-clock arguments must not expire a stage or alter the transition.
+const oldClockAdvance = advanceRound(createProjectOneState(), 0, 'game-014');
+const futureClockAdvance = advanceRound(createProjectOneState(), Number.MAX_SAFE_INTEGER, 'game-014');
+assert.deepEqual(oldClockAdvance, futureClockAdvance);
+assert.equal(oldClockAdvance.currentStage, 2);
+assert.equal(oldClockAdvance.actionPoints, 28, 'stage transition only applies the capped action-point grant');
 
 const command = (type: Parameters<typeof executeGameCommand>[1]['type'], payload: Record<string, unknown>, id: string) => {
   const result = executeGameCommand(state, { commandId: id, expectedVersion: state.version, type, payload } as Parameters<typeof executeGameCommand>[1]);
@@ -194,6 +203,35 @@ assert.throws(
   /EMAIL_ATTACHMENT_NOT_AVAILABLE/,
   'attachments are only accepted on ordinary email invitations',
 );
+assert.throws(
+  () => executeGameCommand(nonEmailInviteState, gameCommandSchema.parse({
+    commandId: 'phone-described-attachment',
+    expectedVersion: nonEmailInviteState.version,
+    type: 'invite',
+    payload: {
+      npcId: 'p1-frontline-wang-hao',
+      channel: 'work_phone',
+      rawText: '想当面沟通方案。',
+      emailAttachments: [{ fileName: '方案.pdf', description: '包含实施计划和验收口径。' }],
+    },
+  })),
+  /EMAIL_ATTACHMENT_NOT_AVAILABLE/,
+  'natural-language file descriptions are email-only on invitations',
+);
+const describedEmailInvite = executeGameCommand(nonEmailInviteState, gameCommandSchema.parse({
+  commandId: 'email-described-attachment',
+  expectedVersion: nonEmailInviteState.version,
+  type: 'invite',
+  payload: {
+    npcId: 'p1-frontline-wang-hao',
+    channel: 'email',
+    rawText: '想当面沟通方案，请查收附件。',
+    emailAttachments: [{ fileName: '方案.pdf', description: '包含实施计划和验收口径。' }],
+  },
+}));
+assert.deepEqual(describedEmailInvite.state.appointments[0]?.emailAttachments, [
+  { fileName: '方案.pdf', description: '包含实施计划和验收口径。' },
+]);
 
 const wechatPayload = gameCommandSchema.parse({
   commandId: 'wechat-contract-1',

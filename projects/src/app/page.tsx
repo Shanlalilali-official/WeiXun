@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,10 +9,8 @@ import { Wand2, Building2, Megaphone, UserRound, X } from 'lucide-react';
 
 type Identity = 'designer' | 'enterprise' | 'trainer' | 'player';
 type SubRole = 'enterprise_employee' | 'paid_individual';
-type DesignerSubIdentity = 'game_designer' | 'enterprise_admin' | 'trainer';
 
 export default function LoginPage() {
-  const router = useRouter();
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [username, setUsername] = useState('17805156105');
@@ -24,12 +21,7 @@ export default function LoginPage() {
   const [subRole, setSubRole] = useState<SubRole>('enterprise_employee');
   const [loading, setLoading] = useState(false);
   const [loginMode, setLoginMode] = useState<'phone' | 'password'>('password');
-  const [userId, setUserId] = useState('');
   const [loginToken, setLoginToken] = useState('');
-  const [showDesignerSubModal, setShowDesignerSubModal] = useState(false);
-
-  // 预制账号：登录后直接默认设计师身份，跳过身份选择弹窗
-  const PRESET_DESIGNER = { username: '17805156105', password: 'qwer1234' };
 
   const sendCode = async () => {
     if (!/^1[3-9]\d{9}$/.test(phone)) {
@@ -76,7 +68,6 @@ export default function LoginPage() {
         return;
       }
       const data = await res.json();
-      setUserId(data.userId);
       setLoginToken(data.loginToken);
 
       // 所有账号都弹身份选择卡
@@ -85,31 +76,6 @@ export default function LoginPage() {
       alert('网络错误');
     } finally {
       setLoading(false);
-    }
-  };
-
-  // 预制账号一键登录设计师：login → select_role → 写 cookie → 跳首页
-  const autoLoginAsDesigner = async (uid: string) => {
-    try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'select_role', userId: uid, role: 'platform_designer' }),
-      });
-      const data = await res.json();
-      if (!res.ok) { alert(data.error || '选择身份失败'); return; }
-
-      // 写 cookie + localStorage + 跳首页
-      const identity = data.session;
-      const expires = new Date(identity.expiresAt);
-      document.cookie = `weixun_session=${data.token}; path=/; expires=${expires.toUTCString()}`;
-      document.cookie = `weixun_identity=${encodeURIComponent(JSON.stringify(identity))}; path=/; expires=${expires.toUTCString()}`;
-      localStorage.setItem('weixun_identity', JSON.stringify(identity));
-      localStorage.setItem('weixun_session', data.token);
-
-      window.location.href = data.redirect || '/home';
-    } catch (err) {
-      alert('自动登录失败');
     }
   };
 
@@ -122,37 +88,13 @@ export default function LoginPage() {
   };
 
   const enterWorkbench = async () => {
-    if (!selectedIdentity) return;
+    if (!selectedIdentity || !loginToken) {
+      alert('登录凭证已失效，请重新登录');
+      return;
+    }
     
     setLoading(true);
     try {
-      // 快速体验模式（无 userId）：直接创建临时 session
-      if (!userId) {
-        const mockIdentity = {
-          id: 'quick_' + Date.now(),
-          role: IDENTITY_TO_ROLE[selectedIdentity],
-          displayName: '体验用户',
-          subRole: selectedIdentity === 'player' ? subRole : undefined,
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        };
-        const mockToken = 'quick_' + Math.random().toString(36).slice(2);
-        document.cookie = `weixun_session=${mockToken}; path=/; expires=${new Date(mockIdentity.expiresAt).toUTCString()}`;
-        document.cookie = `weixun_identity=${encodeURIComponent(JSON.stringify(mockIdentity))}; path=/; expires=${new Date(mockIdentity.expiresAt).toUTCString()}`;
-        localStorage.setItem('weixun_identity', JSON.stringify(mockIdentity));
-        localStorage.setItem('weixun_session', mockToken);
-        
-        // 根据身份跳转到对应页面（使用 window.location.href 强制全页刷新，确保 cookie 生效）
-        const routes: Record<string, string> = {
-          enterprise: '/enterprise-admin',
-          trainer: '/coach',
-          designer: '/designer',
-          player: '/home',
-        };
-        window.location.href = routes[selectedIdentity] || '/home';
-        return;
-      }
-
-      // 正常登录流程
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -181,31 +123,6 @@ export default function LoginPage() {
       alert('进入失败');
       setLoading(false);
     }
-  };
-
-  // 游戏设计师子身份选择处理
-  const handleDesignerSubIdentity = (subIdentity: DesignerSubIdentity) => {
-    // 创建临时 session
-    const mockIdentity = {
-      id: 'designer_' + Date.now(),
-      role: subIdentity === 'game_designer' ? 'platform_designer' : subIdentity === 'enterprise_admin' ? 'enterprise_admin' : 'trainer',
-      displayName: '游戏设计师',
-      designerSubRole: subIdentity,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-    };
-    const mockToken = 'designer_' + Math.random().toString(36).slice(2);
-    document.cookie = `weixun_session=${mockToken}; path=/; expires=${new Date(mockIdentity.expiresAt).toUTCString()}`;
-    document.cookie = `weixun_identity=${encodeURIComponent(JSON.stringify(mockIdentity))}; path=/; expires=${new Date(mockIdentity.expiresAt).toUTCString()}`;
-    localStorage.setItem('weixun_identity', JSON.stringify(mockIdentity));
-    localStorage.setItem('weixun_session', mockToken);
-    
-    // 根据子身份跳转到对应页面
-    const subRoutes: Record<string, string> = {
-      game_designer: '/designer',
-      enterprise_admin: '/enterprise-admin',
-      trainer: '/coach',
-    };
-    window.location.href = subRoutes[subIdentity] || '/home';
   };
 
   const identities = [
@@ -321,7 +238,7 @@ export default function LoginPage() {
                   预制账号 <span className="font-mono text-foreground">17805156105</span> / <span className="font-mono text-foreground">qwer1234</span> 可登录任意身份
                 </div>
                 <div className="text-[11px] text-primary text-center">
-                  快速验收账号 <span className="font-mono">fast_acceptance</span> / <span className="font-mono">fastpass</span>（新对局成长 ×3）
+                  FAST 测试账号 <span className="font-mono">fast_acceptance</span> / <span className="font-mono">fastpass</span>（选择玩家后可正常游戏，右侧可打开测试后台）
                 </div>
               </TabsContent>
             </Tabs>
@@ -443,97 +360,6 @@ export default function LoginPage() {
               >
                 {loading ? '进入中...' : '进入工作台'}
               </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 游戏设计师子身份选择弹窗 */}
-      {showDesignerSubModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm"
-          onClick={() => setShowDesignerSubModal(false)}
-        >
-          <div
-            className="bg-card rounded-2xl shadow-2xl w-[720px] max-w-[95vw] p-8 animate-modal-in"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-xl font-bold text-foreground">选择工作台身份</h2>
-                <p className="text-sm text-muted-foreground mt-1">游戏设计师可进入以下三个工作台</p>
-              </div>
-              <button onClick={() => setShowDesignerSubModal(false)} className="text-muted-foreground hover:text-foreground p-1.5 hover:bg-muted rounded-lg transition-colors">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <button
-                onClick={() => handleDesignerSubIdentity('game_designer')}
-                className="card-elevated p-6 text-left"
-              >
-                <div className="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
-                  <Wand2 className="w-7 h-7 text-primary" />
-                </div>
-                <div className="text-lg font-semibold text-foreground mb-2">游戏设计师</div>
-                <div className="text-xs text-muted-foreground mb-3">配置甲方、乙方、场景与 AI 提示词</div>
-                <div className="space-y-1">
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                    <span className="w-1 h-1 rounded-full bg-primary" /> 甲方模块配置
-                  </div>
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                    <span className="w-1 h-1 rounded-full bg-primary" /> 乙方产品特点
-                  </div>
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                    <span className="w-1 h-1 rounded-full bg-primary" /> AI 提示词管理
-                  </div>
-                </div>
-              </button>
-
-              <button
-                onClick={() => handleDesignerSubIdentity('enterprise_admin')}
-                className="card-elevated p-6 text-left"
-              >
-                <div className="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
-                  <Building2 className="w-7 h-7 text-primary" />
-                </div>
-                <div className="text-lg font-semibold text-foreground mb-2">企业管理员</div>
-                <div className="text-xs text-muted-foreground mb-3">管理企业人员与游戏进度</div>
-                <div className="space-y-1">
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                    <span className="w-1 h-1 rounded-full bg-primary" /> 人员增删改
-                  </div>
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                    <span className="w-1 h-1 rounded-full bg-primary" /> 游戏进度查看
-                  </div>
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                    <span className="w-1 h-1 rounded-full bg-primary" /> 进入设计师页面
-                  </div>
-                </div>
-              </button>
-
-              <button
-                onClick={() => handleDesignerSubIdentity('trainer')}
-                className="card-elevated p-6 text-left"
-              >
-                <div className="w-14 h-14 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
-                  <Megaphone className="w-7 h-7 text-primary" />
-                </div>
-                <div className="text-lg font-semibold text-foreground mb-2">培训教练</div>
-                <div className="text-xs text-muted-foreground mb-3">创建房间、管控对局、查看数据</div>
-                <div className="space-y-1">
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                    <span className="w-1 h-1 rounded-full bg-primary" /> 创建房间与邀请码
-                  </div>
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                    <span className="w-1 h-1 rounded-full bg-primary" /> 启停对局与模式切换
-                  </div>
-                  <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                    <span className="w-1 h-1 rounded-full bg-primary" /> 实时数据与结算报告
-                  </div>
-                </div>
-              </button>
             </div>
           </div>
         </div>

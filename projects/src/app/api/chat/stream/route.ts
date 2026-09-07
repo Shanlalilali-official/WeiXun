@@ -20,7 +20,6 @@ import {
 } from '@/lib/game/repository';
 import {
   applyNpcEvaluation,
-  applyPreparationAttachments,
   connectNpc,
   consumeCommunicationTime,
   getGameOutcome,
@@ -36,6 +35,7 @@ import {
 } from '@/lib/game/state';
 import { createServerProbabilitySeed } from '@/lib/game/server-random';
 import { refreshConversationMemory } from '@/lib/game/memory';
+import { runWithFastTestObservability } from '@/lib/testing/fast-test-observability';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -166,7 +166,7 @@ export async function POST(req: NextRequest) {
     intent,
     commandId,
     expectedVersion,
-    attachmentIds,
+    emailAttachments,
     usedPreparationIds,
   } = parsed.data;
 
@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
     const deliveryStatus = replay.result.deliveryStatus === 'unanswered' ? 'unanswered' : 'replied';
     return immediateSse([
       ...(reply ? [{ type: 'delta', content: reply }] : []),
-      { type: 'result', state: toPlayerVisibleGameState(replay.state), deliveryStatus, replayed: true },
+      { type: 'result', state: toPlayerVisibleGameState(replay.state), deliveryStatus, emailAttachments: replay.result.emailAttachments ?? [], replayed: true },
       { type: 'done' },
     ]);
   }
@@ -221,15 +221,8 @@ export async function POST(req: NextRequest) {
     return jsonResponse('ONLINE_CONTACT_REQUIRED', 409);
   }
 
-  if (attachmentIds.length > 0) {
+  if (emailAttachments.length > 0) {
     if (channel !== 'email') return jsonResponse('EMAIL_ATTACHMENT_CHANNEL_INVALID', 409);
-    try {
-      // Validate against the server snapshot before invoking the model. The
-      // same transition is applied only after a successful response commit.
-      applyPreparationAttachments(initialState, npcId, attachmentIds);
-    } catch (error) {
-      return jsonResponse(error instanceof Error ? error.message : 'EMAIL_ATTACHMENT_NOT_AVAILABLE', 409);
-    }
   }
 
   if (channel !== 'offline') {
@@ -260,7 +253,8 @@ export async function POST(req: NextRequest) {
         npcId,
         channel,
         rawText: message,
-        attachmentIds,
+        attachmentIds: [],
+        emailAttachments,
       },
     };
     try {
@@ -284,6 +278,7 @@ export async function POST(req: NextRequest) {
           ...execution.eventPayload,
           source: 'natural_language_chat',
           sourceChannel: channel,
+          emailAttachmentCount: emailAttachments.length,
         },
         result: {
           ...execution.result,
@@ -291,20 +286,20 @@ export async function POST(req: NextRequest) {
           deliveryStatus: 'replied',
           channel,
           invitation: true,
-          attachmentIds,
+          emailAttachments,
         },
         chatMessages: [
           {
             round: initialState.currentRound,
             role: 'user',
             content: message,
-            metadata: { npcId, intent, channel, deliveryStatus: 'sent', invitation: true, attachmentIds },
+            metadata: { npcId, intent, channel, deliveryStatus: 'sent', invitation: true, emailAttachments },
           },
           {
             round: initialState.currentRound,
             role: 'assistant',
             content: reply ?? '邀约已记录，请留意对方的回复。',
-            metadata: { npcId, intent, channel, deliveryStatus: 'replied', invitation: true, appointmentId, attachmentIds },
+            metadata: { npcId, intent, channel, deliveryStatus: 'replied', invitation: true, appointmentId },
           },
         ],
       });
@@ -318,6 +313,7 @@ export async function POST(req: NextRequest) {
           deliveryStatus: 'replied',
           channel,
           invitation: true,
+          emailAttachments,
           appointment: execution.result.appointment,
           reply: visibleReply,
         },
@@ -407,7 +403,6 @@ export async function POST(req: NextRequest) {
     try {
       let changed = channel === 'offline' ? initialState : consumeCommunicationTime(initialState, channel);
       changed = markNpcUnanswered(changed, npcId, channel === 'offline' ? undefined : channel);
-      changed = applyPreparationAttachments(changed, npcId, attachmentIds);
       const committed = await commitGameCommand({
         sessionId: gameSessionId,
         commandId,
@@ -415,17 +410,17 @@ export async function POST(req: NextRequest) {
         expectedVersion,
         state: changed,
         eventType: 'npc.message.unanswered',
-        eventPayload: { npcId, channel, intent, responseChance },
-        result: { deliveryStatus: 'unanswered', channel, attachmentIds },
+        eventPayload: { npcId, channel, intent, responseChance, emailAttachmentCount: emailAttachments.length },
+        result: { deliveryStatus: 'unanswered', channel, emailAttachments },
         chatMessages: [{
           round: initialState.currentRound,
           role: 'user',
           content: message,
-          metadata: { npcId, intent, channel, deliveryStatus: 'unanswered', attachmentIds },
+          metadata: { npcId, intent, channel, deliveryStatus: 'unanswered', emailAttachments },
         }],
       });
       return immediateSse([
-        { type: 'result', state: toPlayerVisibleGameState(committed.state), deliveryStatus: 'unanswered', channel },
+        { type: 'result', state: toPlayerVisibleGameState(committed.state), deliveryStatus: 'unanswered', channel, emailAttachments },
         { type: 'done' },
       ]);
     } catch (error) {
@@ -438,7 +433,7 @@ export async function POST(req: NextRequest) {
   await deliverPendingNpcHandoffs(gameSessionId, initialState.currentRound).catch(() => undefined);
   const inbox = await getNpcInbox(gameSessionId, npcId).catch(() => []);
   const attitude = initialState.npcAttitudes[npcId];
-  const requestedPreparationIds = new Set([...usedPreparationIds, ...attachmentIds]);
+  const requestedPreparationIds = new Set(usedPreparationIds);
   const relevantPreparations = initialState.preparations.filter((item) =>
     item.npcId === npcId
     && (requestedPreparationIds.has(item.id) || meeting?.usedPreparationIds.includes(item.id)));
@@ -471,6 +466,7 @@ export async function POST(req: NextRequest) {
     supportBand: attitudeBand(attitude?.support ?? 35, 'support'),
     unseenImpressionSummary: unseenImpressionSummary(attitude?.unmetImpression ?? 0),
     preparedItems: relevantPreparations.map((item) => ({ type: item.type, title: item.title })),
+    emailAttachments,
     giftContext: { giftType: 'none' },
     lastAction: initialState.lastAction,
     memorySummary: memory?.summary,
@@ -490,8 +486,9 @@ export async function POST(req: NextRequest) {
   const encoder = new TextEncoder();
   const readableStream = new ReadableStream({
     async start(controller) {
-      const emit = (payload: unknown) => controller.enqueue(encoder.encode(sseData(payload)));
-      try {
+      return runWithFastTestObservability(guard.session!.userId, async () => {
+        const emit = (payload: unknown) => controller.enqueue(encoder.encode(sseData(payload)));
+        try {
         // Buffer the provider stream until the versioned transaction commits.
         // This preserves the all-or-nothing contract visible to the player.
         let reply = '';
@@ -526,7 +523,6 @@ export async function POST(req: NextRequest) {
         changedState = recordNpcOutbound(changedState, npcId);
         if (intent === 'outreach') changedState = connectNpc(changedState, npcId);
         changedState = applySelectedPreparations(changedState, npcId, usedPreparationIds);
-        changedState = applyPreparationAttachments(changedState, npcId, attachmentIds);
 
         if (channel === 'offline') {
           if (!changedState.activeMeeting) throw new Error('MEETING_NOT_ACTIVE');
@@ -571,11 +567,12 @@ export async function POST(req: NextRequest) {
             handoff: validHandoff,
             memoryRefreshError,
             meetingEnded,
+            emailAttachmentCount: emailAttachments.length,
           },
           result: {
             reply,
             deliveryStatus: 'replied',
-            attachmentIds,
+            emailAttachments,
             emotion: evaluation.emotion,
             meetingEnded,
           },
@@ -584,7 +581,7 @@ export async function POST(req: NextRequest) {
               round: initialState.currentRound,
               role: 'user',
               content: message,
-              metadata: { npcId, intent, channel, deliveryStatus: 'sent', meetingId: meeting?.id ?? null, meetingTurn: meeting ? meeting.turnCount + 1 : null, attachmentIds },
+              metadata: { npcId, intent, channel, deliveryStatus: 'sent', meetingId: meeting?.id ?? null, meetingTurn: meeting ? meeting.turnCount + 1 : null, emailAttachments },
             },
             {
               round: initialState.currentRound,
@@ -604,7 +601,6 @@ export async function POST(req: NextRequest) {
                 meetingId: meeting?.id ?? null,
                 meetingTurn: meeting ? meeting.turnCount + 1 : null,
                 usedPreparationIds,
-                attachmentIds,
               },
             },
           ],
@@ -632,22 +628,24 @@ export async function POST(req: NextRequest) {
           deliveryStatus: 'replied',
           meetingEnded,
           emotion: evaluation.emotion,
+          emailAttachments,
         });
         emit({ type: 'done' });
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         controller.close();
-      } catch (error) {
-        const code = error instanceof Error ? error.message : 'AI_PROVIDER_ERROR';
-        emit({
-          type: 'error',
-          code,
-          error: code === 'STATE_VERSION_CONFLICT'
-            ? '对局已在其他页面更新，本次未扣除时间或行动点，请刷新后重试。'
-            : 'AI服务或状态提交暂时不可用，本次未推进模拟时间，请稍后重试。',
-        });
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-        controller.close();
-      }
+        } catch (error) {
+          const code = error instanceof Error ? error.message : 'AI_PROVIDER_ERROR';
+          emit({
+            type: 'error',
+            code,
+            error: code === 'STATE_VERSION_CONFLICT'
+              ? '对局已在其他页面更新，本次未扣除时间或行动点，请刷新后重试。'
+              : 'AI服务或状态提交暂时不可用，本次未推进模拟时间，请稍后重试。',
+          });
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+        }
+      });
     },
   });
   return new Response(readableStream, { headers: streamHeaders });

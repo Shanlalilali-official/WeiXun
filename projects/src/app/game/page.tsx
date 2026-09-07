@@ -39,6 +39,12 @@ interface Message {
   ts: number;
   deliveryStatus?: 'sent' | 'replied' | 'unanswered';
   channel?: 'email' | 'work_phone' | 'online' | 'offline';
+  emailAttachments?: EmailAttachmentDraft[];
+}
+
+interface EmailAttachmentDraft {
+  fileName: string;
+  description: string;
 }
 
 interface CompetitorProfile {
@@ -517,7 +523,7 @@ function GameInner() {
   const [preparationType] = useState<(typeof PREPARATION_OPTIONS)[number]['type']>('visit_preparation');
   const [preparationText, setPreparationText] = useState('');
   const [preparationAppointmentId, setPreparationAppointmentId] = useState('');
-  const [emailAttachmentIds, setEmailAttachmentIds] = useState<string[]>([]);
+  const [emailAttachments, setEmailAttachments] = useState<EmailAttachmentDraft[]>([]);
   const [publicInfoRecord, setPublicInfoRecord] = useState<GamePublicResearchRecord | undefined>();
   const [invitationResult, setInvitationResult] = useState<InvitationResultView | null>(null);
   const [showEndDayCheck, setShowEndDayCheck] = useState(false);
@@ -532,6 +538,22 @@ function GameInner() {
   const commandBusyRef = useRef(false);
   const retryCommandRef = useRef<{ signature: string; commandId: string } | null>(null);
   const retryChatRef = useRef<{ signature: string; commandId: string } | null>(null);
+
+  const addEmailAttachment = () => {
+    setEmailAttachments((current) => current.length >= 8
+      ? current
+      : [...current, { fileName: '', description: '' }]);
+  };
+
+  const updateEmailAttachment = (index: number, field: keyof EmailAttachmentDraft, value: string) => {
+    setEmailAttachments((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, [field]: value } : item));
+  };
+
+  const removeEmailAttachment = (index: number) => {
+    setEmailAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index));
+  };
+
+  const hasInvalidEmailAttachment = emailAttachments.some((item) => !item.fileName.trim() || !item.description.trim());
 
   const round = gameState?.currentRound ?? 1;
   const coins = gameState?.actionPoints ?? 0;
@@ -652,6 +674,9 @@ function GameInner() {
           ts: new Date(message.createdAt).getTime(),
           deliveryStatus: message.metadata?.deliveryStatus as Message['deliveryStatus'],
           channel: message.metadata?.channel as Message['channel'],
+          emailAttachments: Array.isArray(message.metadata?.emailAttachments)
+            ? message.metadata.emailAttachments.filter((item): item is EmailAttachmentDraft => Boolean(item) && typeof item === 'object' && typeof (item as Record<string, unknown>).fileName === 'string' && typeof (item as Record<string, unknown>).description === 'string')
+            : undefined,
         }));
         setMessages(restored);
       })
@@ -665,7 +690,7 @@ function GameInner() {
   }, [activeMeeting, selectedContact?.initialChannel, selectedContact?.status]);
 
   useEffect(() => {
-    setEmailAttachmentIds([]);
+    setEmailAttachments([]);
   }, [selectedNpc]);
 
   useEffect(() => {
@@ -797,13 +822,16 @@ function GameInner() {
     const channel: Message['channel'] = communication?.channel ?? (activeMeeting?.npcId === selectedNpc
       ? 'offline'
       : communicationChannel);
-    const attachmentIds = channel === 'email' ? emailAttachmentIds : [];
-    const chatSignature = `${selectedNpc}:${intent}:${channel}:${gameState.version}:${content.trim()}:${attachmentIds.join(',')}`;
+    if (channel === 'email' && hasInvalidEmailAttachment) return;
+    const outgoingEmailAttachments = channel === 'email'
+      ? emailAttachments.map((item) => ({ fileName: item.fileName.trim(), description: item.description.trim() }))
+      : [];
+    const chatSignature = `${selectedNpc}:${intent}:${channel}:${gameState.version}:${content.trim()}:${JSON.stringify(outgoingEmailAttachments)}`;
     const chatCommandId = retryChatRef.current?.signature === chatSignature
       ? retryChatRef.current.commandId
       : makeCommandId();
     retryChatRef.current = { signature: chatSignature, commandId: chatCommandId };
-    const userMessage: Message = { role: 'user', content: content.trim(), ts: Date.now(), deliveryStatus: 'sent', channel };
+    const userMessage: Message = { role: 'user', content: content.trim(), ts: Date.now(), deliveryStatus: 'sent', channel, emailAttachments: outgoingEmailAttachments };
     // The scene renderer filters on channel. Preserve it on the optimistic
     // NPC placeholder so a successful face-to-face reply is visible directly,
     // not only after reloading the persisted conversation history.
@@ -848,7 +876,7 @@ function GameInner() {
           expectedVersion: gameState.version,
           contextType: activeMeeting ? `${activeMeeting.visitType}_visit` : 'online',
           appointmentId: activeMeeting?.appointmentId,
-          attachmentIds,
+          emailAttachments: outgoingEmailAttachments,
           usedPreparationIds: deliveredPreparationIds,
         }),
         signal: abortRef.current.signal,
@@ -904,7 +932,7 @@ function GameInner() {
                   setInvitationResult({ appointment, npcName: profile.name, npcTitle: profile.title, feedback });
                 }
               }
-              if (channel === 'email' && attachmentIds.length > 0) setEmailAttachmentIds([]);
+              if (channel === 'email' && outgoingEmailAttachments.length > 0) setEmailAttachments([]);
             }
             if (event.type === 'error' && !received) {
               const detail = typeof event.code === 'string' ? ` ${event.code}` : '';
@@ -1149,10 +1177,6 @@ function GameInner() {
                           <div className="mt-1 text-[10px] text-slate-400">{contacted ? '已建立接触' : '尚未有效接触'}</div>
                         </div>
                       </button>
-                      <button onClick={() => void openOrResearchPublicInfo(npc.id)} disabled={Boolean(commandBusy) || Boolean(activeMeeting)} className="flex w-full items-center justify-between border-t border-slate-100 bg-slate-50 px-3 py-2 text-left text-[11px] font-semibold text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40">
-                        <span className="flex items-center gap-1.5"><Search className="h-3.5 w-3.5" />搜索人物公开信息</span>
-                        <span>2 行动点</span>
-                      </button>
                     </div>
                   );
                 })}
@@ -1365,16 +1389,16 @@ function GameInner() {
                 {!selectedNpc && <EmptyPhoneState icon={Users} title="选择一位联系人" description="从左侧客户关系栏选择人物，再通过电话、邮件或微信自然沟通，必要时提出拜访并准备材料。" />}
               {selectedNpc && !activeMeeting && communicationChannel === 'work_phone' && <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center text-center text-white"><div className="flex h-24 w-24 items-center justify-center rounded-full bg-gradient-to-br from-violet-400 to-fuchsia-500 text-4xl font-bold shadow-[0_0_50px_rgba(168,85,247,.55)]">{selectedNpcName.slice(0, 1)}</div><h3 className="mt-5 text-xl font-bold">{selectedNpcName}</h3><p className="mt-1 text-sm text-violet-200">{phoneCallActive ? (streaming ? '正在接通…' : '通话已接通') : '准备拨打工作电话'}</p>{phoneCallActive ? <div className="mt-7 w-full rounded-2xl bg-white/10 p-4 text-left"><div className="mb-2 text-xs text-violet-200">本次通话记录</div><div className="max-h-28 space-y-2 overflow-y-auto text-sm">{visibleChannelMessages.filter((message) => message.content !== '[电话呼出]').slice(-3).map((message) => <p key={message.ts} className="leading-5"><strong>{message.role === 'user' ? '我：' : `${selectedNpcName}：`}</strong>{message.content || (streaming ? '…' : '')}</p>)}</div></div> : <button onClick={() => { setPhoneCallActive(true); void sendMessage('[电话呼出]', { intent: 'call_connect', channel: 'work_phone', hidePlayerMessage: true }); }} disabled={!selectedNpc || streaming} className="mt-8 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg hover:bg-emerald-400 disabled:opacity-40"><Phone className="h-6 w-6" /></button>}</div>}
                 {selectedNpc && !activeMeeting && communicationChannel !== 'work_phone' && visibleChannelMessages.length === 0 && <div className="mx-auto mt-12 max-w-sm rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center"><MessageCircle className="mx-auto h-8 w-8 text-blue-500" /><div className="mt-3 text-sm font-bold">开始与 {selectedNpcName} 沟通</div><div className="mt-2 text-xs leading-5 text-slate-500">对方的真实态度不会直接显示，请留意措辞、回复节奏与后续行动。</div></div>}
-                {selectedNpc && !activeMeeting && communicationChannel === 'email' && <div className="mx-auto max-w-2xl space-y-3">{visibleChannelMessages.map((message) => <article key={message.ts} className="rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-100 px-4 py-2 text-[11px] text-slate-500"><div><strong className="text-slate-800">{message.role === 'user' ? '我方' : selectedNpcName}</strong>　收件人：{message.role === 'user' ? selectedNpcName : '我方'}</div><div className="mt-1">主题：项目沟通　·　{formatMessageTime(message.ts)}</div></div><p className="whitespace-pre-wrap px-4 py-3 text-sm leading-6 text-slate-800">{message.content || (streaming ? '正在发送…' : '')}</p></article>)}</div>}
+                 {selectedNpc && !activeMeeting && communicationChannel === 'email' && <div className="mx-auto max-w-2xl space-y-3">{visibleChannelMessages.map((message) => <article key={message.ts} className="rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-100 px-4 py-2 text-[11px] text-slate-500"><div><strong className="text-slate-800">{message.role === 'user' ? '我方' : selectedNpcName}</strong>　收件人：{message.role === 'user' ? selectedNpcName : '我方'}</div><div className="mt-1">主题：项目沟通　·　{formatMessageTime(message.ts)}</div></div><p className="whitespace-pre-wrap px-4 py-3 text-sm leading-6 text-slate-800">{message.content || (streaming ? '正在发送…' : '')}</p>{message.role === 'user' && message.emailAttachments && message.emailAttachments.length > 0 && <div className="mx-4 mb-4 rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="text-[10px] font-semibold text-blue-900">附件 · {message.emailAttachments.length} 个</div><div className="mt-2 space-y-2">{message.emailAttachments.map((attachment, index) => <div key={`${attachment.fileName}-${index}`} className="rounded-lg bg-white px-3 py-2 text-[11px] text-slate-700"><div className="font-semibold text-slate-900">{attachment.fileName}</div><div className="mt-1 leading-5">{attachment.description}</div></div>)}</div></div>}</article>)}</div>}
                 <div ref={messagesEndRef} />
               </div>
               <div className={`border-t border-slate-200 bg-white p-4 ${activeMeeting ? 'hidden' : ''}`}>
                 {commandFeedback && <div className="mb-2 flex items-center gap-1.5 text-[11px] text-emerald-700"><Check className="h-3.5 w-3.5" />{commandFeedback}</div>}
-                {communicationChannel === 'email' && selectedPreparations.some((item) => item.status === 'ready' && !item.type.includes('gift')) && <div className="mb-3 rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="text-[11px] font-semibold text-blue-900">邮件附件（可多选）</div><div className="mt-2 flex flex-wrap gap-2">{selectedPreparations.filter((item) => item.status === 'ready' && !item.type.includes('gift')).map((item) => <label key={item.id} className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-2.5 py-2 text-[11px] text-blue-900"><input type="checkbox" checked={emailAttachmentIds.includes(item.id)} onChange={(event) => setEmailAttachmentIds((current) => event.target.checked ? [...current, item.id] : current.filter((id) => id !== item.id))} disabled={streaming} />{item.title}</label>)}</div><div className="mt-2 text-[10px] text-blue-700">发送后会按本次邮件提交并记录所选准备材料。</div></div>}
+                 {communicationChannel === 'email' && <div className="mb-3 rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="flex items-center justify-between gap-3"><div><div className="text-[11px] font-semibold text-blue-900">邮件附件（自然语言描述）</div><div className="mt-1 text-[10px] text-blue-700">填写文件名称和内容简介，不需要先准备或选择系统材料。</div></div><button type="button" onClick={addEmailAttachment} disabled={streaming || emailAttachments.length >= 8} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-blue-700 disabled:opacity-40">添加附件</button></div>{emailAttachments.length > 0 && <div className="mt-3 space-y-2">{emailAttachments.map((attachment, index) => <div key={`${index}-${attachment.fileName}`} className="rounded-xl border border-blue-100 bg-white p-3"><div className="flex items-start gap-2"><div className="min-w-0 flex-1 space-y-2"><input value={attachment.fileName} onChange={(event) => updateEmailAttachment(index, 'fileName', event.target.value)} disabled={streaming} maxLength={160} placeholder="文件名称，例如：项目实施方案.pdf" className="w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs outline-none focus:border-blue-400 disabled:bg-slate-100" /><textarea value={attachment.description} onChange={(event) => updateEmailAttachment(index, 'description', event.target.value)} disabled={streaming} maxLength={1000} rows={2} placeholder="用自然语言描述文件内容，例如：包含分阶段实施计划、交付责任人和验收口径。" className="w-full resize-none rounded-lg border border-slate-200 px-2.5 py-2 text-xs leading-5 outline-none focus:border-blue-400 disabled:bg-slate-100" /></div><button type="button" onClick={() => removeEmailAttachment(index)} disabled={streaming} aria-label="删除附件" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"><X className="h-4 w-4" /></button></div></div>)}</div>}{hasInvalidEmailAttachment && <div className="mt-2 text-[10px] text-amber-700">请补全每个附件的文件名称和内容描述后再发送。</div>}</div>}
                 {communicationChannel === 'work_phone' && !phoneCallActive ? <div className="flex items-center justify-between rounded-xl bg-violet-50 px-4 py-3 text-sm text-violet-900"><span>点击上方绿色按钮拨打电话；接通后可输入通话要点。</span><Phone className="h-4 w-4" /></div> : <div className="flex items-end gap-2">
                   <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(input); } }} disabled={!selectedNpc || streaming} rows={3} placeholder={selectedContact?.status === 'known' ? '输入首次建联内容…' : communicationChannel === 'email' ? '撰写邮件正文…' : communicationChannel === 'online' ? '输入微信消息…' : '输入电话话术…'} className="min-h-[76px] flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 disabled:bg-slate-100" />
                   <button onClick={toggleRecording} disabled={!selectedNpc || streaming} className={`rounded-xl border p-3 ${isRecording ? 'border-red-300 bg-red-50 text-red-600' : 'border-slate-200 text-slate-500'}`}>{isRecording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}</button>
-                  <button onClick={() => sendMessage(input)} disabled={!selectedNpc || streaming || !input.trim()} className="rounded-xl bg-blue-600 p-3 text-white disabled:opacity-40"><Send className="h-4 w-4" /></button>
+                   <button onClick={() => sendMessage(input)} disabled={!selectedNpc || streaming || !input.trim() || (communicationChannel === 'email' && hasInvalidEmailAttachment)} className="rounded-xl bg-blue-600 p-3 text-white disabled:opacity-40"><Send className="h-4 w-4" /></button>
                 </div>}
                 <div className="mt-2 text-[10px] text-slate-400">邮件、电话和微信尝试均按行动点结算；电话可能无人接听。</div>
               </div>

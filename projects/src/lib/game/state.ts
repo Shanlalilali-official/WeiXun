@@ -1,4 +1,5 @@
-import type { NpcTurnEvaluation } from '@/lib/contracts/ai';
+import type { EmailAttachment, NpcTurnEvaluation } from '@/lib/contracts/ai';
+import { verifyNpcEvaluationSources } from '@/lib/ai/npc-evaluation';
 import type { GameCommand } from '@/lib/contracts/game';
 import {
   PROJECT_ONE_ACTION_POINT_CAP,
@@ -128,6 +129,9 @@ export interface GameAppointment {
   invitationText?: string;
   extractedFields?: string[];
   defaultedFields?: string[];
+  /** Player-described files sent with an email invitation. */
+  emailAttachments?: EmailAttachment[];
+  /** Legacy preparation references retained for old saves/commands only. */
   attachmentIds?: string[];
 }
 
@@ -706,10 +710,21 @@ function appendEvidence(
   category: keyof OutcomeEvidenceLedger,
   items: OutcomeEvidenceItem[],
 ): OutcomeEvidenceLedger {
-  const existing = new Set(ledger[category].map((item) => `${item.npcId}:${item.statement}`));
+  // An NPC statement represents one outcome.  Prevent both historical saves
+  // and a malformed evaluator payload from charging it to two score buckets.
+  const existing = new Set(
+    [...ledger.publicValue, ...ledger.personalBenefit]
+      .map((item) => `${item.npcId}:${item.statement.trim()}`),
+  );
+  const additions = items.filter((item) => {
+    const key = `${item.npcId}:${item.statement.trim()}`;
+    if (existing.has(key)) return false;
+    existing.add(key);
+    return true;
+  });
   return {
     ...ledger,
-    [category]: [...ledger[category], ...items.filter((item) => !existing.has(`${item.npcId}:${item.statement}`))].slice(-40),
+    [category]: [...ledger[category], ...additions].slice(-40),
   };
 }
 
@@ -760,6 +775,7 @@ type ExtendedNpcEvaluation = NpcTurnEvaluation & {
   supportDelta?: number;
   unmetImpressionDelta?: number;
   complianceAwarenessDelta?: number;
+  /** Accept pre-contract save data only at this in-memory compatibility edge. */
   publicValueEvidence?: Array<string | { statement: string; strength?: number }>;
   personalBenefitEvidence?: Array<string | { statement: string; strength?: number }>;
   workTopicOpenedBy?: 'none' | 'player' | 'npc' | null;
@@ -773,7 +789,7 @@ function normalizeEvidenceItems(
 ): OutcomeEvidenceItem[] {
   return raw.slice(0, 4).map((item, index) => {
     const statement = typeof item === 'string' ? item : item.statement;
-    const strength = typeof item === 'string' ? 2 : clamp(item.strength ?? 2, 1, 5);
+    const strength = typeof item === 'string' ? 2 : clamp(Math.round(item.strength ?? 2), 1, 5);
     return {
       id: `${npcId}:${round}:${category}:${index}:${statement.slice(0, 24)}`,
       npcId,
@@ -794,27 +810,32 @@ export function applyNpcEvaluation(
 ): GameRuntimeState {
   if (state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
   if (!state.unlockedNpcIds.includes(npcId)) throw new Error('NPC_LOCKED');
+  // Evaluation output is untrusted until each ledger-bearing claim is found
+  // verbatim in the NPC reply generated for this command.  Keep this second
+  // check here even though the evaluator parses it too: persistence is the
+  // authority boundary and callers can invoke this function directly.
+  const sourcedEvaluation = verifyNpcEvaluationSources(evaluation, replyContent);
   let next = state;
   if (channel && channel !== 'offline') next = consumeCommunicationTime(next, channel);
 
   const dimensions = { ...next.dimensions };
   for (const key of GAME_DIMENSIONS) {
-    dimensions[key] = clamp(dimensions[key] + evaluation.dimensionDeltas[key] * next.progressionMultiplier);
+    dimensions[key] = clamp(dimensions[key] + sourcedEvaluation.dimensionDeltas[key] * next.progressionMultiplier);
   }
 
-  const extended = evaluation as ExtendedNpcEvaluation;
-  const supportDelta = (extended.supportDelta ?? evaluation.affinityDelta) * next.progressionMultiplier;
-  const pleasantnessDelta = (extended.pleasureDelta ?? extended.pleasantnessDelta ?? evaluation.affinityDelta) * next.progressionMultiplier;
+  const extended = sourcedEvaluation as ExtendedNpcEvaluation;
+  const supportDelta = (extended.supportDelta ?? sourcedEvaluation.affinityDelta) * next.progressionMultiplier;
+  const pleasantnessDelta = (extended.pleasureDelta ?? extended.pleasantnessDelta ?? sourcedEvaluation.affinityDelta) * next.progressionMultiplier;
   next = applyNpcAttitudeDelta({ ...next, dimensions }, npcId, {
     pleasantnessDelta,
     supportDelta,
     unmetImpressionDelta: extended.unmetImpressionDelta,
     complianceAwarenessDelta: extended.complianceAwarenessDelta,
-    reason: evaluation.affinityReason,
+    reason: sourcedEvaluation.affinityReason,
     source: 'ai_evaluation',
   });
 
-  const acceptedClues: ProjectOneClue[] = evaluation.cluesUnlocked.filter(
+  const acceptedClues: ProjectOneClue[] = sourcedEvaluation.cluesUnlocked.filter(
     (clue) => clue !== 'personal_interest' || (next.npcAttitudes[npcId]?.support ?? 0) >= 50,
   );
   // key_contact used to unlock Chen Jianguo. D-024 removes that gate; do not
@@ -822,12 +843,12 @@ export function applyNpcEvaluation(
   void replyContent;
   const unlockedClues = Array.from(new Set([...next.unlockedClues, ...acceptedClues]));
   const memory = next.conversationMemories[npcId] ?? { summary: '', summarizedMessageCount: 0 };
-  const confirmedFacts = Array.from(new Set([...(memory.confirmedFacts ?? []), ...evaluation.confirmedFacts])).slice(-12);
-  const commitments = Array.from(new Set([...(memory.commitments ?? []), ...evaluation.commitments])).slice(-12);
+  const confirmedFacts = Array.from(new Set([...(memory.confirmedFacts ?? []), ...sourcedEvaluation.confirmedFacts])).slice(-12);
+  const commitments = Array.from(new Set([...(memory.commitments ?? []), ...sourcedEvaluation.commitments])).slice(-12);
   let outcomeEvidence = next.outcomeEvidence;
-  const publicRaw = extended.publicValueEvidence ?? evaluation.confirmedFacts
+  const publicRaw = extended.publicValueEvidence ?? sourcedEvaluation.confirmedFacts
     .filter((fact) => /预算|回报|风险|合规|落地|效率|绩效|组织|成本/.test(fact));
-  const personalRaw = extended.personalBenefitEvidence ?? evaluation.confirmedFacts
+  const personalRaw = extended.personalBenefitEvidence ?? sourcedEvaluation.confirmedFacts
     .filter((fact) => /减负|晋升|职业|声誉|成长|安全|个人绩效/.test(fact));
   outcomeEvidence = appendEvidence(outcomeEvidence, 'publicValue', normalizeEvidenceItems(npcId, next.currentRound, 'public', publicRaw));
   outcomeEvidence = appendEvidence(outcomeEvidence, 'personalBenefit', normalizeEvidenceItems(npcId, next.currentRound, 'personal', personalRaw));
@@ -1328,9 +1349,10 @@ export function recordNpcOutbound(state: GameRuntimeState, npcId: string): GameR
 }
 
 /**
- * Apply preparation attachments sent in an ordinary email. The preparation
- * inventory is authoritative; callers may not attach another NPC's item,
- * an already-used item, or a gift through the chat channel.
+ * Legacy preparation-ID attachment helper for archived commands/tests. New
+ * chat emails use player-described `emailAttachments` and never call this
+ * inventory transition; it remains only so old visit records can be read and
+ * validated without weakening ownership or gift boundaries.
  */
 export function applyPreparationAttachments(
   state: GameRuntimeState,
@@ -1613,18 +1635,20 @@ function createAppointmentFromCommand(
   command: Extract<GameCommand, { type: 'invite' }>,
 ): { state: GameRuntimeState; appointment: GameAppointment } {
   const { payload } = command;
+  const attachmentIds = payload.attachmentIds ?? [];
+  const emailAttachments = payload.emailAttachments ?? [];
   const resolved = resolveInvitationPayload(state, payload);
   const contact = state.npcContacts[payload.npcId];
   if (!contact || contact.status === 'known' || (!contact.hasReplied && contact.status !== 'online')) {
     throw new Error('TWO_WAY_CONTACT_REQUIRED');
   }
   if (!state.unlockedNpcIds.includes(payload.npcId)) throw new Error('NPC_LOCKED');
-  if (payload.attachmentIds.length > 0 && payload.channel !== 'email') {
+  if ((attachmentIds.length > 0 || emailAttachments.length > 0) && payload.channel !== 'email') {
     throw new Error('EMAIL_ATTACHMENT_NOT_AVAILABLE');
   }
   const rules = PROJECT_ONE_VISIT_RULES[resolved.visitType];
-  const attachments = state.preparations.filter((item) => payload.attachmentIds.includes(item.id));
-  if (attachments.length !== payload.attachmentIds.length || attachments.some((item) =>
+  const attachments = state.preparations.filter((item) => attachmentIds.includes(item.id));
+  if (attachments.length !== attachmentIds.length || attachments.some((item) =>
     item.npcId !== payload.npcId
     || item.status !== 'ready'
     || !isCurrentPreparationType(item.type))) {
@@ -1657,7 +1681,8 @@ function createAppointmentFromCommand(
     invitationText: resolved.invitationText,
     extractedFields: resolved.extractedFields,
     defaultedFields: resolved.defaultedFields,
-    attachmentIds: payload.attachmentIds,
+    emailAttachments,
+    attachmentIds,
   };
   let next = { ...state, appointments: [...state.appointments, appointment] };
   next = {
@@ -1758,6 +1783,69 @@ function startVisit(
   };
 }
 
+/**
+ * Compliance effects are policy-owned.  AI can supply a natural-language NPC
+ * reply and, at most, a candidate disposition; it may not set a risk tier,
+ * trigger state, or financial penalty on the persisted ledger.
+ */
+export function deriveBoundaryGiftRiskPolicy(
+  disposition: GiftDisposition,
+  priorAccepted: boolean,
+  explicitBribe: boolean,
+): Pick<ComplianceRiskEvent, 'severity' | 'status' | 'penalty'> {
+  if (explicitBribe || disposition === 'reported') {
+    return { severity: 5, status: 'triggered', penalty: 20 };
+  }
+  if (disposition === 'cautious_acceptance') {
+    return { severity: 5, status: 'latent', penalty: 15 };
+  }
+  if (disposition === 'delighted_acceptance') {
+    return { severity: 4, status: 'latent', penalty: 12 };
+  }
+  if (disposition === 'firm_rejection') {
+    return { severity: priorAccepted ? 4 : 3, status: 'latent', penalty: priorAccepted ? 12 : 9 };
+  }
+  return { severity: priorAccepted ? 3 : 2, status: 'latent', penalty: priorAccepted ? 9 : 6 };
+}
+
+/**
+ * The outcome class is server-owned as well: a model cannot manufacture an
+ * immediate report (or erase one) by selecting a JSON enum.  The seed makes
+ * the same command reproducible while the NPC profile and visit context keep
+ * different people and settings meaningfully distinct.
+ */
+export function deriveBoundaryGiftDisposition(
+  npcId: string,
+  support: number,
+  commandId: string,
+  setting: 'public' | 'private',
+  witnesses: string[],
+  priorAccepted: boolean,
+  explicitBribe: boolean,
+): GiftDisposition {
+  if (explicitBribe) return 'reported';
+  const npc = getProjectOneNpc(npcId);
+  if (!npc) throw new Error('NPC_UNKNOWN');
+  const procurementSensitive = npcId === 'p1-procurement-liu-kai';
+  let acceptChance = 55 - npc.complianceSensitivity * 0.4 + (support - 35) * 0.4;
+  if (setting === 'private') acceptChance += 10;
+  if (witnesses.length > 0) acceptChance -= 15;
+  if (procurementSensitive) acceptChance -= 10;
+  const accepted = !priorAccepted && shouldNpcRespond(`${commandId}:gift-accept`, clamp(acceptChance, 5, 70));
+  const reported = shouldNpcRespond(`${commandId}:gift-report`, clamp(
+    npc.complianceSensitivity * 0.45 + (priorAccepted ? 25 : 0) + (procurementSensitive ? 10 : 0),
+    10,
+    80,
+  ));
+  if (accepted) {
+    return shouldNpcRespond(`${commandId}:gift-delighted`, 45)
+      ? 'delighted_acceptance'
+      : 'cautious_acceptance';
+  }
+  if (reported) return 'reported';
+  return shouldNpcRespond(`${commandId}:gift-firm`, 45) ? 'firm_rejection' : 'polite_decline';
+}
+
 function giveGift(
   state: GameRuntimeState,
   command: Extract<GameCommand, { type: 'give_gift' }>,
@@ -1803,39 +1891,32 @@ function giveGift(
       source: evaluationSource,
     });
   } else {
-    const npc = getProjectOneNpc(preparation.npcId);
-    if (!npc) throw new Error('NPC_UNKNOWN');
     const priorAccepted = state.complianceRisks.some((item) =>
       item.npcId === preparation.npcId
       && item.kind === 'boundary_gift'
       && (item.outcome === 'delighted_acceptance' || item.outcome === 'cautious_acceptance'));
     const attitude = state.npcAttitudes[preparation.npcId] ?? defaultAttitude();
     const explicitBribe = command.payload.exchangeRequested;
+    disposition = deriveBoundaryGiftDisposition(
+      preparation.npcId,
+      attitude.support,
+      command.commandId,
+      command.payload.setting,
+      command.payload.witnesses,
+      priorAccepted,
+      explicitBribe,
+    );
+    const modelMatchesPolicy = trustedEvaluation?.disposition === disposition;
     if (explicitBribe) {
-      disposition = 'reported';
       decisionReason = '明确提出利益交换';
       evaluationSource = 'deterministic_compliance_rule';
       message = '这属于不合规的利益交换，我不能接受并会按流程上报。';
-    } else if (trustedEvaluation) {
-      const assessedAsAccepted = trustedEvaluation.disposition === 'delighted_acceptance'
-        || trustedEvaluation.disposition === 'cautious_acceptance';
-      disposition = priorAccepted && assessedAsAccepted ? 'firm_rejection' : trustedEvaluation.disposition;
-    } else {
-      let acceptChance = 55 - npc.complianceSensitivity * 0.4 + (attitude.support - 35) * 0.4;
-      if (command.payload.setting === 'private') acceptChance += 10;
-      if (command.payload.witnesses.length) acceptChance -= 15;
-      if (priorAccepted) acceptChance -= 35;
-      const bucketAccepted = !priorAccepted && shouldNpcRespond(`${command.commandId}:gift-accept`, clamp(acceptChance, 5, 70));
-      const bucketReport = shouldNpcRespond(`${command.commandId}:gift-report`, clamp(npc.complianceSensitivity * 0.45 + (priorAccepted ? 20 : 0), 10, 75));
-      if (bucketAccepted) {
-        disposition = shouldNpcRespond(`${command.commandId}:gift-delighted`, 45)
-          ? 'delighted_acceptance'
-          : 'cautious_acceptance';
-      } else if (bucketReport) {
-        disposition = 'reported';
-      } else {
-        disposition = shouldNpcRespond(`${command.commandId}:gift-firm`, 45) ? 'firm_rejection' : 'polite_decline';
-      }
+    } else if (!modelMatchesPolicy) {
+      // Do not let a model-supplied reported/accepted enum change the policy
+      // class.  Mismatches receive a canonical response and attitude change.
+      decisionReason = `服务端合规策略判定：${disposition}`;
+      evaluationSource = 'deterministic_compliance_rule';
+      message = '';
     }
     const deltas: Record<GiftDisposition, [number, number]> = {
       delighted_acceptance: [12, 7],
@@ -1844,7 +1925,7 @@ function giveGift(
       firm_rejection: [-7, -5],
       reported: [-12, -9],
     };
-    let [pleasantnessDelta, supportDelta] = trustedEvaluation && !explicitBribe
+    let [pleasantnessDelta, supportDelta] = modelMatchesPolicy && !explicitBribe
       ? [
           clampDelta(trustedEvaluation.pleasureDelta ?? trustedEvaluation.pleasantnessDelta ?? 0, -12, 12),
           clampDelta(trustedEvaluation.supportDelta, -10, 7),
@@ -1853,12 +1934,6 @@ function giveGift(
     if (disposition !== 'delighted_acceptance' && disposition !== 'cautious_acceptance') {
       pleasantnessDelta = Math.min(0, pleasantnessDelta);
       supportDelta = Math.min(0, supportDelta);
-    }
-    if (priorAccepted && trustedEvaluation && (trustedEvaluation.disposition === 'delighted_acceptance' || trustedEvaluation.disposition === 'cautious_acceptance')) {
-      pleasantnessDelta = Math.min(-5, pleasantnessDelta);
-      supportDelta = Math.min(-3, supportDelta);
-      decisionReason = '同一人物不能再次接受边界礼品，重复尝试引起警惕';
-      message = '之前已经收过一次，这次我不能再接受。';
     }
     decisionReason ||= command.payload.exchangeRequested ? '明确提出利益交换' : `高波动边界礼品：${disposition}`;
     message ||= disposition === 'delighted_acceptance' || disposition === 'cautious_acceptance'
@@ -1872,25 +1947,24 @@ function giveGift(
       source: evaluationSource,
       allowBoundaryGiftRange: true,
     });
-    const triggered = disposition === 'reported';
-    const severity = command.payload.exchangeRequested ? 5
-      : trustedEvaluation ? clampDelta(Math.round(trustedEvaluation.severity), 1, 5)
-        : disposition === 'cautious_acceptance' ? 5
-        : disposition === 'delighted_acceptance' ? 4
-          : disposition === 'firm_rejection' ? (priorAccepted ? 4 : 3) : (priorAccepted ? 3 : 2);
+    const compliancePolicy = deriveBoundaryGiftRiskPolicy(
+      disposition,
+      priorAccepted,
+      command.payload.exchangeRequested,
+    );
     risk = {
       id: `risk:${command.commandId}`,
       npcId: preparation.npcId,
       preparationId: preparation.id,
       kind: command.payload.exchangeRequested ? 'explicit_bribe' : 'boundary_gift',
-      severity,
-      status: triggered ? 'triggered' : 'latent',
-      penalty: command.payload.exchangeRequested ? 20 : severity * 3,
+      severity: compliancePolicy.severity,
+      status: compliancePolicy.status,
+      penalty: compliancePolicy.penalty,
       reason: command.payload.exchangeRequested
         ? '明确回扣或利益交换已被记录'
         : trustedEvaluation?.riskReason.trim() || '边界礼品可能在后续审计或转述中暴露',
       createdRound: state.currentRound,
-      triggerRound: triggered ? state.currentRound : null,
+      triggerRound: compliancePolicy.status === 'triggered' ? state.currentRound : null,
       outcome: disposition,
     };
     next = { ...next, complianceRisks: [...next.complianceRisks, risk] };

@@ -27,6 +27,7 @@ export interface CustomerPromptContext {
   supportBand?: string;
   unseenImpressionSummary?: string;
   preparedItems?: Array<{ type: string; title?: string; relevance?: string }>;
+  emailAttachments?: Array<{ fileName: string; description: string }>;
   giftContext?: {
     giftType: 'none' | 'compliant' | 'boundary';
     description?: string;
@@ -120,6 +121,7 @@ export function CUSTOMER_CONTEXT(ctx: CustomerPromptContext): string {
       unseenImpressionSummary: ctx.unseenImpressionSummary ?? null,
     },
     preparedItems: ctx.preparedItems ?? [],
+    emailAttachments: ctx.emailAttachments ?? [],
     giftContext: ctx.giftContext ?? { giftType: 'none' },
     lastAction: ctx.lastAction,
     memorySummary: ctx.memorySummary ?? null,

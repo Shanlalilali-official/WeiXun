@@ -16,6 +16,9 @@
     "supabase:reset": "supabase db reset",
     "ts-check": "tsc -p tsconfig.json",
     "test:game-state": "tsx scripts/test-five-stage-state.ts",
+    "test:email-attachments": "tsx scripts/test-email-attachments.ts",
+    "test:project-one-preview-ai": "tsx scripts/test-project-one-preview-ai.ts",
+    "test:prompt-test": "tsx scripts/test-prompt-test.ts",
     "test:invitation-intent": "tsx scripts/test-invitation-intent.ts",
     "test:game-state:legacy": "tsx scripts/test-game-state.ts",
     "test:ai-provider": "tsx scripts/test-ai-provider.ts",
@@ -24,6 +27,8 @@
     "test:multiplayer-e2e": "tsx scripts/test-multiplayer-e2e.ts",
     "test:single-save-e2e": "tsx scripts/test-single-save-e2e.ts",
     "test:metrics": "tsx scripts/test-metrics.ts",
+    "test:ranking-db-fixes": "tsx scripts/test-ranking-db-fixes.ts",
+    "test:review-context": "tsx scripts/test-review-context.ts",
     "validate": "pnpm run --parallel '/^(ts-check|lint:build)$/'"
   },
   "dependencies": {

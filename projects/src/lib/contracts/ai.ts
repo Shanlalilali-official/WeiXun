@@ -5,6 +5,16 @@ export const chatHistoryMessageSchema = z.object({
   content: z.string().trim().min(1).max(4000),
 });
 
+/**
+ * A player-described email attachment. This is deliberately separate from
+ * the preparation inventory: an email can carry a short description of a
+ * file without consuming or exposing a prepared visit item.
+ */
+export const emailAttachmentSchema = z.object({
+  fileName: z.string().trim().min(1).max(160),
+  description: z.string().trim().min(1).max(1000),
+});
+
 export const npcChatRequestSchema = z.object({
   gameSessionId: z.string().trim().min(1).max(128),
   scenarioId: z.string().trim().min(1).max(128),
@@ -16,7 +26,7 @@ export const npcChatRequestSchema = z.object({
   channel: z.enum(['email', 'work_phone', 'online', 'offline']).optional(),
   contextType: z.enum(['online', 'short_visit', 'formal_visit', 'informal_visit']).optional(),
   appointmentId: z.string().trim().min(1).max(128).optional(),
-  attachmentIds: z.array(z.string().trim().min(1).max(128)).max(8).default([]),
+  emailAttachments: z.array(emailAttachmentSchema).max(8).default([]),
   usedPreparationIds: z.array(z.string().trim().min(1).max(128)).max(12).default([]),
 });
 
@@ -66,6 +76,16 @@ export const giftCommandDecisionSchema = z.object({
   npcResponse: z.string().trim().min(1).max(160),
 });
 
+/**
+ * Outcome evidence is deliberately structured.  A model may propose an item,
+ * but the game state only records it after the NPC's actual reply has been
+ * checked as its source of truth.
+ */
+export const outcomeEvidenceCandidateSchema = z.object({
+  statement: z.string().trim().min(1).max(180),
+  strength: z.number().int().min(1).max(5),
+});
+
 export const npcTurnEvaluationSchema = z.object({
   // Legacy compatibility: until all game-state consumers migrate, affinityDelta
   // mirrors supportDelta. New evaluators must return both fields.
@@ -88,8 +108,8 @@ export const npcTurnEvaluationSchema = z.object({
   ])).max(2),
   confirmedFacts: z.array(z.string().trim().min(1).max(160)).max(2),
   commitments: z.array(z.string().trim().min(1).max(160)).max(2),
-  publicValueEvidence: z.array(z.string().trim().min(1).max(180)).max(3),
-  personalBenefitEvidence: z.array(z.string().trim().min(1).max(180)).max(3),
+  publicValueEvidence: z.array(outcomeEvidenceCandidateSchema).max(3),
+  personalBenefitEvidence: z.array(outcomeEvidenceCandidateSchema).max(3),
   workTopicOpenedBy: z.enum(['none', 'player', 'npc']),
   semanticFlags: npcSemanticFlagsSchema,
   giftAssessment: giftAssessmentSchema,
@@ -136,6 +156,7 @@ export const generatedScenarioSchema = z.object({
 });
 
 export type NpcChatRequest = z.infer<typeof npcChatRequestSchema>;
+export type EmailAttachment = z.infer<typeof emailAttachmentSchema>;
 export type NpcSemanticFlags = z.infer<typeof npcSemanticFlagsSchema>;
 export type GiftAssessment = z.infer<typeof giftAssessmentSchema>;
 export type GiftCommandDecision = z.infer<typeof giftCommandDecisionSchema>;

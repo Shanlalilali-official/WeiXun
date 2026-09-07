@@ -1,13 +1,14 @@
 import { createServerClient } from '@/storage/database/supabase-client';
 import { getProgressionMultiplier } from '@/lib/game/acceptance-mode';
 import { assertMultiplayerRoomRunning } from '@/lib/game/multiplayer';
-import { createProjectOneState, getGameOutcome, normalizeProjectOneState, reconcileNarrativeDiscoveries, type GameRuntimeState } from '@/lib/game/state';
+import { createProjectOneState, getGameOutcome, normalizeProjectOneState, reconcileNarrativeDiscoveries, type GameOutcome, type GameRuntimeState } from '@/lib/game/state';
 import type { GameReview } from '@/lib/contracts/game';
 
 export interface StoredChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  round?: number;
   createdAt: string;
   metadata?: Record<string, unknown>;
 }
@@ -16,6 +17,92 @@ export interface NpcInboxItem {
   sourceNpcId: string;
   summary: string;
   round: number;
+}
+
+export interface StoredGameEvent {
+  id: string;
+  npcId: string | null;
+  round: number;
+  eventType: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+/**
+ * A review needs the tail of the raw transcript, not the oldest page of it.
+ * Durable memory and event ledgers carry the older high-value facts, while
+ * this bounded window preserves the latest conversational context.
+ */
+export const REVIEW_RECENT_MESSAGE_LIMIT = 32;
+export const REVIEW_KEY_EVENT_LIMIT = 256;
+export const REVIEW_CONTEXT_VERSION = 2;
+
+const REVIEW_EVENT_TYPES = [
+  'npc.turn.completed',
+  'npc.message.unanswered',
+  'npc.call.unanswered',
+  'npc.call.connected',
+  'npc.handoff.promised',
+  'npc.handoff.sent',
+  'npc.handoff.received',
+  'contact.completed',
+  'wechat.accepted',
+  'wechat.rejected',
+  'wechat.pending',
+  'wechat.later',
+  'appointment.pending',
+  'appointment.accepted',
+  'appointment.countered',
+  'appointment.cancelled',
+  'appointment.missed',
+  'preparation.completed',
+  'preparation.delivered',
+  'visit.started',
+  'visit.completed',
+  'gift.delivered',
+  'meeting_minutes.updated',
+  'follow_up.sent',
+  'phase.advanced',
+  'session.finished',
+  'session.submitted',
+  'public_info.researched',
+] as const;
+
+type ReviewMemory = {
+  summary: string;
+  summarizedMessageCount: number;
+  confirmedFacts: string[];
+  commitments: string[];
+};
+
+export interface ReviewContextMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  round?: number;
+  createdAt: string;
+  npcId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ReviewContextEvent {
+  id: string;
+  npcId: string | null;
+  round: number;
+  eventType: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ReviewContext {
+  /** Per-NPC rolling memory. No NPC receives another NPC's transcript here. */
+  npcMemories: Record<string, ReviewMemory>;
+  /** State fields selected for review; hidden competitor state is intentionally absent. */
+  persistentState: Record<string, unknown>;
+  /** Allowlisted durable events, ordered oldest to newest. */
+  keyEvents: ReviewContextEvent[];
+  /** The newest bounded raw message tail. */
+  recentMessages: ReviewContextMessage[];
 }
 
 interface RuntimeStateRow {
@@ -581,7 +668,7 @@ export async function getNpcConversation(sessionId: string, npcId: string, limit
   const supabase = createServerClient();
   const { data, error } = await supabase
     .from('chat_messages')
-    .select('id, sender, content, created_at, metadata')
+    .select('id, sender, content, round, created_at, metadata')
     .eq('session_id', sessionId)
     .contains('metadata', { npcId })
     .in('sender', ['user', 'assistant'])
@@ -592,6 +679,7 @@ export async function getNpcConversation(sessionId: string, npcId: string, limit
     id: String(message.id),
     role: message.sender as 'user' | 'assistant',
     content: String(message.content),
+    round: Number(message.round),
     createdAt: String(message.created_at),
     metadata: (message.metadata as Record<string, unknown> | null) ?? undefined,
   }));
@@ -618,7 +706,7 @@ export async function getNpcConversationRange(
   const supabase = createServerClient();
   const { data, error } = await supabase
     .from('chat_messages')
-    .select('id, sender, content, created_at, metadata')
+    .select('id, sender, content, round, created_at, metadata')
     .eq('session_id', sessionId)
     .contains('metadata', { npcId })
     .in('sender', ['user', 'assistant'])
@@ -629,25 +717,507 @@ export async function getNpcConversationRange(
     id: String(message.id),
     role: message.sender as 'user' | 'assistant',
     content: String(message.content),
+    round: Number(message.round),
     createdAt: String(message.created_at),
     metadata: (message.metadata as Record<string, unknown> | null) ?? undefined,
   }));
 }
 
-export async function getSessionTranscript(sessionId: string, limit = 80): Promise<StoredChatMessage[]> {
+const REVIEW_EVENT_TYPE_SET = new Set<string>(REVIEW_EVENT_TYPES);
+const REVIEW_CRITICAL_EVENT_TYPES = new Set<string>([
+  'npc.handoff.promised',
+  'npc.handoff.sent',
+  'npc.handoff.received',
+  'gift.delivered',
+  'visit.completed',
+  'meeting_minutes.updated',
+  'session.finished',
+  'session.submitted',
+]);
+
+const REVIEW_EVENT_FIELDS: Record<string, readonly string[]> = {
+  'npc.turn.completed': [
+    'npcId', 'channel', 'intent', 'scoreDelta', 'evaluationSource', 'cluesUnlocked',
+    'handoff', 'meetingEnded', 'emailAttachmentCount', 'semanticFlags', 'giftAssessment',
+    'confirmedFacts', 'commitments', 'publicValueEvidence', 'personalBenefitEvidence',
+    'workTopicOpenedBy',
+  ],
+  'npc.message.unanswered': ['npcId', 'channel', 'intent', 'responseChance', 'emailAttachmentCount'],
+  'npc.call.unanswered': ['npcId', 'channel', 'outcome'],
+  'npc.call.connected': ['npcId', 'channel', 'outcome'],
+  'npc.handoff.promised': ['sourceCommandId', 'sourceNpcId', 'targetNpcId', 'summary'],
+  'npc.handoff.sent': ['sourceEventId', 'promiseKey', 'sourceNpcId', 'targetNpcId', 'summary'],
+  'npc.handoff.received': ['sourceEventId', 'sourceNpcId', 'targetNpcId', 'summary'],
+  'contact.completed': ['npcId', 'channel', 'outcome'],
+  'wechat.accepted': ['npcId', 'status'],
+  'wechat.rejected': ['npcId', 'status'],
+  'wechat.pending': ['npcId', 'status'],
+  'wechat.later': ['npcId', 'status'],
+  'appointment.pending': [
+    'npcId', 'appointmentId', 'status', 'channel', 'extractedFields', 'defaultedFields', 'conditionCount',
+  ],
+  'appointment.accepted': [
+    'npcId', 'appointmentId', 'action', 'conditionCount', 'conditionsSatisfied',
+  ],
+  'appointment.countered': [
+    'npcId', 'appointmentId', 'status', 'channel', 'extractedFields', 'defaultedFields', 'conditionCount',
+  ],
+  'appointment.cancelled': ['npcId', 'appointmentId', 'action', 'conditionCount', 'conditionsSatisfied'],
+  'appointment.missed': ['npcId', 'appointmentId', 'status'],
+  'preparation.completed': [
+    'npcId', 'appointmentId', 'preparationId', 'type', 'hasPreparationBrief', 'preparationBriefLength',
+    'timeMinutes', 'costPoints',
+  ],
+  'preparation.delivered': ['npcId', 'appointmentId', 'preparationId', 'preparationType', 'deliveredDuringVisit'],
+  'visit.started': [
+    'npcId', 'appointmentId', 'visitType', 'scheduledRound', 'scheduledMinute', 'preparationCount', 'conditionCount',
+  ],
+  'visit.completed': [
+    'npcId', 'appointmentId', 'visitType', 'reason', 'turnCount', 'maxTurns', 'usedPreparationCount', 'hasPlayerSummary',
+  ],
+  'gift.delivered': ['preparationId', 'disposition', 'riskId', 'reason', 'source'],
+  'meeting_minutes.updated': ['minutesId', 'appointmentId', 'npcId', 'revisionCount'],
+  'follow_up.sent': ['npcId', 'appointmentId', 'channel', 'preparationCount'],
+  'phase.advanced': [
+    'fromRound', 'toRound', 'status', 'pendingAppointmentCount', 'unreadNotificationCount', 'missedAppointmentCount',
+    'finalScore', 'won', 'publicValueEvidenceCount', 'personalBenefitEvidenceCount', 'complianceRiskCount',
+  ],
+  'session.finished': [
+    'fromRound', 'toRound', 'status', 'pendingAppointmentCount', 'unreadNotificationCount', 'missedAppointmentCount',
+    'finalScore', 'won', 'publicValueEvidenceCount', 'personalBenefitEvidenceCount', 'complianceRiskCount',
+  ],
+  'session.submitted': [
+    'submittedRound', 'earlySubmission', 'warningCodes', 'warningCount', 'publicValueEvidenceCount',
+    'personalBenefitEvidenceCount', 'triggeredComplianceRiskCount', 'finalScore', 'won',
+  ],
+  'public_info.researched': ['npcId', 'factCount', 'weakSignalCount', 'costPoints'],
+};
+
+function reviewRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function reviewText(value: unknown, maxLength = 300): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ').trim();
+  return normalized ? normalized.slice(0, maxLength) : undefined;
+}
+
+function reviewNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function reviewBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function reviewTextList(value: unknown, maxItems = 12, maxLength = 300): string[] {
+  if (!Array.isArray(value)) return [];
+  const items = value
+    .map((item) => reviewText(item, maxLength))
+    .filter((item): item is string => Boolean(item));
+  return Array.from(new Set(items)).slice(-maxItems);
+}
+
+function reviewScalar(value: unknown): string | number | boolean | null | undefined {
+  if (typeof value === 'string') return reviewText(value);
+  if (typeof value === 'number') return reviewNumber(value);
+  if (typeof value === 'boolean') return value;
+  if (value === null) return null;
+  return undefined;
+}
+
+function reviewSemanticFlags(value: unknown): Record<string, unknown> | undefined {
+  const flags = reviewRecord(value);
+  const output: Record<string, unknown> = {};
+  for (const key of ['negativeInformation', 'riskyConduct', 'giftMentioned', 'explicitQuidProQuo', 'repeatedPressure']) {
+    const safe = reviewBoolean(flags[key]);
+    if (safe !== undefined) output[key] = safe;
+  }
+  const type = reviewText(flags.negativeInformationType, 64);
+  if (type) output.negativeInformationType = type;
+  return Object.keys(output).length ? output : undefined;
+}
+
+function reviewGiftAssessment(value: unknown): Record<string, unknown> | undefined {
+  const gift = reviewRecord(value);
+  const output: Record<string, unknown> = {};
+  for (const key of ['giftType', 'outcome', 'riskLevel']) {
+    const safe = reviewText(gift[key], 64);
+    if (safe) output[key] = safe;
+  }
+  const reason = reviewText(gift.riskReason, 180);
+  if (reason) output.riskReason = reason;
+  return Object.keys(output).length ? output : undefined;
+}
+
+function reviewHandoff(value: unknown): Record<string, unknown> | null | undefined {
+  if (value === null) return null;
+  const handoff = reviewRecord(value);
+  const targetNpcId = reviewText(handoff.targetNpcId, 128);
+  const summary = reviewText(handoff.summary, 180);
+  if (!targetNpcId || !summary) return undefined;
+  return { targetNpcId, summary };
+}
+
+function sanitizeReviewMetadata(value: unknown): Record<string, unknown> | undefined {
+  const metadata = reviewRecord(value);
+  const output: Record<string, unknown> = {};
+  for (const key of [
+    'npcId', 'intent', 'channel', 'deliveryStatus', 'meetingId', 'meetingTurn', 'meetingType',
+    'evaluationSource', 'protocolValid', 'affinityDelta', 'scoreDelta', 'pleasureDelta',
+    'supportDelta', 'unmetImpressionDelta', 'complianceAwarenessDelta', 'workTopicOpenedBy',
+  ]) {
+    const safe = reviewScalar(metadata[key]);
+    if (safe !== undefined) output[key] = safe;
+  }
+  for (const key of ['cluesUnlocked', 'confirmedFacts', 'commitments', 'publicValueEvidence', 'personalBenefitEvidence']) {
+    const safe = reviewTextList(metadata[key], 4, 220);
+    if (safe.length) output[key] = safe;
+  }
+  const semanticFlags = reviewSemanticFlags(metadata.semanticFlags);
+  if (semanticFlags) output.semanticFlags = semanticFlags;
+  const giftAssessment = reviewGiftAssessment(metadata.giftAssessment);
+  if (giftAssessment) output.giftAssessment = giftAssessment;
+  const handoff = reviewHandoff(metadata.handoff);
+  if (handoff !== undefined) output.handoff = handoff;
+  if (Array.isArray(metadata.emailAttachments)) output.emailAttachmentCount = metadata.emailAttachments.length;
+  if (Array.isArray(metadata.usedPreparationIds)) output.usedPreparationCount = metadata.usedPreparationIds.length;
+  return Object.keys(output).length ? output : undefined;
+}
+
+function sanitizeReviewEventPayload(eventType: string, value: unknown): Record<string, unknown> {
+  const payload = reviewRecord(value);
+  const output: Record<string, unknown> = {};
+  for (const key of REVIEW_EVENT_FIELDS[eventType] ?? []) {
+    if (key === 'semanticFlags') {
+      const safe = reviewSemanticFlags(payload[key]);
+      if (safe) output[key] = safe;
+      continue;
+    }
+    if (key === 'giftAssessment') {
+      const safe = reviewGiftAssessment(payload[key]);
+      if (safe) output[key] = safe;
+      continue;
+    }
+    if (key === 'handoff') {
+      const safe = reviewHandoff(payload[key]);
+      if (safe !== undefined) output[key] = safe;
+      continue;
+    }
+    if (['cluesUnlocked', 'confirmedFacts', 'commitments', 'publicValueEvidence', 'personalBenefitEvidence', 'extractedFields', 'defaultedFields', 'warningCodes'].includes(key)) {
+      const safe = reviewTextList(payload[key], 12, 220);
+      if (safe.length) output[key] = safe;
+      continue;
+    }
+    const safe = reviewScalar(payload[key]);
+    if (safe !== undefined) output[key] = safe;
+  }
+  return output;
+}
+
+function eventHasCriticalReviewData(event: ReviewContextEvent): boolean {
+  if (REVIEW_CRITICAL_EVENT_TYPES.has(event.eventType)) return true;
+  const payload = event.payload;
+  const flags = reviewRecord(payload.semanticFlags);
+  return event.eventType === 'npc.turn.completed' && (
+    flags.riskyConduct === true
+    || flags.explicitQuidProQuo === true
+    || flags.giftMentioned === true
+    || reviewTextList(payload.commitments).length > 0
+    || reviewTextList(payload.confirmedFacts).length > 0
+    || reviewHandoff(payload.handoff) !== undefined
+  );
+}
+
+function eventTimestamp(event: { createdAt: string; round: number; id: string }): number {
+  const parsed = Date.parse(event.createdAt);
+  return Number.isFinite(parsed) ? parsed : event.round;
+}
+
+function sortReviewEvents(events: ReviewContextEvent[]): ReviewContextEvent[] {
+  return [...events].sort((left, right) =>
+    eventTimestamp(left) - eventTimestamp(right)
+    || left.round - right.round
+    || left.id.localeCompare(right.id));
+}
+
+function sanitizeReviewEvents(events: StoredGameEvent[]): ReviewContextEvent[] {
+  const candidates = sortReviewEvents(events.flatMap((event) => {
+    if (!REVIEW_EVENT_TYPE_SET.has(event.eventType)) return [];
+    const payload = sanitizeReviewEventPayload(event.eventType, event.payload);
+    const rawNpcId = reviewText(event.npcId, 128) ?? reviewText(event.payload?.npcId, 128);
+    return [{
+      id: event.id,
+      npcId: rawNpcId ?? null,
+      round: Number.isFinite(event.round) ? event.round : 0,
+      eventType: event.eventType,
+      payload,
+      createdAt: event.createdAt,
+    } satisfies ReviewContextEvent];
+  }));
+  if (candidates.length <= REVIEW_KEY_EVENT_LIMIT) return candidates;
+  const recent = candidates.slice(-REVIEW_KEY_EVENT_LIMIT);
+  const critical = candidates.filter(eventHasCriticalReviewData).slice(-REVIEW_KEY_EVENT_LIMIT);
+  return sortReviewEvents(Array.from(new Map([...critical, ...recent].map((event) => [event.id, event])).values()));
+}
+
+function sanitizeReviewMessages(transcript: StoredChatMessage[]): ReviewContextMessage[] {
+  return transcript
+    .slice(-REVIEW_RECENT_MESSAGE_LIMIT)
+    .map((message) => {
+      const metadata = sanitizeReviewMetadata(message.metadata);
+      const npcId = reviewText(message.metadata?.npcId, 128);
+      return {
+        id: message.id,
+        role: message.role,
+        content: reviewText(message.content, 600) ?? '',
+        ...(Number.isFinite(message.round) ? { round: message.round } : {}),
+        createdAt: message.createdAt,
+        ...(npcId ? { npcId } : {}),
+        ...(metadata ? { metadata } : {}),
+      } satisfies ReviewContextMessage;
+    });
+}
+
+function sanitizeReviewEvidence(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const evidence = reviewRecord(item);
+    const statement = reviewText(evidence.statement, 300);
+    const npcId = reviewText(evidence.npcId, 128);
+    if (!statement || !npcId) return [];
+    return [{
+      id: reviewText(evidence.id, 160) ?? `${npcId}:${statement.slice(0, 24)}`,
+      npcId,
+      statement,
+      strength: reviewNumber(evidence.strength),
+      source: reviewText(evidence.source, 64),
+      confirmedRound: reviewNumber(evidence.confirmedRound),
+    }];
+  }).slice(-48);
+}
+
+function sanitizeReviewRisks(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const risk = reviewRecord(item);
+    const id = reviewText(risk.id, 160);
+    const npcId = reviewText(risk.npcId, 128);
+    const kind = reviewText(risk.kind, 64);
+    const status = reviewText(risk.status, 32);
+    if (!id || !npcId || !kind || !status) return [];
+    return [{
+      id,
+      npcId,
+      preparationId: reviewText(risk.preparationId, 160) ?? null,
+      kind,
+      severity: reviewNumber(risk.severity),
+      status,
+      penalty: reviewNumber(risk.penalty),
+      reason: reviewText(risk.reason, 300),
+      createdRound: reviewNumber(risk.createdRound),
+      triggerRound: reviewNumber(risk.triggerRound),
+      outcome: reviewText(risk.outcome, 64) ?? null,
+    }];
+  }).slice(-48);
+}
+
+function sanitizeReviewMemory(value: unknown): ReviewMemory {
+  const memory = reviewRecord(value);
+  return {
+    summary: reviewText(memory.summary, 1200) ?? '',
+    summarizedMessageCount: Math.max(0, Math.floor(reviewNumber(memory.summarizedMessageCount) ?? 0)),
+    confirmedFacts: reviewTextList(memory.confirmedFacts, 12, 300),
+    commitments: reviewTextList(memory.commitments, 12, 300),
+  };
+}
+
+function sanitizeReviewState(state: GameRuntimeState): Record<string, unknown> {
+  const dimensions = reviewRecord(state.dimensions);
+  const safeDimensions = Object.fromEntries(Object.entries(dimensions).flatMap(([key, value]) => {
+    const number = reviewNumber(value);
+    return number === undefined ? [] : [[key, number]];
+  }));
+  const attitudes = Object.fromEntries(Object.entries(state.npcAttitudes ?? {}).flatMap(([npcId, value]) => {
+    const attitude = reviewRecord(value);
+    const safe: Record<string, unknown> = {};
+    for (const key of ['pleasantness', 'support', 'complianceAwareness']) {
+      const number = reviewNumber(attitude[key]);
+      if (number !== undefined) safe[key] = number;
+    }
+    return Object.keys(safe).length ? [[npcId, safe]] : [];
+  }));
+  const contacts = Object.fromEntries(Object.entries(state.npcContacts ?? {}).flatMap(([npcId, value]) => {
+    const contact = reviewRecord(value);
+    return [[npcId, {
+      status: reviewText(contact.status, 32),
+      wechatStatus: reviewText(contact.wechatStatus, 32),
+      hasReplied: reviewBoolean(contact.hasReplied),
+      outboundCount: reviewNumber(contact.outboundCount),
+      lastContactRound: reviewNumber(contact.lastContactRound),
+      lastPhoneOutcome: reviewText(contact.lastPhoneOutcome, 32),
+    }]];
+  }));
+  const appointments = (state.appointments ?? []).slice(-32).map((appointment) => ({
+    id: appointment.id,
+    npcId: appointment.npcId,
+    invitationMethod: appointment.invitationMethod,
+    visitType: appointment.visitType,
+    venue: reviewText(appointment.venue, 120),
+    purpose: reviewText(appointment.purpose, 300),
+    scheduledRound: appointment.scheduledRound,
+    startMinute: appointment.startMinute,
+    durationMinutes: appointment.durationMinutes,
+    maxTurns: appointment.maxTurns,
+    status: appointment.status,
+    conditions: reviewTextList(appointment.conditions, 8, 180),
+    reservedMinutes: appointment.reservedMinutes,
+    workTopicOpenedBy: appointment.workTopicOpenedBy,
+    emailAttachmentCount: appointment.emailAttachments?.length ?? 0,
+  }));
+  const preparations = (state.preparations ?? []).slice(-48).map((preparation) => ({
+    id: preparation.id,
+    npcId: preparation.npcId,
+    appointmentId: preparation.appointmentId,
+    type: preparation.type,
+    title: preparation.title,
+    status: preparation.status,
+    costPoints: preparation.costPoints,
+    timeMinutes: preparation.timeMinutes,
+    reusable: preparation.reusable,
+    usedCount: preparation.usedCount,
+    createdRound: preparation.createdRound,
+    hasContent: Boolean(preparation.content?.trim()),
+    semanticTags: reviewTextList(preparation.brief?.semanticTags, 8, 64),
+  }));
+  const meetingMinutes = (state.meetingMinutes ?? []).slice(-24).map((minutes) => ({
+    id: minutes.id,
+    appointmentId: minutes.appointmentId,
+    npcId: minutes.npcId,
+    visitType: minutes.visitType,
+    summary: reviewText(minutes.summary, 400),
+    confirmedItems: reviewTextList(minutes.confirmedItems, 12, 300),
+    npcCommitments: reviewTextList(minutes.npcCommitments, 12, 300),
+    playerCommitments: reviewTextList(minutes.playerCommitments, 12, 300),
+    pendingMaterials: reviewTextList(minutes.pendingMaterials, 12, 180),
+    nextStep: reviewText(minutes.nextStep, 300),
+    nextStepRound: minutes.nextStepRound,
+    revisionCount: minutes.revisionCount ?? 0,
+    original: minutes.original ? {
+      summary: reviewText(minutes.original.summary, 400),
+      confirmedItems: reviewTextList(minutes.original.confirmedItems, 12, 300),
+      npcCommitments: reviewTextList(minutes.original.npcCommitments, 12, 300),
+      playerCommitments: reviewTextList(minutes.original.playerCommitments, 12, 300),
+      nextStep: reviewText(minutes.original.nextStep, 300),
+    } : undefined,
+  }));
+  return {
+    status: state.status,
+    currentRound: state.currentRound,
+    maxRounds: state.maxRounds,
+    currentStage: state.currentStage,
+    maxStages: state.maxStages,
+    actionPoints: state.actionPoints,
+    cumulativeTimeMinutes: state.cumulativeTimeMinutes,
+    cumulativeSpentPoints: state.cumulativeSpentPoints,
+    dimensions: safeDimensions,
+    npcAttitudes: attitudes,
+    npcContacts: contacts,
+    unlockedClues: reviewTextList(state.unlockedClues, 16, 64),
+    outcomeEvidence: {
+      publicValue: sanitizeReviewEvidence(state.outcomeEvidence?.publicValue),
+      personalBenefit: sanitizeReviewEvidence(state.outcomeEvidence?.personalBenefit),
+    },
+    complianceRisks: sanitizeReviewRisks(state.complianceRisks),
+    appointments,
+    preparations,
+    meetingMinutes,
+    lastAction: reviewText(state.lastAction, 64) ?? null,
+  };
+}
+
+/**
+ * Build the bounded, model-facing review context without performing I/O.
+ * Older turns survive through each NPC's rolling memory and durable state/event
+ * ledgers; only the newest raw messages are retained for conversational nuance.
+ */
+export function buildReviewContext(args: {
+  state: GameRuntimeState;
+  transcript: StoredChatMessage[];
+  events: StoredGameEvent[];
+}): ReviewContext {
+  const npcIds = new Set<string>([
+    ...Object.keys(args.state.conversationMemories ?? {}),
+    ...Object.keys(args.state.npcAttitudes ?? {}),
+    ...Object.keys(args.state.npcAffinity ?? {}),
+    ...Object.keys(args.state.npcContacts ?? {}),
+  ]);
+  const npcMemories = Object.fromEntries(Array.from(npcIds).sort().map((npcId) => [
+    npcId,
+    sanitizeReviewMemory(args.state.conversationMemories?.[npcId]),
+  ]));
+  return {
+    npcMemories,
+    persistentState: sanitizeReviewState(args.state),
+    keyEvents: sanitizeReviewEvents(args.events),
+    recentMessages: sanitizeReviewMessages(args.transcript),
+  };
+}
+
+/** Allowlist the outcome fields that are safe for a review model to see. */
+export function toReviewOutcome(outcome: GameOutcome): Record<string, unknown> {
+  return {
+    fiveDimensionScore: outcome.fiveDimensionScore,
+    publicValueScore: outcome.publicValueScore,
+    personalBenefitScore: outcome.personalBenefitScore,
+    decisionChainSupportScore: outcome.decisionChainSupportScore,
+    decisionChainSupport: outcome.decisionChainSupport,
+    baseScore: outcome.baseScore,
+    compliancePenalty: outcome.compliancePenalty,
+    finalScore: outcome.finalScore,
+    won: outcome.won,
+    eligible: outcome.eligible,
+    supportByNpc: { ...outcome.supportByNpc },
+  };
+}
+
+export async function getSessionReviewEvents(sessionId: string, limit = REVIEW_KEY_EVENT_LIMIT): Promise<StoredGameEvent[]> {
+  const supabase = createServerClient();
+  const safeLimit = Math.max(1, Math.min(REVIEW_KEY_EVENT_LIMIT, Math.floor(limit)));
+  const { data, error } = await supabase
+    .from('game_events')
+    .select('id, npc_key, round, event_type, payload, created_at')
+    .eq('session_id', sessionId)
+    .in('event_type', REVIEW_EVENT_TYPES as unknown as string[])
+    .order('created_at', { ascending: false })
+    .limit(safeLimit);
+  if (error) throw new Error('SESSION_REVIEW_EVENTS_LOAD_FAILED');
+  return (data ?? []).reverse().map((event) => ({
+    id: String(event.id),
+    npcId: event.npc_key ? String(event.npc_key) : null,
+    round: Number(event.round),
+    eventType: String(event.event_type),
+    payload: reviewRecord(event.payload),
+    createdAt: String(event.created_at),
+  }));
+}
+
+export async function getSessionTranscript(sessionId: string, limit = REVIEW_RECENT_MESSAGE_LIMIT): Promise<StoredChatMessage[]> {
   const supabase = createServerClient();
   const { data, error } = await supabase
     .from('chat_messages')
-    .select('id, sender, content, created_at, metadata')
+    .select('id, sender, content, round, created_at, metadata')
     .eq('session_id', sessionId)
     .in('sender', ['user', 'assistant'])
-    .order('created_at', { ascending: true })
-    .limit(limit);
+    .order('created_at', { ascending: false })
+    .limit(Math.max(1, Math.min(REVIEW_RECENT_MESSAGE_LIMIT, Math.floor(limit))));
   if (error) throw new Error('SESSION_TRANSCRIPT_LOAD_FAILED');
-  return (data ?? []).map((message) => ({
+  return (data ?? []).reverse().map((message) => ({
     id: String(message.id),
     role: message.sender as 'user' | 'assistant',
     content: String(message.content),
+    round: Number(message.round),
     createdAt: String(message.created_at),
     metadata: (message.metadata as Record<string, unknown> | null) ?? undefined,
   }));
@@ -661,8 +1231,11 @@ export async function getStoredReview(sessionId: string): Promise<GameReview | n
     .eq('id', sessionId)
     .single();
   if (error || !data) throw new Error('FINAL_REPORT_LOAD_FAILED');
-  const report = data.final_report as { review?: GameReview } | null;
-  return report?.review ?? null;
+  const report = data.final_report as { review?: GameReview; reviewContextVersion?: number } | null;
+  // Reviews written before the bounded context was introduced may have been
+  // generated from the oldest transcript page. Regenerate those once so a
+  // stale result cannot preserve an incomplete or unsafe review.
+  return report?.reviewContextVersion === REVIEW_CONTEXT_VERSION ? report.review ?? null : null;
 }
 
 export async function saveStoredReview(sessionId: string, state: GameRuntimeState, review: GameReview) {
@@ -672,10 +1245,11 @@ export async function saveStoredReview(sessionId: string, state: GameRuntimeStat
     .from('game_sessions')
     .update({
       final_report: {
-        ...state,
-        totalScore: outcome.finalScore,
-        outcome,
-        review,
+      ...state,
+      totalScore: outcome.finalScore,
+      outcome,
+      reviewContextVersion: REVIEW_CONTEXT_VERSION,
+      review,
       },
     })
     .eq('id', sessionId);

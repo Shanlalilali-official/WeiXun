@@ -2,29 +2,27 @@
 
 import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { Trophy, ArrowUp, ChevronUp, Award, ArrowUpRight, ArrowDownRight, Crown, Users, BarChart3, Flame, Target } from 'lucide-react';
+import { Trophy, ChevronUp, Crown, Users, BarChart3, Flame } from 'lucide-react';
 import { AppShell } from '@/components/app-shell';
 
-interface RoomPlayer { rank: number; name: string; enterprise: string; role: string; score: number; bid: number; margin: number; approval: number; duration: string; isMe?: boolean; }
-interface PlatformPlayer { rank: number; name: string; region: string; enterprise: string; level: number; score: number; wins: number; winRate: number; streak: number; lastActive: string; }
-interface RoomSummary { avgScore: number | null; maxScore: number | null; bidRate: number; avgMargin: number; }
+interface RoomPlayer { rank: number; name: string; score: number; won: boolean; finishedAt: string | null; isMe?: boolean; }
+interface PlatformPlayer { rank: number; name: string; score: number; sessionsPlayed: number; wins: number; winRate: number; lastActive: string; }
+interface RoomSummary { avgScore: number; maxScore: number; totalCount: number; }
 interface RankingApiItem {
   player_id?: string | number;
   player_name?: string;
+  user_id?: string;
+  user_name?: string;
   enterprise?: string;
   role?: string;
   total_score?: number;
-  bid_amount?: number;
-  profit_margin?: number;
-  approval_rate?: number;
-  duration?: string;
-  region?: string;
-  level?: number;
+  won?: boolean;
+  finished_at?: string;
   best_score?: number;
-  total_wins?: number;
+  sessions_played?: number;
+  sessions_won?: number;
   win_rate?: number;
-  win_streak?: number;
-  last_active?: string;
+  updated_at?: string;
 }
 
 export default function RankingPage() {
@@ -45,25 +43,36 @@ function RankingInner() {
   const [timeRange, setTimeRange] = useState('all');
   const [track, setTrack] = useState('all');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let active = true;
     setLoading(true);
-    fetch(`/api/ranking?tab=${tab}&range=${timeRange}&track=${track}`)
-      .then((r) => r.json())
+    setError(null);
+    fetch(`/api/ranking?tab=${tab}&range=${timeRange}&track=${track}`, {
+      headers: { 'x-session': localStorage.getItem('weixun_session') || '' },
+    })
+      .then(async (response) => {
+        const data = await response.json().catch(() => null) as {
+          items?: RankingApiItem[];
+          summary?: RoomSummary;
+          error?: string;
+        } | null;
+        if (!response.ok) throw new Error(data?.error || 'RANKING_LOAD_FAILED');
+        if (!data) throw new Error('RANKING_LOAD_FAILED');
+        return data;
+      })
       .then((data) => {
+        if (!active) return;
         if (tab === 'room') {
           setRoomData({
             me: null,
             roomPlayers: (data.items || []).map((item: RankingApiItem, idx: number) => ({
               rank: idx + 1,
-              name: item.player_name || `玩家${item.player_id || idx + 1}`,
-              enterprise: item.enterprise || '未知企业',
-              role: item.role || '玩家',
+              name: item.player_name || item.user_name || `玩家${item.player_id || item.user_id || idx + 1}`,
               score: item.total_score || 0,
-              bid: item.bid_amount || 0,
-              margin: item.profit_margin || 0,
-              approval: item.approval_rate || 0,
-              duration: item.duration || '0分钟',
+              won: item.won === true,
+              finishedAt: item.finished_at || null,
               isMe: false,
             })),
             roomSummary: data.summary || null,
@@ -73,31 +82,40 @@ function RankingInner() {
             me: null,
             platformPlayers: (data.items || []).map((item: RankingApiItem, idx: number) => ({
               rank: idx + 1,
-              name: item.player_name || `玩家${item.player_id || idx + 1}`,
-              region: item.region || '未知',
-              enterprise: item.enterprise || '未知企业',
-              level: item.level || 1,
+              name: item.player_name || item.user_name || `玩家${item.player_id || item.user_id || idx + 1}`,
               score: item.best_score || 0,
-              wins: item.total_wins || 0,
+              sessionsPlayed: item.sessions_played || 0,
+              wins: item.sessions_won || 0,
               winRate: item.win_rate || 0,
-              streak: item.win_streak || 0,
-              lastActive: item.last_active || '未知',
+              lastActive: item.updated_at || '未知',
             })),
           });
         }
       })
-      .finally(() => setLoading(false));
+      .catch(() => {
+        if (!active) return;
+        setError('排行榜暂时不可用，请稍后重试。');
+        if (tab === 'room') setRoomData(null);
+        else setPlatformData(null);
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [tab, timeRange, track]);
+
+  const roomCompletedCount = roomData?.roomSummary?.totalCount ?? roomData?.roomPlayers.length ?? null;
+  const roomAverageScore = roomData?.roomSummary?.avgScore ?? null;
+  const roomMaxScore = roomData?.roomSummary?.maxScore ?? null;
+  const platformCompletedCount = platformData?.platformPlayers.reduce((sum, player) => sum + player.wins, 0) ?? null;
 
   return (
     <AppShell identity={null} activeNav="ranking">
       {/* 4 个指标卡 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         {[
-          { label: '当前房间人数', value: '8', icon: Users, color: '#2F6BFF', tintBg: 'rgba(47,107,255,0.10)', delta: '' },
-          { label: '我的本场排名', value: '4/8', icon: BarChart3, color: '#16A37B', tintBg: 'rgba(22,163,123,0.10)', delta: '↑2' },
-          { label: '我的总积分', value: '12,680', icon: Trophy, color: '#B45309', tintBg: 'rgba(245,158,11,0.12)', delta: '+820' },
-          { label: '累计对局数', value: '47 场', icon: Flame, color: '#7C3AED', tintBg: 'rgba(124,58,237,0.10)', delta: '连胜 3' },
+          { label: '当前房间已完成局', value: roomCompletedCount === null ? '—' : String(roomCompletedCount), icon: Users, color: '#2F6BFF', tintBg: 'rgba(47,107,255,0.10)', delta: '' },
+          { label: '房间平均分', value: roomAverageScore === null ? '—' : String(roomAverageScore), icon: BarChart3, color: '#16A37B', tintBg: 'rgba(22,163,123,0.10)', delta: '' },
+          { label: '房间最高分', value: roomMaxScore === null ? '—' : String(roomMaxScore), icon: Trophy, color: '#B45309', tintBg: 'rgba(245,158,11,0.12)', delta: '' },
+          { label: '平台本页累计胜局', value: platformCompletedCount === null ? '—' : `${platformCompletedCount} 场`, icon: Flame, color: '#7C3AED', tintBg: 'rgba(124,58,237,0.10)', delta: '' },
         ].map((m, idx) => {
           const Icon = m.icon;
           return (
@@ -179,10 +197,14 @@ function RankingInner() {
             <span className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
             加载中...
           </div>
+        ) : error ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">{error}</div>
         ) : tab === 'room' && roomData ? (
           <>
             <div className="space-y-2.5">
-              {(roomData.roomPlayers || []).map((p, idx) => {
+              {(roomData.roomPlayers || []).length === 0 ? (
+                <div className="py-12 text-center text-sm text-muted-foreground">当前房间还没有已完成的对局。</div>
+              ) : (roomData.roomPlayers || []).map((p, idx) => {
                 const rowClass = p.isMe
                   ? 'row-me relative'
                   : p.rank === 1
@@ -210,23 +232,11 @@ function RankingInner() {
                         {p.isMe && <span className="badge badge-primary">我</span>}
                         {p.rank === 1 && <span className="badge badge-warning" style={{ background: 'rgba(255,215,0,0.18)', color: '#B45309' }}>榜首</span>}
                       </div>
-                      <div className="text-[11px] text-muted-foreground truncate">{p.enterprise} · {p.role}</div>
+                      <div className="text-[11px] text-muted-foreground truncate">{p.won ? '中标' : '未中标'}{p.finishedAt ? ` · ${new Date(p.finishedAt).toLocaleDateString('zh-CN')}` : ''}</div>
                     </div>
                     <div className="w-24 text-right">
                       <div className="text-[10px] text-muted-foreground uppercase tracking-wider">总得分</div>
                       <div className="text-base font-bold text-foreground num">{p.score}</div>
-                    </div>
-                    <div className="w-24 text-right">
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">中标额</div>
-                      <div className="text-base font-semibold text-foreground num">¥{p.bid}万</div>
-                    </div>
-                    <div className="w-20 text-right">
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">利润率</div>
-                      <div className="text-base font-semibold text-success num">+{p.margin}%</div>
-                    </div>
-                    <div className="w-20 text-right">
-                      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">好评度</div>
-                      <div className="text-base font-semibold text-foreground num">{p.approval}%</div>
                     </div>
                   </div>
                 );
@@ -234,12 +244,11 @@ function RankingInner() {
             </div>
 
             {roomData.roomSummary && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6 pt-6 border-t border-border">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-6 pt-6 border-t border-border">
                 {[
                   { label: '房间平均分', value: roomData.roomSummary.avgScore, icon: BarChart3 },
                   { label: '最高分', value: roomData.roomSummary.maxScore, icon: Trophy },
-                  { label: '中标率', value: `${roomData.roomSummary.bidRate}%`, icon: Target },
-                  { label: '平均利润率', value: `+${roomData.roomSummary.avgMargin}%`, icon: ArrowUp },
+                  { label: '已完成局数', value: roomData.roomSummary.totalCount, icon: Users },
                 ].map((s) => {
                   const Icon = s.icon;
                   return (
@@ -273,21 +282,12 @@ function RankingInner() {
                 <div className="flex-1 ml-4 flex items-center gap-2 min-w-0">
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-foreground truncate">{p.name}</div>
-                    <div className="text-[11px] text-muted-foreground truncate">{p.region} · {p.enterprise}</div>
+                    <div className="text-[11px] text-muted-foreground truncate">共 {p.sessionsPlayed} 局 · 最近更新 {p.lastActive === '未知' ? '未知' : new Date(p.lastActive).toLocaleDateString('zh-CN')}</div>
                   </div>
-                  <span className={`shrink-0 px-2 py-0.5 rounded text-[10px] font-semibold ${
-                    p.level >= 10 ? 'lvl-gold' :
-                    p.level >= 7 ? 'lvl-purple' :
-                    p.level >= 4 ? 'lvl-blue' :
-                    'lvl-iron'
-                  }`}>
-                    Lv.{p.level}
-                  </span>
                 </div>
                 <div className="w-24 text-right text-base font-bold text-foreground num">{p.score}</div>
                 <div className="w-20 text-right text-sm text-foreground num">{p.wins}胜</div>
                 <div className="w-16 text-right text-sm text-foreground num">{p.winRate}%</div>
-                <div className="w-20 text-right text-sm text-success font-semibold num">{p.streak}连</div>
               </div>
             ))}
           </div>

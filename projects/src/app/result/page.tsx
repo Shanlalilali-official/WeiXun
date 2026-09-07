@@ -6,9 +6,7 @@ import {
   AlertTriangle,
   Award,
   BarChart3,
-  BookOpen,
   Building2,
-  ChevronRight,
   Clock3,
   FileCheck2,
   FileText,
@@ -442,11 +440,6 @@ function ResultInner() {
             <DiagnosisCard title="优先改进" tone="danger" text={review?.improvements.join('；') || `${weakest.name}为本局最低维度（${weakest.score}分），下一局应围绕该能力设定明确行动目标。`} />
             <DiagnosisCard title="下一步建议" tone="primary" text={review?.nextActions.join('；') || (evidence.length === 0 ? '不要只追求关系热度；应让NPC明确认可对公价值与个人合理收益，并形成可验证证据。' : '复盘关键人物的真实顾虑，围绕缺失证据设计下一次邀约、材料与方案陈述。')} />
           </div>
-        </section>
-
-        <section className="mt-6 rounded-2xl border border-border bg-card p-6 shadow-sm card-elevated">
-          <div className="flex items-center gap-2"><BookOpen className="h-4 w-4 text-blue-600" /><h2 className="text-base font-bold">知识点跳转</h2></div>
-          <div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-5">{['决策流程识别', '关键人关系经营', '价值量化呈现', '异议处理', '需求提问'].map((item) => <button key={item} onClick={() => router.push('/knowledge')} className="rounded-lg border border-border px-3 py-2 text-left text-xs hover:border-primary/40 hover:bg-primary/5 hover:text-primary transition-all">{item}<ChevronRight className="ml-1 inline h-3 w-3" /></button>)}</div>
         </section>
 
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

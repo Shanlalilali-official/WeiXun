@@ -1,882 +1,257 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Megaphone, Plus, Copy, Play, StopCircle, Users, BarChart3, FileText, ArrowLeft, Wand2, Building2, Eye, MessageSquare, List, Lock, Unlock, History, ChevronDown, ChevronRight, Trophy, KeyRound, LogOut, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, Clipboard, Copy, Megaphone, Play, Plus, RefreshCw, ShieldCheck, Square, Users, X } from 'lucide-react';
 import { ROLE_COLOR, ROLE_LABEL } from '@/components/app-shell';
 
-interface Room {
-  id: number;
+interface CompanySlot {
+  id: string;
+  company_id: string;
+  company_name: string;
+  player_user_id: string | null;
+  game_session_id: string | null;
+  ready_stage: number | null;
+  ready_by_admin: boolean;
+  connected: boolean;
+}
+
+interface MultiplayerRoom {
+  id: string;
   room_code: string;
-  max_players: number;
-  current_players: number;
-  status: string;
-  game_mode: string;
+  scenario_code: string;
+  status: 'waiting' | 'running' | 'finished' | 'cancelled';
+  current_stage: number;
+  max_stages: number;
+  stage_duration_seconds: number | null;
+  stage_deadline_at: string | null;
+  stage_version: number;
   created_at: string;
-  initiated_by?: string;
-  allow_coach_view?: boolean;
+  multiplayer_company_slots: CompanySlot[];
 }
 
-interface Group {
-  id: number;
-  room_id: number;
-  group_name: string;
-  players: string[];
-  selected_company: string;
-  status: string;
+interface CreateRoomForm {
+  firstCompanyName: string;
+  secondCompanyName: string;
+  stageDurationSeconds: string;
 }
 
-interface PlayerData {
-  id: number;
-  username: string;
-  room_code: string;
-  group_name: string;
-  status: string;
-  score: number;
+const initialCreateForm: CreateRoomForm = {
+  firstCompanyName: '我方公司',
+  secondCompanyName: 'ABC公司',
+  stageDurationSeconds: '',
+};
+
+const roomStatusLabel: Record<MultiplayerRoom['status'], string> = {
+  waiting: '等待加入',
+  running: '进行中',
+  finished: '已结束',
+  cancelled: '已取消',
+};
+
+function getSessionToken() {
+  const localToken = window.localStorage.getItem('weixun_session');
+  if (localToken) return localToken;
+  const cookieToken = document.cookie.match(/(?:^|;\s*)weixun_session=([^;]+)/)?.[1];
+  return cookieToken ? decodeURIComponent(cookieToken) : '';
 }
 
-interface LockConfig {
-  client_unit: string;
-  vendor_product: string;
-  scenario: string;
-  is_locked: boolean;
+async function getErrorMessage(response: Response) {
+  const body = await response.json().catch(() => null) as { error?: unknown } | null;
+  const code = typeof body?.error === 'string' ? body.error : 'REQUEST_FAILED';
+  const messages: Record<string, string> = {
+    ROOM_VERSION_CONFLICT: '房间状态已变化，请刷新后重试。',
+    ALL_COMPANIES_REQUIRE_PLAYERS: '每个公司席位均需有玩家加入后才能开始。',
+    ROOM_NOT_RUNNING: '房间尚未进行中，无法代为确认。',
+    ROOM_NOT_MUTABLE: '当前房间状态不允许此操作。',
+    ROOM_ALREADY_STARTED: '房间已经开始。',
+    ROOM_CREATE_FAILED: '创建房间失败，请稍后重试。',
+    ROOM_LIST_FAILED: '加载房间失败，请检查登录状态或稍后重试。',
+    '权限不足': '当前账号没有教练工作台权限。',
+    '未登录': '登录已失效，请重新登录。',
+  };
+  return messages[code] ?? `操作失败：${code}`;
 }
 
-interface HistoryItem {
-  id: number;
-  room_code: string;
-  initiated_at: string;
-  game_mode: string;
-  player_count: number;
-  status: string;
-  can_view_reports: boolean;
+function statusClass(status: MultiplayerRoom['status']) {
+  if (status === 'running') return 'badge-success';
+  if (status === 'waiting') return 'badge-muted';
+  return 'badge-danger';
 }
 
 export default function CoachPage() {
   const router = useRouter();
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [groups, setGroups] = useState<Group[]>([]);
-  const [players, setPlayers] = useState<PlayerData[]>([]);
+  const [rooms, setRooms] = useState<MultiplayerRoom[]>([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'rooms' | 'groups' | 'reports' | 'ranking' | 'lock' | 'history'>('rooms');
+  const [refreshing, setRefreshing] = useState(false);
   const [showCreateRoom, setShowCreateRoom] = useState(false);
-  const [gameMode, setGameMode] = useState<'overview' | 'dialogue' | 'free'>('overview');
+  const [createForm, setCreateForm] = useState<CreateRoomForm>(initialCreateForm);
+  const [notice, setNotice] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
 
-  // 邀请码
-  const [inviteCode, setInviteCode] = useState('');
-  const [inviteCodeVerified, setInviteCodeVerified] = useState(false);
-  const [inviteCodeError, setInviteCodeError] = useState('');
-  
-  // 锁定配置
-  const [lockConfig, setLockConfig] = useState<LockConfig>({
-    client_unit: '',
-    vendor_product: '',
-    scenario: '',
-    is_locked: false
-  });
-  
-  // 发起配置
-  const [showInitiateModal, setShowInitiateModal] = useState(false);
-  const [initiateConfig, setInitiateConfig] = useState({
-    game_mode: 'overview' as 'overview' | 'dialogue' | 'free'
-  });
-  
-  // 历史记录
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [expandedHistory, setExpandedHistory] = useState<number | null>(null);
-
-  useEffect(() => {
-    // 加载房间数据
-    fetch('/api/coach/rooms')
-      .then(r => r.json())
-      .then(d => setRooms(d.data || []))
-      .catch(() => {});
-
-    // 加载小组数据
-    fetch('/api/coach/groups')
-      .then(r => r.json())
-      .then(d => setGroups(d.data || []))
-      .catch(() => {});
-
-    // 加载玩家数据
-    fetch('/api/coach/players')
-      .then(r => r.json())
-      .then(d => setPlayers(d.data || []))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-    
-    // 加载锁定配置
-    fetch('/api/coach/lock')
-      .then(r => r.json())
-      .then(d => {
-        if (d.data) setLockConfig(d.data);
-      })
-      .catch(() => {});
-    
-    // 加载历史记录
-    fetch('/api/coach/history')
-      .then(r => r.json())
-      .then(d => setHistory(d.data || []))
-      .catch(() => {});
+  const apiFetch = useCallback((input: RequestInfo | URL, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers);
+    headers.set('x-session', getSessionToken());
+    return fetch(input, { ...init, headers });
   }, []);
 
+  const loadRooms = useCallback(async (background = false) => {
+    if (background) setRefreshing(true);
+    else setLoading(true);
+    try {
+      const response = await apiFetch('/api/coach/rooms');
+      if (!response.ok) throw new Error(await getErrorMessage(response));
+      const payload = await response.json() as { data?: MultiplayerRoom[] };
+      setRooms(Array.isArray(payload.data) ? payload.data : []);
+      if (background) setNotice({ type: 'success', message: '房间列表已刷新。' });
+    } catch (error) {
+      setNotice({ type: 'error', message: error instanceof Error ? error.message : '加载房间失败。' });
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [apiFetch]);
+
+  useEffect(() => { void loadRooms(); }, [loadRooms]);
+
+  const mutateRoom = async (path: string, body: Record<string, unknown>, successMessage: string) => {
+    setNotice(null);
+    try {
+      const response = await apiFetch(path, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error(await getErrorMessage(response));
+      await loadRooms();
+      setNotice({ type: 'success', message: successMessage });
+    } catch (error) {
+      setNotice({ type: 'error', message: error instanceof Error ? error.message : '操作失败。' });
+    }
+  };
+
   const handleCreateRoom = async () => {
-    try {
-      const res = await fetch('/api/coach/rooms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          max_groups: 33, 
-          players_per_group: 3,
-          initiated_by: 'coach',
-          allow_coach_view: true
-        }),
-      });
-      const d = await res.json();
-      if (d.data) {
-        setRooms([...rooms, d.data]);
-        setShowCreateRoom(false);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleStartGame = async (roomId: number) => {
-    try {
-      await fetch(`/api/coach/rooms/${roomId}/start`, { method: 'POST' });
-      setRooms(rooms.map(r => r.id === roomId ? { ...r, status: '进行中' } : r));
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleEndGame = async (roomId: number) => {
-    if (!confirm('确定结束该房间的对局？')) return;
-    try {
-      await fetch(`/api/coach/rooms/${roomId}/end`, { method: 'POST' });
-      setRooms(rooms.map(r => r.id === roomId ? { ...r, status: '已结束' } : r));
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleCopyCode = (code: string) => {
-    navigator.clipboard.writeText(code);
-    alert('邀请码已复制');
-  };
-
-  const handleUpdateGroupCompany = async (groupId: number, company: string) => {
-    try {
-      await fetch(`/api/coach/groups/${groupId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selected_company: company }),
-      });
-      setGroups(groups.map(g => g.id === groupId ? { ...g, selected_company: company } : g));
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleUpdateGameMode = async (roomId: number, mode: string) => {
-    try {
-      await fetch(`/api/coach/rooms/${roomId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ game_mode: mode }),
-      });
-      setRooms(rooms.map(r => r.id === roomId ? { ...r, game_mode: mode } : r));
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleSaveLock = async () => {
-    try {
-      await fetch('/api/coach/lock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(lockConfig),
-      });
-      setLockConfig({ ...lockConfig, is_locked: true });
-      alert('锁定配置已保存');
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleUnlock = async () => {
-    try {
-      await fetch('/api/coach/lock', {
-        method: 'DELETE',
-      });
-      setLockConfig({ client_unit: '', vendor_product: '', scenario: '', is_locked: false });
-      alert('已解除锁定');
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleVerifyInviteCode = () => {
-    if (!inviteCode.trim()) {
-      setInviteCodeError('请输入邀请码');
+    const first = createForm.firstCompanyName.trim();
+    const second = createForm.secondCompanyName.trim();
+    const parsedDuration = createForm.stageDurationSeconds.trim() === '' ? null : Number(createForm.stageDurationSeconds);
+    if (!first || !second || first === second) {
+      setNotice({ type: 'error', message: '请填写两个不同的公司名称。' });
       return;
     }
-    // 当前阶段：任意邀请码均可通过验证
-    setInviteCodeVerified(true);
-    setInviteCodeError('');
-  };
-
-  const handleInitiateGame = async () => {
+    if (parsedDuration !== null && (!Number.isInteger(parsedDuration) || parsedDuration < 60)) {
+      setNotice({ type: 'error', message: '阶段时限应为不少于 60 秒的整数，或留空表示不限时。' });
+      return;
+    }
+    setNotice(null);
     try {
-      const res = await fetch('/api/coach/initiate', {
+      const response = await apiFetch('/api/coach/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(initiateConfig),
+        body: JSON.stringify({
+          stageDurationSeconds: parsedDuration,
+          companies: [{ id: 'player-company', name: first }, { id: 'abc-company', name: second }],
+        }),
       });
-      const d = await res.json();
-      if (d.data) {
-        setRooms([...rooms, d.data]);
-        setShowInitiateModal(false);
-        alert('对局已发起');
-      }
-    } catch (e) {
-      console.error(e);
+      if (!response.ok) throw new Error(await getErrorMessage(response));
+      setShowCreateRoom(false);
+      setCreateForm(initialCreateForm);
+      await loadRooms();
+      setNotice({ type: 'success', message: '房间已创建，请将房间码和公司席位告知参与者。' });
+    } catch (error) {
+      setNotice({ type: 'error', message: error instanceof Error ? error.message : '创建房间失败。' });
     }
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-role-trainer flex items-center justify-center text-muted-foreground">
-        <div className="flex items-center gap-3">
-          <span className="w-5 h-5 border-2 border-warning border-t-transparent rounded-full animate-spin" />
-          加载中...
-        </div>
-      </div>
-    );
-  }
+  const handleCopyCode = async (code: string) => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setNotice({ type: 'success', message: '房间码已复制。' });
+    } catch {
+      setNotice({ type: 'error', message: '无法访问剪贴板，请手动复制房间码。' });
+    }
+  };
+
+  const totalSlots = rooms.reduce((total, room) => total + room.multiplayer_company_slots.length, 0);
+  const occupiedSlots = rooms.reduce((total, room) => total + room.multiplayer_company_slots.filter((slot) => slot.player_user_id).length, 0);
 
   return (
     <div className="min-h-screen bg-role-trainer">
-      {/* 顶部导航 */}
       <header className="topbar-glass sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-6 sm:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <button onClick={() => router.push('/')} className="text-muted-foreground hover:text-foreground p-2 hover:bg-muted rounded-lg transition-colors" title="返回首页">
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg btn-warning flex items-center justify-center">
-                <Megaphone className="w-4 h-4 text-white" />
-              </div>
-              <div>
-                <div className="text-sm font-semibold text-foreground">培训教练工作台</div>
-                <div className="text-[10px] text-muted-foreground">多人联机 · 实时管控</div>
-              </div>
-            </div>
-            <nav className="hidden md:flex items-center gap-1 text-sm ml-8">
-              <button onClick={() => router.push('/designer')} className="px-3 py-1.5 text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted transition-colors flex items-center gap-1.5">
-                <Wand2 className="w-3.5 h-3.5" /> 游戏设计师
-              </button>
-            </nav>
+          <div className="flex items-center gap-4">
+            <button onClick={() => router.push('/')} className="text-muted-foreground hover:text-foreground p-2 hover:bg-muted rounded-lg transition-colors" title="返回首页"><ArrowLeft className="w-5 h-5" /></button>
+            <div className="w-8 h-8 rounded-lg btn-warning flex items-center justify-center"><Megaphone className="w-4 h-4 text-white" /></div>
+            <div><div className="text-sm font-semibold text-foreground">培训教练工作台</div><div className="text-[10px] text-muted-foreground">多人房间管理 · 手动刷新</div></div>
           </div>
-          <div className="flex items-center gap-3">
-            <div
-              className="hidden sm:flex px-2.5 py-1.5 rounded-lg text-xs font-medium items-center gap-1.5 text-white shadow-sm"
-              style={{ background: ROLE_COLOR.trainer }}
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>{ROLE_LABEL.trainer}</span>
-            </div>
-            <button
-              onClick={() => {
-                document.cookie = 'weixun_session=; path=/; max-age=0';
-                document.cookie = 'weixun_identity=; path=/; max-age=0';
-                try { localStorage.removeItem('weixun_identity'); localStorage.removeItem('weixun_session'); } catch {}
-                router.push('/');
-              }}
-              className="p-2 hover:bg-muted rounded-lg text-muted-foreground hover:text-foreground transition-colors"
-              title="退出登录"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
+          <div className="hidden sm:flex px-2.5 py-1.5 rounded-lg text-xs font-medium items-center gap-1.5 text-white shadow-sm" style={{ background: ROLE_COLOR.trainer }}><ShieldCheck className="w-3.5 h-3.5" /><span>{ROLE_LABEL.trainer}</span></div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 sm:px-8 py-6">
-        {/* 统计卡片 */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          {[
-            { label: '房间总数', value: rooms.length, icon: Users, color: '#2F6BFF', tintBg: 'rgba(47,107,255,0.10)' },
-            { label: '进行中', value: rooms.filter(r => r.status === '进行中').length, icon: Play, color: '#16A37B', tintBg: 'rgba(22,163,123,0.10)' },
-            { label: '小组总数', value: groups.length, icon: List, color: '#EA580C', tintBg: 'rgba(234,88,12,0.10)' },
-            { label: '玩家总数', value: players.length, icon: BarChart3, color: '#7C3AED', tintBg: 'rgba(124,58,237,0.10)' },
-          ].map((s, idx) => {
-            const Icon = s.icon;
-            return (
-              <div key={s.label} className={`card-elevated px-5 py-4 flex items-center gap-4 animate-fade-up-${Math.min(idx + 1, 3)}`}>
-                <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: s.tintBg }}>
-                  <Icon className="w-4 h-4" style={{ color: s.color }} />
-                </div>
-                <div>
-                  <div className="text-2xl font-bold text-foreground num">{s.value}</div>
-                  <div className="text-xs text-muted-foreground">{s.label}</div>
-                </div>
-              </div>
-            );
-          })}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+          {[{ label: '房间总数', value: rooms.length }, { label: '进行中房间', value: rooms.filter((room) => room.status === 'running').length }, { label: '已占公司席位', value: `${occupiedSlots} / ${totalSlots}` }].map((stat) => (
+            <div key={stat.label} className="card-elevated px-5 py-4"><div className="text-2xl font-bold text-foreground num">{stat.value}</div><div className="text-xs text-muted-foreground">{stat.label}</div></div>
+          ))}
         </div>
+        <div className="card-elevated p-5 mb-6 text-sm text-muted-foreground">当前页面只管理已建模的多人房间与公司席位。房间状态不会实时推送；请在玩家加入、确认或操作冲突后手动刷新。小组、报告、配置锁定和操作历史尚无对应的生产数据模型，因此未在此开放。</div>
+        {notice && <div className={`rounded-xl border px-4 py-3 mb-4 text-sm ${notice.type === 'error' ? 'border-destructive/30 bg-destructive/10 text-destructive' : 'border-success/30 bg-success/10 text-foreground'}`} role="status">{notice.message}</div>}
 
-        {/* 邀请码验证 */}
-        {!inviteCodeVerified && (
-          <div className="card-elevated p-8 animate-fade-up">
-            <div className="max-w-md mx-auto text-center">
-              <div className="w-14 h-14 rounded-xl mx-auto mb-4 flex items-center justify-center" style={{ background: 'rgba(234,88,12,0.12)' }}>
-                <KeyRound className="w-6 h-6 text-warning" />
-              </div>
-              <div className="text-lg font-bold text-foreground mb-1">请输入邀请码</div>
-              <div className="text-sm text-muted-foreground mb-5">企业管理员已锁定教练权限，请输入邀请码后继续操作</div>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={inviteCode}
-                  onChange={e => { setInviteCode(e.target.value); setInviteCodeError(''); }}
-                  onKeyDown={e => e.key === 'Enter' && handleVerifyInviteCode()}
-                  className="flex-1 px-4 py-2.5 rounded-lg bg-surface-container border-none text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/30 text-center tracking-widest font-mono"
-                  placeholder="请输入邀请码"
-                />
-                <button
-                  onClick={handleVerifyInviteCode}
-                  className="px-5 py-2.5 rounded-lg btn-warning text-sm font-semibold"
-                >
-                  验证
-                </button>
-              </div>
-              {inviteCodeError && (
-                <div className="text-xs mt-2 text-destructive">{inviteCodeError}</div>
-              )}
+        <section className="bg-card rounded-2xl border border-border p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+            <div><h1 className="text-base font-bold text-foreground">多人房间</h1><p className="text-xs text-muted-foreground mt-1">每个公司席位只能加入一位玩家；开始前所有席位都必须已加入。</p></div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => void loadRooms(true)} disabled={refreshing} className="px-3 py-2 rounded-lg btn-glass text-sm text-foreground flex items-center gap-1.5 disabled:opacity-50"><RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} /> 刷新</button>
+              <button onClick={() => setShowCreateRoom(true)} className="px-3 py-2 rounded-lg btn-warning text-sm font-semibold flex items-center gap-1.5"><Plus className="w-4 h-4" /> 创建房间</button>
             </div>
           </div>
-        )}
-
-        {/* Tab 切换 */}
-        {inviteCodeVerified && (
-        <>
-        <div className="bg-card rounded-t-2xl border border-border border-b-0 px-6 flex items-center gap-1 sticky top-16 z-10 backdrop-blur overflow-x-auto">
-          {[
-            { id: 'rooms', label: '房间管理', icon: Users },
-            { id: 'groups', label: '小组管理', icon: List },
-            { id: 'reports', label: '结算报告', icon: FileText },
-            { id: 'ranking', label: '玩家排行榜', icon: Trophy },
-            { id: 'lock', label: '锁定配置', icon: Lock },
-            { id: 'history', label: '历史记录', icon: History },
-          ].map((t) => {
-            const Icon = t.icon;
-            const active = activeTab === t.id;
-            return (
-              <button
-                key={t.id}
-                onClick={() => setActiveTab(t.id as typeof activeTab)}
-                className={`relative py-4 px-4 text-sm font-semibold flex items-center gap-2 whitespace-nowrap transition-colors ${
-                  active ? 'text-warning' : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <Icon className="w-4 h-4" /> {t.label}
-                {active && <div className="absolute bottom-0 left-2 right-2 h-0.5 rounded-full bg-warning" />}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="bg-card rounded-b-2xl border border-border border-t-0 p-6">
-          {/* 房间管理 */}
-          {activeTab === 'rooms' && (
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <div className="text-sm font-semibold text-foreground">房间列表</div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setShowInitiateModal(true)}
-                    className="px-3 py-1.5 rounded-lg btn-primary text-xs font-semibold flex items-center gap-1"
-                  >
-                    <Play className="w-3.5 h-3.5" /> 发起对局
-                  </button>
-                  <button
-                    onClick={() => setShowCreateRoom(true)}
-                    className="px-3 py-1.5 rounded-lg btn-warning text-xs font-semibold flex items-center gap-1"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> 创建房间
-                  </button>
-                </div>
-              </div>
-              {rooms.length > 0 ? (
-                <div className="rounded-xl border border-border overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-surface-container border-b border-border">
-                        <th className="px-4 py-3 text-left font-semibold text-foreground">房间号</th>
-                        <th className="px-4 py-3 text-left font-semibold text-foreground">状态</th>
-                        <th className="px-4 py-3 text-left font-semibold text-foreground">游戏模式</th>
-                        <th className="px-4 py-3 text-left font-semibold text-foreground">玩家数</th>
-                        <th className="px-4 py-3 text-left font-semibold text-foreground">创建时间</th>
-                        <th className="px-4 py-3 text-right font-semibold text-foreground">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rooms.map((room) => (
-                        <tr key={room.id} className="border-b border-border hover:bg-surface-container/50 transition-colors">
-                          <td className="px-4 py-3 font-mono font-semibold text-foreground num">{room.room_code}</td>
-                          <td className="px-4 py-3">
-                            <span className={`badge ${
-                              room.status === '未开始' ? 'badge-muted' :
-                              room.status === '进行中' ? 'badge-success' :
-                              'badge-danger'
-                            }`}>
-                              {room.status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3">
-                            <select
-                              value={room.game_mode}
-                              onChange={(e) => handleUpdateGameMode(room.id, e.target.value)}
-                              className="px-2 py-1 rounded bg-surface-container border-none text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-warning/30"
-                            >
-                              <option value="overview">概述模式</option>
-                              <option value="dialogue">对话模式</option>
-                              <option value="free">自由模式</option>
-                            </select>
-                          </td>
-                          <td className="px-4 py-3 text-foreground num">{room.current_players}/{room.max_players}</td>
-                          <td className="px-4 py-3 text-muted-foreground num">
-                            {new Date(room.created_at).toLocaleDateString('zh-CN')}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <button
-                                onClick={() => handleCopyCode(room.room_code)}
-                                className="p-1.5 hover:bg-primary/10 rounded text-primary transition-colors"
-                                title="复制邀请码"
-                              >
-                                <Copy className="w-4 h-4" />
-                              </button>
-                              {room.status === '未开始' && (
-                                <button
-                                  onClick={() => handleStartGame(room.id)}
-                                  className="p-1.5 hover:bg-success/10 rounded text-success transition-colors"
-                                  title="开始对局"
-                                >
-                                  <Play className="w-4 h-4" />
-                                </button>
-                              )}
-                              {room.status === '进行中' && (
-                                <button
-                                  onClick={() => handleEndGame(room.id)}
-                                  className="p-1.5 hover:bg-destructive/10 rounded text-destructive transition-colors"
-                                  title="结束对局"
-                                >
-                                  <StopCircle className="w-4 h-4" />
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="text-center py-16 text-sm text-muted-foreground">
-                  暂无房间，点击「创建房间」或「发起对局」开始
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 小组管理 */}
-          {activeTab === 'groups' && (
-            <div>
-              <div className="text-sm font-semibold text-foreground mb-4">小组列表</div>
-              {groups.length > 0 ? (
-                <div className="rounded-xl border border-border overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-surface-container border-b border-border">
-                        <th className="px-4 py-3 text-left font-semibold text-foreground">小组名称</th>
-                        <th className="px-4 py-3 text-left font-semibold text-foreground">成员</th>
-                        <th className="px-4 py-3 text-left font-semibold text-foreground">选择公司</th>
-                        <th className="px-4 py-3 text-left font-semibold text-foreground">状态</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {groups.map((group) => (
-                        <tr key={group.id} className="border-b border-border hover:bg-surface-container/50 transition-colors">
-                          <td className="px-4 py-3 font-semibold text-foreground">{group.group_name}</td>
-                          <td className="px-4 py-3 text-foreground">{group.players.join(', ')}</td>
-                          <td className="px-4 py-3">
-                            <select
-                              value={group.selected_company}
-                              onChange={(e) => handleUpdateGroupCompany(group.id, e.target.value)}
-                              className="px-2 py-1 rounded bg-surface-container border-none text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-warning/30"
-                            >
-                              <option value="">未选择</option>
-                              <option value="A">A 公司</option>
-                              <option value="B">B 公司</option>
-                              <option value="C">C 公司</option>
-                              <option value="D">D 公司</option>
-                            </select>
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`badge ${
-                              group.status === '未开始' ? 'badge-muted' :
-                              group.status === '进行中' ? 'badge-success' :
-                              'badge-primary'
-                            }`}>
-                              {group.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="text-center py-16 text-sm text-muted-foreground">
-                  暂无小组数据
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 结算报告 */}
-          {activeTab === 'reports' && (
-            <div>
-              <div className="text-sm font-semibold text-foreground mb-4">玩家结算报告</div>
-              {players.length > 0 ? (
-                <div className="rounded-xl border border-border overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-surface-container border-b border-border">
-                        <th className="px-4 py-3 text-left font-semibold text-foreground">玩家</th>
-                        <th className="px-4 py-3 text-left font-semibold text-foreground">房间</th>
-                        <th className="px-4 py-3 text-left font-semibold text-foreground">小组</th>
-                        <th className="px-4 py-3 text-left font-semibold text-foreground">状态</th>
-                        <th className="px-4 py-3 text-left font-semibold text-foreground">得分</th>
-                        <th className="px-4 py-3 text-right font-semibold text-foreground">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {players.map((player) => (
-                        <tr key={player.id} className="border-b border-border hover:bg-surface-container/50 transition-colors">
-                          <td className="px-4 py-3 font-semibold text-foreground">{player.username}</td>
-                          <td className="px-4 py-3 font-mono text-xs text-foreground num">{player.room_code}</td>
-                          <td className="px-4 py-3 text-foreground">{player.group_name}</td>
-                          <td className="px-4 py-3">
-                            <span className={`badge ${
-                              player.status === '未开始' ? 'badge-muted' :
-                              player.status === '进行中' ? 'badge-success' :
-                              'badge-primary'
-                            }`}>
-                              {player.status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 font-semibold text-foreground num">{player.score}</td>
-                          <td className="px-4 py-3 text-right">
-                            <button className="p-1.5 hover:bg-primary/10 rounded text-primary transition-colors" title="查看详细报告">
-                              <Eye className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="text-center py-16 text-sm text-muted-foreground">
-                  暂无玩家数据
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 玩家排行榜 */}
-          {activeTab === 'ranking' && (
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <div className="text-sm font-semibold text-foreground">玩家排行榜</div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">排序：</span>
-                  <select className="px-2 py-1 rounded-lg bg-surface-container border-none text-xs text-foreground focus:outline-none">
-                    <option value="score">综合得分</option>
-                    <option value="affinity">亲密度</option>
-                    <option value="strategy">策略分</option>
-                    <option value="expression">表达分</option>
-                  </select>
-                </div>
-              </div>
-              {players.length > 0 ? (
-                <div className="rounded-xl border border-border overflow-hidden">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="bg-surface-container/50 border-b border-border">
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground w-16 uppercase tracking-wider">排名</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">玩家</th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider">综合得分</th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider">亲密度</th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider">策略分</th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider">表达分</th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground uppercase tracking-wider">对局数</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {players.map((player, index) => {
-                        const score = (85 + ((player.id * 7 + 3) % 15)).toFixed(1);
-                        const affinity = (70 + ((player.id * 11 + 5) % 30)).toFixed(1);
-                        const strategy = (60 + ((player.id * 13 + 7) % 40)).toFixed(1);
-                        const expression = (65 + ((player.id * 9 + 11) % 35)).toFixed(1);
-                        const games = 3 + ((player.id * 5 + 2) % 8);
-                        return (
-                        <tr key={player.id} className={`border-b border-border last:border-b-0 hover:bg-surface-container/50 transition-colors ${index < 3 ? 'bg-warning/5' : ''}`}>
-                          <td className="px-4 py-3">
-                            {index === 0 && <span className="text-lg font-bold" style={{ color: '#FFD700' }}>🥇</span>}
-                            {index === 1 && <span className="text-lg font-bold" style={{ color: '#C0C0C0' }}>🥈</span>}
-                            {index === 2 && <span className="text-lg font-bold" style={{ color: '#CD7F32' }}>🥉</span>}
-                            {index >= 3 && <span className="text-sm font-semibold text-muted-foreground num">{index + 1}</span>}
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold" style={{ background: ROLE_COLOR.trainer }}>
-                                {player.username.charAt(0)}
-                              </div>
-                              <div>
-                                <div className="text-sm font-semibold text-foreground">{player.username}</div>
-                                <div className="text-xs text-muted-foreground">{player.group_name || '未分组'}</div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <span className="text-sm font-bold text-foreground num">{score}</span>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <span className="text-sm font-semibold text-success num">{affinity}</span>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <span className="text-sm font-semibold text-foreground num">{strategy}</span>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <span className="text-sm font-semibold text-foreground num">{expression}</span>
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <span className="text-sm font-semibold text-foreground num">{games}</span>
-                          </td>
-                        </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div className="text-center py-16 text-sm text-muted-foreground">暂无玩家数据</div>
-              )}
-            </div>
-          )}
-
-          {/* 锁定配置 */}
-          {activeTab === 'lock' && (
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <div className="text-sm font-semibold text-foreground">锁定甲乙方业务/场景</div>
-                {lockConfig.is_locked && (
-                  <span className="badge badge-success">
-                    <Lock className="w-3 h-3" /> 已锁定
-                  </span>
-                )}
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold text-foreground mb-2">甲方单位</label>
-                  <input
-                    type="text"
-                    value={lockConfig.client_unit}
-                    onChange={(e) => setLockConfig({ ...lockConfig, client_unit: e.target.value })}
-                    placeholder="例如：某市政务服务中心"
-                    className="w-full px-4 py-2.5 rounded-lg bg-surface-container border-none text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-warning/30"
-                    disabled={lockConfig.is_locked}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-foreground mb-2">乙方产品</label>
-                  <input
-                    type="text"
-                    value={lockConfig.vendor_product}
-                    onChange={(e) => setLockConfig({ ...lockConfig, vendor_product: e.target.value })}
-                    placeholder="例如：智慧政务一体化平台"
-                    className="w-full px-4 py-2.5 rounded-lg bg-surface-container border-none text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-warning/30"
-                    disabled={lockConfig.is_locked}
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-foreground mb-2">场景描述</label>
-                  <textarea
-                    value={lockConfig.scenario}
-                    onChange={(e) => setLockConfig({ ...lockConfig, scenario: e.target.value })}
-                    placeholder="描述具体的业务场景..."
-                    rows={3}
-                    className="w-full px-4 py-2.5 rounded-lg bg-surface-container border-none text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-warning/30 resize-none"
-                    disabled={lockConfig.is_locked}
-                  />
-                </div>
-                <div className="flex items-center gap-2 pt-2">
-                  {lockConfig.is_locked ? (
-                    <button
-                      onClick={handleUnlock}
-                      className="px-4 py-2 rounded-lg btn-primary text-sm font-semibold flex items-center gap-1.5"
-                      style={{ background: 'linear-gradient(135deg, #DC2626 0%, #EF4444 100%)' }}
-                    >
-                      <Unlock className="w-4 h-4" /> 解除锁定
-                    </button>
-                  ) : (
-                    <button
-                      onClick={handleSaveLock}
-                      className="px-4 py-2 rounded-lg btn-warning text-sm font-semibold flex items-center gap-1.5"
-                    >
-                      <Lock className="w-4 h-4" /> 保存并锁定
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 历史记录 */}
-          {activeTab === 'history' && (
-            <div>
-              <div className="text-sm font-semibold text-foreground mb-4">操作历史</div>
-              {history.length > 0 ? (
-                <div className="space-y-2">
-                  {history.map((item) => (
-                    <div key={item.id} className="rounded-xl border border-border overflow-hidden hover:border-primary/30 transition-colors">
-                      <div
-                        className="px-4 py-3 bg-surface-container/50 flex items-center justify-between cursor-pointer hover:bg-surface-container transition-colors"
-                        onClick={() => setExpandedHistory(expandedHistory === item.id ? null : item.id)}
-                      >
-                        <div className="flex items-center gap-4 flex-wrap">
-                          <span className="font-mono text-sm font-semibold text-foreground num">{item.room_code}</span>
-                          <span className={`badge ${
-                            item.status === '未开始' ? 'badge-muted' :
-                            item.status === '进行中' ? 'badge-success' :
-                            'badge-primary'
-                          }`}>
-                            {item.status}
-                          </span>
-                          <span className="text-xs text-muted-foreground">{item.game_mode === 'overview' ? '概述模式' : item.game_mode === 'dialogue' ? '对话模式' : '自由模式'}</span>
-                          <span className="text-xs text-muted-foreground">{item.player_count} 名玩家</span>
-                          <span className="text-xs text-muted-foreground num">{new Date(item.initiated_at).toLocaleDateString('zh-CN')}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {item.can_view_reports && (
-                            <span className="badge badge-primary">可查看报告</span>
-                          )}
-                          {expandedHistory === item.id ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
-                        </div>
-                      </div>
-                      {expandedHistory === item.id && item.can_view_reports && (
-                        <div className="px-4 py-3 border-t border-border">
-                          <div className="text-xs font-semibold text-foreground mb-2">玩家报告列表</div>
-                          <div className="text-xs text-muted-foreground">
-                            点击「结算报告」标签页查看该房间的详细报告
-                          </div>
-                        </div>
-                      )}
+          {loading ? <div className="py-16 text-center text-sm text-muted-foreground">正在加载房间…</div> : rooms.length === 0 ? <div className="py-16 text-center text-sm text-muted-foreground">暂无房间。创建房间后，参与者可通过房间码选择公司席位加入。</div> : (
+            <div className="space-y-4">
+              {rooms.map((room) => (
+                <article key={room.id} className="rounded-xl border border-border overflow-hidden">
+                  <div className="p-4 bg-surface-container/40 flex flex-wrap items-center justify-between gap-4">
+                    <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                      <div><div className="text-[10px] text-muted-foreground uppercase tracking-wider">房间码</div><div className="flex items-center gap-2 font-mono font-bold text-foreground num">{room.room_code}<button onClick={() => void handleCopyCode(room.room_code)} className="p-1 rounded hover:bg-primary/10 text-primary" title="复制房间码"><Copy className="w-3.5 h-3.5" /></button></div></div>
+                      <div><div className="text-[10px] text-muted-foreground">状态</div><span className={`badge ${statusClass(room.status)}`}>{roomStatusLabel[room.status]}</span></div>
+                      <div><div className="text-[10px] text-muted-foreground">阶段</div><div className="text-sm text-foreground num">{room.current_stage} / {room.max_stages}</div></div>
+                      <div><div className="text-[10px] text-muted-foreground">协调版本</div><div className="text-sm text-foreground num">v{room.stage_version}</div></div>
+                      <div><div className="text-[10px] text-muted-foreground">阶段时限</div><div className="text-sm text-foreground">{room.stage_duration_seconds ? `${room.stage_duration_seconds} 秒` : '不限时'}</div></div>
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-16 text-sm text-muted-foreground">
-                  暂无历史记录
-                </div>
-              )}
+                    <div className="flex items-center gap-2">
+                      {room.status === 'waiting' && <button onClick={() => void mutateRoom(`/api/coach/rooms/${room.id}/start`, { expectedVersion: room.stage_version }, '房间已开始。')} className="px-3 py-2 rounded-lg btn-primary text-sm font-semibold flex items-center gap-1.5"><Play className="w-4 h-4" /> 开始</button>}
+                      {(room.status === 'waiting' || room.status === 'running') && <button onClick={() => { if (window.confirm('确定结束此房间？所有关联对局会停止。')) void mutateRoom(`/api/coach/rooms/${room.id}/end`, { expectedVersion: room.stage_version }, '房间已结束。'); }} className="px-3 py-2 rounded-lg btn-warning text-sm font-semibold flex items-center gap-1.5"><Square className="w-4 h-4" /> 结束</button>}
+                    </div>
+                  </div>
+                  <div className="p-4">
+                    <div className="text-xs font-semibold text-muted-foreground mb-3 flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> 公司席位</div>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                      {room.multiplayer_company_slots.map((slot) => {
+                        const occupied = Boolean(slot.player_user_id);
+                        const ready = slot.ready_stage === room.current_stage;
+                        return <div key={slot.id} className="rounded-lg border border-border p-3 flex flex-wrap items-center justify-between gap-3">
+                          <div><div className="font-medium text-foreground">{slot.company_name}</div><div className="text-xs text-muted-foreground mt-1">{occupied ? `玩家：${slot.player_user_id}` : '尚未加入'}{occupied && room.status === 'running' && ` · ${ready ? (slot.ready_by_admin ? '教练已代确认' : '已确认') : '待确认'}`}</div></div>
+                          <div className="flex items-center gap-2">
+                            {room.status === 'running' && occupied && !ready && <button onClick={() => void mutateRoom(`/api/coach/rooms/${room.id}`, { action: 'force_ready', slotId: slot.id, expectedStage: room.current_stage, expectedVersion: room.stage_version }, '已代为确认该公司席位。')} className="px-2.5 py-1.5 rounded-lg btn-glass text-xs text-foreground">代确认</button>}
+                            {room.status === 'waiting' && occupied && <button onClick={() => { if (window.confirm(`确定移除 ${slot.company_name} 的玩家？`)) void mutateRoom(`/api/coach/rooms/${room.id}`, { action: 'remove_player', slotId: slot.id, expectedStage: room.current_stage, expectedVersion: room.stage_version }, '玩家已从公司席位移除。'); }} className="px-2.5 py-1.5 rounded-lg border border-destructive/30 text-destructive text-xs hover:bg-destructive/10 flex items-center gap-1"><X className="w-3.5 h-3.5" /> 移除</button>}
+                          </div>
+                        </div>;
+                      })}
+                    </div>
+                  </div>
+                </article>
+              ))}
             </div>
           )}
-        </div>
-        </>
-        )}
+        </section>
       </main>
 
-      {/* 创建房间弹窗 */}
-      {showCreateRoom && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm" onClick={() => setShowCreateRoom(false)}>
-          <div className="bg-card rounded-2xl border border-border p-6 w-[400px] shadow-2xl animate-modal-in" onClick={(e) => e.stopPropagation()}>
-            <div className="text-base font-bold text-foreground mb-4">创建房间</div>
-            <div className="space-y-3 mb-4">
-              <div className="p-3 rounded-lg bg-surface-container border border-border">
-                <div className="text-xs text-muted-foreground mb-1">最大小组数</div>
-                <div className="text-lg font-bold text-foreground num">33 个小组</div>
-              </div>
-              <div className="p-3 rounded-lg bg-surface-container border border-border">
-                <div className="text-xs text-muted-foreground mb-1">每组人数</div>
-                <div className="text-lg font-bold text-foreground num">3 人/组</div>
-              </div>
-              <div className="p-3 rounded-lg bg-surface-container border border-border">
-                <div className="text-xs text-muted-foreground mb-1">总容纳人数</div>
-                <div className="text-lg font-bold text-foreground num">99 人</div>
-              </div>
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <button
-                onClick={() => setShowCreateRoom(false)}
-                className="px-4 py-2 rounded-lg btn-glass text-sm text-foreground"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleCreateRoom}
-                className="px-4 py-2 rounded-lg btn-warning text-sm font-semibold flex items-center gap-1.5"
-              >
-                <Plus className="w-4 h-4" /> 确认创建
-              </button>
-            </div>
+      {showCreateRoom && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm" onClick={() => setShowCreateRoom(false)}>
+        <div className="bg-card rounded-2xl border border-border p-6 w-full max-w-md shadow-2xl" onClick={(event) => event.stopPropagation()}>
+          <h2 className="text-base font-bold text-foreground mb-1">创建多人房间</h2><p className="text-xs text-muted-foreground mb-5">创建两个公司席位。各席位加入一位玩家后才能开始。</p>
+          <div className="space-y-4">
+            <label className="block text-sm text-foreground">公司席位 A<input value={createForm.firstCompanyName} onChange={(event) => setCreateForm({ ...createForm, firstCompanyName: event.target.value })} className="mt-1.5 w-full px-3 py-2 rounded-lg bg-surface-container border border-border text-sm" maxLength={128} /></label>
+            <label className="block text-sm text-foreground">公司席位 B<input value={createForm.secondCompanyName} onChange={(event) => setCreateForm({ ...createForm, secondCompanyName: event.target.value })} className="mt-1.5 w-full px-3 py-2 rounded-lg bg-surface-container border border-border text-sm" maxLength={128} /></label>
+            <label className="block text-sm text-foreground">每阶段时限（秒，可留空）<input value={createForm.stageDurationSeconds} onChange={(event) => setCreateForm({ ...createForm, stageDurationSeconds: event.target.value })} inputMode="numeric" className="mt-1.5 w-full px-3 py-2 rounded-lg bg-surface-container border border-border text-sm" placeholder="留空表示不限时" /></label>
           </div>
+          <div className="flex justify-end gap-2 mt-6"><button onClick={() => setShowCreateRoom(false)} className="px-4 py-2 rounded-lg btn-glass text-sm text-foreground">取消</button><button onClick={() => void handleCreateRoom()} className="px-4 py-2 rounded-lg btn-warning text-sm font-semibold flex items-center gap-1.5"><Clipboard className="w-4 h-4" /> 创建</button></div>
         </div>
-      )}
-
-      {/* 发起对局弹窗 */}
-      {showInitiateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-sm" onClick={() => setShowInitiateModal(false)}>
-          <div className="bg-card rounded-2xl border border-border p-6 w-[450px] shadow-2xl animate-modal-in" onClick={(e) => e.stopPropagation()}>
-            <div className="text-base font-bold text-foreground mb-4">发起对局</div>
-            <div className="space-y-4 mb-4">
-              <div>
-                <label className="block text-xs font-semibold text-foreground mb-2">游戏模式</label>
-                <select
-                  value={initiateConfig.game_mode}
-                  onChange={(e) => setInitiateConfig({ ...initiateConfig, game_mode: e.target.value as 'overview' | 'dialogue' | 'free' })}
-                  className="w-full px-4 py-2.5 rounded-lg bg-surface-container border-none text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
-                >
-                  <option value="overview">概述模式</option>
-                  <option value="dialogue">对话模式</option>
-                  <option value="free">自由模式（玩家自选）</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <button
-                onClick={() => setShowInitiateModal(false)}
-                className="px-4 py-2 rounded-lg btn-glass text-sm text-foreground"
-              >
-                取消
-              </button>
-              <button
-                onClick={handleInitiateGame}
-                className="px-4 py-2 rounded-lg btn-primary text-sm font-semibold flex items-center gap-1.5"
-              >
-                <Play className="w-4 h-4" /> 确认发起
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      </div>}
     </div>
   );
 }

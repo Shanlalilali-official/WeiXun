@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { emailAttachmentSchema } from '@/lib/contracts/ai';
 
 export const createGameSessionRequestSchema = z.object({
   scenarioCode: z.literal('project-1'),
@@ -62,6 +63,7 @@ export const inviteGameCommandSchema = z.object({
     channel: z.enum(['email', 'work_phone', 'wechat', 'online']),
     rawText: textSchema.optional(),
     attachmentIds: z.array(entityIdSchema).max(8).default([]),
+    emailAttachments: z.array(emailAttachmentSchema).max(8).default([]),
     // Legacy structured fields remain optional for old clients and tests. New
     // player flows send natural language and let the server resolve defaults.
     invitationMethod: z.enum(['dedicated', 'drop_in']).optional(),

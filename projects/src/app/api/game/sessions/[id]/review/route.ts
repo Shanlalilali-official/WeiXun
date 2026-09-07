@@ -2,13 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
 import { invokeLLM } from '@/lib/ai/client';
 import { parseAiJsonObject } from '@/lib/ai/json';
+import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import { gameReviewSchema, type GameReview } from '@/lib/contracts/game';
 import { getGameOutcome } from '@/lib/game/state';
 import {
+  buildReviewContext,
   getOwnedGameSession,
+  getSessionReviewEvents,
   getSessionTranscript,
   getStoredReview,
   saveStoredReview,
+  toReviewOutcome,
 } from '@/lib/game/repository';
 
 export const runtime = 'nodejs';
@@ -68,35 +72,50 @@ function extractStateGiftEvents(state: UnknownRecord): UnknownRecord[] {
     .filter((item) => item.type === 'courtesy_gift' || item.type === 'boundary_gift' || item.giftType === 'compliant' || item.giftType === 'boundary')
     .filter((item) => item.giftType !== undefined || item.status === 'used' || (typeof item.usedCount === 'number' && item.usedCount > 0))
     .map((item) => ({
-      ...item,
+      preparationId: item.id ?? item.preparationId,
       giftType: item.giftType ?? (item.type === 'boundary_gift' ? 'boundary' : 'compliant'),
+      outcome: item.outcome,
+      disposition: item.disposition,
+      riskLevel: item.riskLevel,
+      riskReason: item.riskReason,
     }));
 }
 
-function buildStateSummary(state: UnknownRecord) {
-  const outcomeEvidence = asRecord(state.outcomeEvidence);
-  return {
-    cumulativeInvestedMinutes: firstValue(state, [
-      'cumulativeTimeMinutes',
-      'totalInvestedMinutes',
-      'cumulativeInvestedMinutes',
-      'totalTimeSpentMinutes',
-      'elapsedSimulationMinutes',
-    ]),
-    cumulativeActionPointsSpent: firstValue(state, [
-      'cumulativeSpentPoints',
-      'totalActionPointsSpent',
-      'cumulativeActionPointsSpent',
-      'spentActionPoints',
-    ]),
-    remainingActionPoints: state.actionPoints,
-    npcAttitudes: firstValue(state, ['npcAttitudes', 'npcPleasure', 'npcSupport']),
-    legacyNpcAffinity: state.npcAffinity,
-    publicValueEvidence: outcomeEvidence.publicValue ?? firstValue(state, ['publicValueEvidence', 'publicEvidenceLedger']),
-    personalBenefitEvidence: outcomeEvidence.personalBenefit ?? firstValue(state, ['personalBenefitEvidence', 'personalEvidenceLedger']),
-    giftsAndPreparations: firstValue(state, ['preparations', 'giftRecords', 'giftEvents', 'giftInventory']),
-    complianceRisks: firstValue(state, ['complianceRisks', 'complianceRiskEvents', 'complianceEvents']),
-  };
+function extractEventGiftEvents(
+  events: Array<{ eventType: string; payload: UnknownRecord }>,
+  state: UnknownRecord,
+): UnknownRecord[] {
+  const preparations = asRecordArray(state.preparations);
+  const preparationTypes = new Map(preparations.map((item) => [String(item.id ?? item.preparationId ?? ''), item.type]));
+  return events.flatMap((event) => {
+    if (event.eventType !== 'gift.delivered') return [];
+    const payload = event.payload;
+    const preparationId = typeof payload.preparationId === 'string' ? payload.preparationId : undefined;
+    const disposition = typeof payload.disposition === 'string' ? payload.disposition : undefined;
+    const giftType = preparationTypes.get(preparationId ?? '') === 'boundary_gift' || Boolean(payload.riskId)
+      ? 'boundary'
+      : 'compliant';
+    const outcome = disposition === 'delighted_acceptance'
+      ? 'accepted'
+      : disposition === 'cautious_acceptance'
+        ? 'accepted_cautiously'
+        : disposition === 'polite_decline'
+          ? 'politely_refused'
+          : disposition === 'firm_rejection'
+            ? 'firmly_refused'
+            : disposition === 'reported' ? 'refused_and_reported' : undefined;
+    return [{ preparationId, giftType, outcome, disposition, riskId: payload.riskId }];
+  });
+}
+
+function mergeGiftEvents(...groups: UnknownRecord[][]): UnknownRecord[] {
+  const seen = new Set<string>();
+  return groups.flatMap((group) => group.filter((event) => {
+    const key = [event.preparationId, event.riskId, event.disposition, event.outcome, event.giftType].map((item) => String(item ?? '')).join('|');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }));
 }
 
 function createDeterministicReview(args: {
@@ -212,43 +231,35 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const existing = await getStoredReview(id);
     if (existing) return NextResponse.json({ success: true, review: existing, cached: true });
 
-    const transcript = await getSessionTranscript(id);
+    const [transcript, storedEvents] = await Promise.all([
+      getSessionTranscript(id),
+      getSessionReviewEvents(id),
+    ]);
     const outcome = getGameOutcome(gameSession.state);
     const outcomeRecord = asRecord(outcome);
     const stateRecord = gameSession.state as unknown as UnknownRecord;
-    const transcriptGiftEvents = extractGiftEvents(transcript);
-    const giftEvents = transcriptGiftEvents.length ? transcriptGiftEvents : extractStateGiftEvents(stateRecord);
-    const reviewInput = JSON.stringify({
+    const reviewContext = buildReviewContext({ state: gameSession.state, transcript, events: storedEvents });
+    const transcriptGiftEvents = extractGiftEvents(reviewContext.recentMessages);
+    const eventGiftEvents = extractEventGiftEvents(reviewContext.keyEvents, stateRecord);
+    const giftEvents = mergeGiftEvents(transcriptGiftEvents, eventGiftEvents, extractStateGiftEvents(stateRecord));
+    const reviewInput = serializeUntrustedPromptData('game_review_context', {
       result: outcome.won ? 'won' : 'lost',
       persistedLegacyResult: gameSession.state.status,
       formula: '最终分 = 五维平均分×40% + 对公价值×30% + 个人合理收益×20% + 决策链支持×10% - 已触发合规扣分；最终分达到60为中标',
-      outcome,
-      dimensions: gameSession.state.dimensions,
-      clues: gameSession.state.unlockedClues,
-      resourcesAndEvidence: buildStateSummary(stateRecord),
+      outcome: toReviewOutcome(outcome),
+      npcMemories: reviewContext.npcMemories,
+      persistentState: reviewContext.persistentState,
+      keyEvents: reviewContext.keyEvents,
+      recentMessages: reviewContext.recentMessages,
       transcriptGiftAssessments: giftEvents,
-      transcript: transcript.map(({ role, content, metadata }) => ({
-        role,
-        content,
-        metadata: metadata ? {
-          npcId: metadata.npcId,
-          pleasureDelta: metadata.pleasureDelta,
-          supportDelta: metadata.supportDelta,
-          publicValueEvidence: metadata.publicValueEvidence,
-          personalBenefitEvidence: metadata.personalBenefitEvidence,
-          giftAssessment: metadata.giftAssessment,
-          semanticFlags: metadata.semanticFlags,
-          meetingType: metadata.meetingType,
-          channel: metadata.channel,
-        } : undefined,
-      })),
-    });
+    }, { maxStringLength: 700, maxTotalLength: 32_000 });
     const systemPrompt = [
       '你是政企销售训练复盘教练。只能依据给定对局数据给出具体、可执行的中文复盘，不得编造对话外事实。',
       '必须按混合结算解释结果：五维销售能力40%、对公价值30%、个人合理收益20%、决策链支持10%，最后扣除已触发的合规风险；不能只依据五维或最终胜负。',
       '如存在礼品记录，必须同时说明其即时收益与拒收、上报、审计、转述或后续反噬的实际/潜在代价；现金、回扣和利益交换不得评价为个人合理收益。没有礼品或风险记录时不得编造。',
       '结合累计模拟投入时间和累计行动点消耗评价资源效率；旧存档字段缺失时直接省略对应判断，不得自行推算。',
       '区分玩家主张与NPC确认：对公价值和个人合理收益只能引用已确认或已验证的证据。',
+      '复盘上下文已剔除竞品后台分数、动作和隐藏主张；不得补写或推断任何竞品内部数据，只能复述对话中明确出现的竞品话术。',
       '只输出一个JSON对象，且必须恰好包含strengths、improvements、nextActions三个字段。',
       '每个字段必须是包含1到3个非空中文字符串的数组，每个字符串不超过300字。不得输出Markdown或其他字段。',
     ].join('');
