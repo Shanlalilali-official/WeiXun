@@ -124,7 +124,7 @@ export function createSession(userId: string, role: Role, subRole?: SubRole, ent
     subRole,
     displayName: `用户${tail}`,
     enterpriseId,
-    permissions: config.permissions,
+    permissions: [...config.permissions],
     expiresAt: Date.now() + 24 * 60 * 60 * 1000, // 24h
   };
 }
@@ -137,7 +137,10 @@ export function getSession(token: string | undefined): Session | null {
   if (!token) return null;
   const session = verify<Session>(token);
   if (!session) return null;
-  if (typeof session.userId !== 'string' || typeof session.expiresAt !== 'number') return null;
+  if (typeof session.userId !== 'string' || !session.userId.trim() || !Number.isFinite(session.expiresAt)) return null;
+  // A signed login proof is not a session and must never authorize an API call.
+  if (!Object.prototype.hasOwnProperty.call(ROLE_CONFIGS, session.role)) return null;
+  if (!Array.isArray(session.permissions) || !session.permissions.every((value) => typeof value === 'string')) return null;
   if (session.expiresAt < Date.now()) return null;
   return session;
 }
@@ -157,5 +160,5 @@ export function verifyLoginProof(token: string | undefined): LoginProof | null {
 
 export function hasPermission(session: Session | null, permission: string): boolean {
   if (!session) return false;
-  return session.permissions.includes(permission);
+  return ROLE_CONFIGS[session.role]?.permissions.includes(permission) ?? false;
 }

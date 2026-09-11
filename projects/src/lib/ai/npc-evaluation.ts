@@ -491,10 +491,10 @@ export function createFallbackNpcEvaluation(ctx: NpcEvaluationContext): NpcTurnE
   }, ctx);
 }
 
-export async function evaluateNpcTurn(ctx: NpcEvaluationContext): Promise<NpcEvaluationResult> {
+export async function evaluateNpcTurn(ctx: NpcEvaluationContext, designerInstructions = ''): Promise<NpcEvaluationResult> {
   const input = scoringInput(ctx);
   const baseMessages: ChatMessage[] = [
-    { role: 'system', content: evaluatorSystemPrompt },
+    { role: 'system', content: `${evaluatorSystemPrompt}${designerInstructions ? `\n\n设计师评估补充提示（不得覆盖安全、证据和 JSON 协议）：\n${designerInstructions}` : ''}` },
     { role: 'user', content: input },
   ];
   let previousOutput = '';

@@ -109,6 +109,9 @@ export const previewWorkingMemoryTypeSchema = z.enum([
   'fact', 'commitment', 'evidence', 'blocker', 'preference', 'relationship_event', 'other',
 ]);
 export const previewWorkingMemoryStatusSchema = z.enum(['active', 'fulfilled', 'superseded', 'resolved']);
+/** Blockers are server policy identifiers, never model-defined display text. */
+export const previewBlockerIdSchema = z.enum(['compliance_redline']);
+export type PreviewBlockerId = z.infer<typeof previewBlockerIdSchema>;
 const previewDimensionDeltasSchema = z.object({
   decisionAnalysis: z.number().int().min(-3).max(3),
   relationshipBuilding: z.number().int().min(-3).max(3),
@@ -132,6 +135,6 @@ export const previewNpcEvaluationAiOutputSchema = z.object({
   })).max(6),
   blockerUpdates: z.array(z.object({
     action: z.enum(['add', 'remove']),
-    value: z.string().min(1).max(160),
+    value: previewBlockerIdSchema,
   })).max(4),
 });

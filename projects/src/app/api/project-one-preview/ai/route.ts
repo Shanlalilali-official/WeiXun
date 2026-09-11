@@ -3,6 +3,8 @@ import { authGuard } from '@/lib/auth/guard';
 import { previewAiRequestSchema } from '@/lib/contracts/project-one-preview-ai';
 import { PreviewAiError, previewAiService } from '@/lib/game/project-one-preview-ai';
 import { runWithFastTestObservability } from '@/lib/testing/fast-test-observability';
+import { DEFAULT_PROJECT_ONE_PROMPT_CONFIG } from '@/lib/designer/prompt-config';
+import { loadProjectOnePromptConfig } from '@/lib/designer/prompt-config-repository';
 
 export const runtime = 'nodejs';
 
@@ -44,15 +46,18 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) {
       return NextResponse.json({ error: '五人预览 AI 请求字段无效', details: parsed.error.flatten() }, { status: 400 });
     }
+    const promptConfig = await loadProjectOnePromptConfig()
+      .then((stored) => stored.config)
+      .catch(() => DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
     const response = await runWithFastTestObservability(
       guard.session!.userId,
-      () => previewAiService.execute(guard.session!.userId, parsed.data),
+      () => previewAiService.execute(guard.session!.userId, parsed.data, promptConfig),
     );
     return NextResponse.json({ success: true, previewSessionId: response.previewSessionId, version: response.version, data: response });
   } catch (error) {
     if (error instanceof PreviewAiError || (error instanceof Error && ['protocol', 'unavailable', 'conflict', 'not_found', 'limit'].includes(String((error as PreviewAiError).kind)))) {
       const previewError = error as PreviewAiError;
-      console.error('Project one preview AI request failed', { kind: previewError.kind, code: previewError.message.slice(0, 300) });
+      console.error('Project one preview AI request failed', { kind: previewError.kind });
       const status = previewError.kind === 'unavailable' ? 503 : previewError.kind === 'conflict' ? 409 : previewError.kind === 'not_found' ? 404 : previewError.kind === 'limit' ? 429 : 502;
       const message = previewError.kind === 'unavailable'
         ? 'AI 服务暂时不可用，请稍后重试。'
@@ -65,7 +70,7 @@ export async function POST(request: NextRequest) {
           : 'AI 返回结果不符合预览协议，请重试。';
       return NextResponse.json({ error: message }, { status });
     }
-    console.error('Project one preview AI request failed unexpectedly', error instanceof Error ? error.message : 'UNKNOWN_ERROR');
+    console.error('Project one preview AI request failed unexpectedly', { code: 'PREVIEW_UNEXPECTED_ERROR' });
     return NextResponse.json({ error: '五人预览 AI 服务暂时不可用，请稍后重试。' }, { status: 503 });
   }
 }

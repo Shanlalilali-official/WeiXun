@@ -37,7 +37,19 @@ if not exist ".env.local" (
 
 if not exist "node_modules\.bin\tsx.cmd" (
   echo [ERROR] Project dependencies are missing.
-  echo         Open PowerShell in the projects directory and run: pnpm install
+  echo         Open PowerShell in the projects directory and run: corepack pnpm install --frozen-lockfile
+  goto :failed
+)
+
+if not exist "node_modules\.bin\next.cmd" (
+  echo [ERROR] The local Next.js executable is missing.
+  echo         Open PowerShell in the projects directory and run: corepack pnpm install --frozen-lockfile
+  goto :failed
+)
+
+if not exist "node_modules\.bin\tsup.cmd" (
+  echo [ERROR] The local server build executable is missing.
+  echo         Open PowerShell in the projects directory and run: corepack pnpm install --frozen-lockfile
   goto :failed
 )
 

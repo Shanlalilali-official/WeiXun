@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import {
   PREVIEW_NPC_IDS, PREVIEW_NPCS, PreviewAiError, PreviewSessionStore, createPreviewAiService, getAllowedTasks, resolvePreviewNode,
 } from '../src/lib/game/project-one-preview-ai';
-import { previewAiRequestSchema, previewAiResponseSchema } from '../src/lib/contracts/project-one-preview-ai';
+import { previewAiRequestSchema, previewAiResponseSchema, previewNpcEvaluationAiOutputSchema } from '../src/lib/contracts/project-one-preview-ai';
+import { PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS } from '../src/lib/designer/project-one-five-person';
 
 const json = (value: unknown) => JSON.stringify(value);
 let commandIndex = 0;
@@ -18,11 +19,16 @@ const emptyEvaluation = {
 
 async function main() {
   assert.deepEqual(PREVIEW_NPC_IDS, ['P1-001', 'P1-002', 'P1-003', 'P1-004', 'P1-005']);
-  assert.deepEqual(getAllowedTasks('P1-001'), ['提问', '质疑', '挖坑']);
+  assert.deepEqual(getAllowedTasks('P1-001'), ['提问', '质疑']);
+  assert.match(PREVIEW_NPCS['P1-001'].personality, /一两句/);
+  assert.equal(PREVIEW_NPCS['P1-001'].informationBoundary.some((item) => item.includes('技术参数') && item.includes('SLA')), true);
+  assert.equal(PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS['P1-001']?.visit?.includes('不追问技术参数'), true);
+  assert.equal(PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS['P1-001']?.direct_visit?.includes('不展开细节'), true);
   assert.equal(PREVIEW_NPCS['P1-002'].personality.length > 0, true);
   assert.equal(PREVIEW_NPCS['P1-003'].taboos.includes('现金回扣'), true);
   assert.equal(previewAiRequestSchema.safeParse(withMeta({ action: 'message', npcId: 'P1-001', text: '您好', channel: 'email', profile: { hidden: true } }, 0)).success, false);
   assert.equal(previewAiResponseSchema.safeParse({ previewSessionId: 'x'.repeat(20), version: 1, action: 'reset' }).success, true);
+  assert.equal(previewNpcEvaluationAiOutputSchema.safeParse({ ...emptyEvaluation, blockerUpdates: [{ action: 'add', value: 'model_invented_blocker' }] }).success, false, 'blocker IDs are a server-controlled enum');
 
   const prompts: string[] = [];
   let evaluationTurn = 0;
@@ -87,9 +93,30 @@ async function main() {
   assert.equal(redlineState.npcStates['P1-003'].effectiveContactCount, 0, 'hard redline is not an effective contact');
   assert.equal(resolvePreviewNode(redlineState.npcStates['P1-003']), 'BLOCKED', 'deterministic redline blocks node promotion');
 
+  const unresolved = await redlineService.execute('user-red', withMeta({ action: 'message', npcId: 'P1-003', channel: 'email', text: '请继续按正式流程沟通。' }, redline.version, redline.previewSessionId));
+  assert.equal(redlineState.npcStates['P1-003'].activeBlockers.includes('compliance_redline'), true, 'a generic formal-process statement cannot remove a blocker');
+  assert.equal(resolvePreviewNode(redlineState.npcStates['P1-003']), 'BLOCKED');
+
+  const negatedWithdrawal = await redlineService.execute('user-red', withMeta({ action: 'message', npcId: 'P1-003', channel: 'email', text: '我们不会撤回现金回扣，但会走正式采购流程。' }, unresolved.version, redline.previewSessionId));
+  assert.equal(redlineState.npcStates['P1-003'].activeBlockers.includes('compliance_redline'), true, 'negating a withdrawal cannot remove a blocker');
+
+  const residualRedline = await redlineService.execute('user-red', withMeta({ action: 'message', npcId: 'P1-003', channel: 'email', text: '我们撤回现金回扣，但仍要求保证中标，并改走正式采购流程。' }, negatedWithdrawal.version, redline.previewSessionId));
+  assert.equal(redlineState.npcStates['P1-003'].activeBlockers.includes('compliance_redline'), true, 'withdrawing one redline while retaining another cannot remove a blocker');
+
+  const thirdPartyRepair = await redlineService.execute('user-red', withMeta({ action: 'message', npcId: 'P1-003', channel: 'email', text: '王主任已经撤回现金回扣，并会走正式采购流程。' }, residualRedline.version, redline.previewSessionId));
+  assert.equal(redlineState.npcStates['P1-003'].activeBlockers.includes('compliance_redline'), true, 'a third-party withdrawal cannot remove the player blocker');
+
+  const repaired = await redlineService.execute('user-red', withMeta({ action: 'message', npcId: 'P1-003', channel: 'email', text: '我们撤回现金回扣提议，改走正式采购流程并提交书面澄清留痕。' }, thirdPartyRepair.version, redline.previewSessionId));
+  assert.equal(redlineState.npcStates['P1-003'].activeBlockers.includes('compliance_redline'), false, 'an explicit withdrawal plus formal remedy deterministically removes the blocker');
+  assert.notEqual(resolvePreviewNode(redlineState.npcStates['P1-003']), 'BLOCKED');
+  const blockerMemory = redlineState.npcStates['P1-003'].workingMemory.find((entry) => entry.type === 'blocker' && entry.tags.includes('compliance_redline'));
+  assert.equal(blockerMemory?.status, 'resolved', 'removing a blocker resolves its linked working-memory record');
+  assert.equal(blockerMemory?.mustMention, false);
+  assert.equal(blockerMemory?.sourceMessageIds.includes(redlineState.conversations['P1-003'].at(-2)!.messageId), true, 'repair memory links to the actual player message');
+
   redlineState.npcStates['P1-003'].support = 99;
   redlineState.npcStates['P1-003'].pleasantness = 99;
-  await redlineService.execute('user-red', withMeta({ action: 'message', npcId: 'P1-003', channel: 'email', text: '请确认合规的书面验收流程。' }, redline.version, redline.previewSessionId));
+  await redlineService.execute('user-red', withMeta({ action: 'message', npcId: 'P1-003', channel: 'email', text: '请确认合规的书面验收流程。' }, repaired.version, redline.previewSessionId));
   assert.equal(redlineState.npcStates['P1-003'].support, 100, 'support is clamped to 100');
   assert.equal(redlineState.npcStates['P1-003'].pleasantness, 100, 'pleasantness is clamped to 100');
 
@@ -104,6 +131,30 @@ async function main() {
   );
   assert.equal(failedState.conversations['P1-001'].length, 0, 'protocol failure leaves messages unchanged');
   assert.equal(failedState.npcStates['P1-001'].support, 0, 'protocol failure leaves scoring state unchanged');
+
+  const modelBlockerMemoryService = createPreviewAiService({ invoker: async (messages) => {
+    const prompt = messages.map((message) => message.content).join('\n');
+    if (prompt.includes('独立评估刚刚完成的 NPC 正文')) {
+      return json({ ...emptyEvaluation, blockerUpdates: [{ action: 'add', value: 'compliance_redline' }], memoryUpdates: [{ type: 'blocker', summary: 'model_invented_blocker', status: 'active', tags: ['blocker', 'compliance_redline'], mustMention: true }] });
+    }
+    return json({ content: '请按正式流程沟通。', invitationStatus: 'none' });
+  } });
+  const modelBlockerMemory = await modelBlockerMemoryService.execute('user-memory', withMeta({ action: 'message', npcId: 'P1-003', channel: 'email', text: '请说明正式验收口径。' }, 0));
+  const modelBlockerMemoryState = modelBlockerMemoryService.store.get('user-memory', modelBlockerMemory.previewSessionId)!;
+  assert.deepEqual(modelBlockerMemoryState.npcStates['P1-003'].activeBlockers, [], 'model output cannot activate a blocker');
+  assert.equal(modelBlockerMemoryState.npcStates['P1-003'].workingMemory.some((entry) => entry.type === 'blocker'), false, 'model memory cannot forge blocker status');
+
+  const staleMemoryPrompts: string[] = [];
+  const staleMemoryService = createPreviewAiService({ invoker: async (messages) => {
+    const prompt = messages.map((message) => message.content).join('\n');
+    staleMemoryPrompts.push(prompt);
+    return prompt.includes('独立评估刚刚完成的 NPC 正文') ? json(emptyEvaluation) : json({ content: '请说明正式验收口径。', invitationStatus: 'none' });
+  } });
+  const staleMemoryState = staleMemoryService.store.create('user-stale-memory');
+  staleMemoryState.npcStates['P1-003'].workingMemory.push({ id: 'stale-memory', type: 'commitment', summary: 'STALE_MEMORY_MUST_NOT_REACH_PROMPT', status: 'superseded', tags: ['stale'], mustMention: true, sourceMessageIds: [] });
+  staleMemoryState.npcStates['P1-003'].workingMemory.push({ id: 'resolved-memory', type: 'evidence', summary: 'RESOLVED_MEMORY_MUST_NOT_REACH_PROMPT', status: 'resolved', tags: ['resolved'], mustMention: true, sourceMessageIds: [] });
+  await staleMemoryService.execute('user-stale-memory', withMeta({ action: 'message', npcId: 'P1-003', channel: 'email', text: '请说明正式验收口径。' }, 0, staleMemoryState.previewSessionId));
+  assert.equal(staleMemoryPrompts.some((prompt) => /(?:STALE|RESOLVED)_MEMORY_MUST_NOT_REACH_PROMPT/.test(prompt)), false, 'superseded/resolved must-mention memory cannot enter the high-value prompt context');
 
   await service.execute('user-a', withMeta({ action: 'reset' }, third.version, sessionId));
   assert.equal(state.npcStates['P1-002'].support, 0);

@@ -90,6 +90,17 @@ export const projectScenarios = pgTable("project_scenarios", {
 	pgPolicy("project_scenarios_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
+export const designerPromptConfigs = pgTable("designer_prompt_configs", {
+	id: text().primaryKey().notNull(),
+	config: jsonb().default({}).notNull(),
+	revision: integer().default(0).notNull(),
+	updatedBy: varchar("updated_by", { length: 64 }),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	check("designer_prompt_configs_revision_check", sql`${table.revision} >= 0`),
+	pgPolicy("designer_prompt_configs_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
+]);
+
 export const affinityScores = pgTable("affinity_scores", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	sessionId: uuid("session_id").notNull(),

@@ -36,6 +36,8 @@ import {
 import { createServerProbabilitySeed } from '@/lib/game/server-random';
 import { refreshConversationMemory } from '@/lib/game/memory';
 import { runWithFastTestObservability } from '@/lib/testing/fast-test-observability';
+import { DEFAULT_PROJECT_ONE_PROMPT_CONFIG } from '@/lib/designer/prompt-config';
+import { loadProjectOnePromptConfig } from '@/lib/designer/prompt-config-repository';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -476,18 +478,20 @@ export async function POST(req: NextRequest) {
     canRevealPersonalInterest: (attitude?.support ?? 35) >= 50,
     canRevealKeyContact: (attitude?.support ?? 35) >= 50,
   };
+  const promptConfig = await loadProjectOnePromptConfig()
+    .then((stored) => stored.config)
+    .catch(() => DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
+  const rolePrompt = promptConfig.npcRolePrompts[npcId];
   const messages: ChatMessage[] = [
-    { role: 'system', content: CUSTOMER_PROMPT() },
+    { role: 'system', content: `${promptConfig.liveCustomerPrompt || CUSTOMER_PROMPT()}${rolePrompt ? `\n\n## 当前人物角色提示\n${rolePrompt}` : ''}` },
     { role: 'user', content: CUSTOMER_CONTEXT(customerContext) },
     ...recentHistory.map(({ role, content }) => ({ role, content })),
     { role: 'user', content: message },
   ];
 
-  const encoder = new TextEncoder();
-  const readableStream = new ReadableStream({
-    async start(controller) {
-      return runWithFastTestObservability(guard.session!.userId, async () => {
-        const emit = (payload: unknown) => controller.enqueue(encoder.encode(sseData(payload)));
+  return runWithFastTestObservability(guard.session!.userId, async () => {
+        const events: unknown[] = [];
+        const emit = (payload: unknown) => events.push(payload);
         try {
         // Buffer the provider stream until the versioned transaction commits.
         // This preserves the all-or-nothing contract visible to the player.
@@ -516,7 +520,7 @@ export async function POST(req: NextRequest) {
           recentConversation: recentHistory,
           confirmedFacts: memory?.confirmedFacts ?? [],
           commitments: memory?.commitments ?? [],
-        });
+        }, promptConfig.liveEvaluatorPrompt);
         const evaluation = assessment.evaluation;
         const priorOutcome = getGameOutcome(initialState);
         let changedState = applyNpcEvaluation(initialState, npcId, evaluation, reply, channel);
@@ -631,22 +635,19 @@ export async function POST(req: NextRequest) {
           emailAttachments,
         });
         emit({ type: 'done' });
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-        controller.close();
+        return immediateSse(events);
         } catch (error) {
-          const code = error instanceof Error ? error.message : 'AI_PROVIDER_ERROR';
-          emit({
-            type: 'error',
-            code,
-            error: code === 'STATE_VERSION_CONFLICT'
+          const rawCode = error instanceof Error ? error.message : '';
+          const code = /^(AI_PROVIDER_(?:HTTP_\d{3}|TIMEOUT|NETWORK_ERROR|EMPTY_RESPONSE|STREAM_UNAVAILABLE|STREAM_PROTOCOL)|STATE_VERSION_CONFLICT|COMMAND_IN_PROGRESS|MEETING_NOT_ACTIVE)$/.test(rawCode)
+            ? rawCode : 'CHAT_TURN_FAILED';
+          const status = ['STATE_VERSION_CONFLICT', 'COMMAND_IN_PROGRESS'].includes(code) ? 409 : code === 'MEETING_NOT_ACTIVE' ? 400
+            : code.startsWith('AI_PROVIDER_') ? 503 : 500;
+          console.error('Chat turn failed', { code, status });
+          return jsonResponse(code === 'COMMAND_IN_PROGRESS'
+              ? '上一条操作仍在处理，请稍后重试。'
+              : code === 'STATE_VERSION_CONFLICT'
               ? '对局已在其他页面更新，本次未扣除时间或行动点，请刷新后重试。'
-              : 'AI服务或状态提交暂时不可用，本次未推进模拟时间，请稍后重试。',
-          });
-          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-          controller.close();
+              : 'AI 服务或状态提交暂时不可用，请重试或刷新确认对局状态。', status, { code });
         }
-      });
-    },
   });
-  return new Response(readableStream, { headers: streamHeaders });
 }

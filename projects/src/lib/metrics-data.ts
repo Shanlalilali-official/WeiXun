@@ -115,7 +115,8 @@ export const bMetrics = [
 ];
 
 export const cMetrics = [
-  { tag: 'C0', name: '接受度', desc: '接受度', formula: '100-MIN(99,(MIN(100,A13*0.25)+MIN(100,A5)+0.25)+MIN(100,A314*1+0.03)+MIN(100,A46/6*100)*0.3))' },
+  // Positive 0–100 score; 4/6 are the adopted count-normalization parameters, not recovered source intent.
+  { tag: 'C0', name: '接受度', desc: '接受度', formula: 'MAX(0,MIN(100,A13))*0.4+MAX(0,MIN(100,A5))*0.4+MAX(0,MIN(100,A31/4*100))*0.1+MAX(0,MIN(100,A46/6*100))*0.1' },
   { tag: 'C1', name: '分析决策能力Edge', desc: '分析决策能力', formula: 'MAX(50,MIN(100,A61*0.5+(B19+B36+B37)/3*0.5))', category: '综合评价' },
   { tag: 'C2', name: '建立关系Engagement', desc: '建立关系', formula: 'MAX(50,MIN(100,A62*0.5+(B17+B22+B10)/3*0.5))' },
   { tag: 'C3', name: '价值呈现Energize', desc: '价值呈现', formula: 'MAX(50,MIN(100,A63*0.5+(B18+B24+B25+B6)/4*0.5))', category: '综合评价' },

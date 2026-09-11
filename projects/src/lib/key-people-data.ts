@@ -1,4 +1,6 @@
-// 各项目关键人物数据 - 从 各项目人物表.docx 导入
+// 各项目关键人物数据 - 从人物主档导入
+// 项目一使用新版五人主档；旧项目数据暂保持历史结构，等待各自迁移。
+import { PROJECT_ONE_FIVE_PERSON_NPCS, PROJECT_ONE_FIVE_PERSON_IDS } from '@/lib/designer/project-one-five-person';
 
 export const projectNames = [
   '项目一·单单位内部竞标',
@@ -7,14 +9,33 @@ export const projectNames = [
   '项目四·一体化总包解决方案',
 ];
 
+const projectOneFivePeople = PROJECT_ONE_FIVE_PERSON_IDS.map((id) => {
+  const person = PROJECT_ONE_FIVE_PERSON_NPCS[id];
+  return {
+    id: person.id,
+    name: person.name,
+    role: person.title,
+    category: person.category,
+    level: person.level,
+    parentId: person.parentId,
+    displayLevel: person.displayLevel,
+    displayOrder: person.displayOrder,
+    organization: person.organization,
+    personalityType: person.personalityType,
+    personality: person.personality,
+    coreNeeds: person.coreNeeds,
+    facts: person.facts,
+    clues: person.clues,
+    informationBoundary: person.informationBoundary,
+    memoryFocus: person.memoryFocus,
+    taboos: person.taboos,
+    allowedTasks: person.allowedTasks,
+  };
+});
+
 export const keyPeopleByProject = [
   // 项目一·单单位内部竞标
-  [
-    { name: '王浩', role: '一线办事员', personality: '4种性格随机刷新', weakness: '多为工作减负、绩效加分、个人业余爱好' },
-    { name: '刘凯', role: '采购专员', personality: '老虎/孔雀为主', weakness: '评优晋升、家庭育儿需求' },
-    { name: '陈建国', role: '业务部部长', personality: '老虎型', weakness: '职称评级、行业个人口碑、子女升学' },
-    { name: '赵峰', role: '分管业务副主任', personality: '老虎型，年富力强', weakness: '政绩考核、新项目落地成果' },
-  ],
+  projectOneFivePeople,
   // 项目二·国产化改造项目
   [
     { name: '孙磊', role: '一线运维员工', personality: '4种性格随机刷新', weakness: '降低日常运维工作量、设备操作简化、业余兴趣' },

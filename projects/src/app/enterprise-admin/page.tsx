@@ -4,9 +4,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Shield, Users, BarChart3, Plus, Edit2, Trash2, Lock, Unlock,
-  Play, FileText, Clock, CheckCircle2, XCircle, Settings,
-  BookOpen, Package, Building2, History, Wand2, Eye, ChevronRight,
-  X, Save, AlertTriangle, Copy, KeyRound
+  Play, Settings, BookOpen, Package, Building2, History, Wand2, Eye,
+  X, Save, KeyRound
 } from 'lucide-react';
 
 interface Player {
@@ -54,10 +53,69 @@ interface CustomItem {
   created_at: string;
 }
 
+interface EnterpriseApiResponse {
+  data?: unknown;
+  error?: unknown;
+}
+
+class EnterpriseApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+    this.name = 'EnterpriseApiError';
+  }
+}
+
+function getSessionToken() {
+  try {
+    const localToken = window.localStorage.getItem('weixun_session');
+    if (localToken) return localToken;
+  } catch { /* Storage can be disabled by browser policy. */ }
+  try {
+    const cookieToken = document.cookie.match(/(?:^|;\s*)weixun_session=([^;]+)/)?.[1];
+    return cookieToken ? decodeURIComponent(cookieToken) : '';
+  } catch { return ''; }
+}
+
+function enterpriseFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set('x-session', getSessionToken());
+  return fetch(input, { ...init, headers });
+}
+
+async function readEnterpriseApiResponse(response: Response, fallback: string): Promise<EnterpriseApiResponse> {
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const apiError = payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
+      ? payload.error
+      : fallback;
+    const error = response.status === 401
+      ? '登录已失效，请重新登录。'
+      : response.status === 403
+        ? '当前账号没有企业管理员权限。'
+        : response.status === 501
+          ? '该企业管理功能暂未开放。'
+          : apiError;
+    throw new EnterpriseApiError(error, response.status);
+  }
+  return payload && typeof payload === 'object' ? payload as EnterpriseApiResponse : {};
+}
+
+function isEnterpriseAccessError(error: unknown): error is EnterpriseApiError {
+  return error instanceof EnterpriseApiError && (error.status === 401 || error.status === 403);
+}
+
 export default function EnterpriseAdminPage() {
   const router = useRouter();
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
+  const [playersAvailable, setPlayersAvailable] = useState(false);
+  const [progressAvailable, setProgressAvailable] = useState(false);
+  const [lockAvailable, setLockAvailable] = useState(false);
+  const [initiateAvailable, setInitiateAvailable] = useState(false);
+  const [customizeAvailable, setCustomizeAvailable] = useState(false);
+  const [reportsAvailable, setReportsAvailable] = useState(false);
   const [activeTab, setActiveTab] = useState<'players' | 'progress' | 'lock' | 'initiate' | 'customize' | 'history'>('players');
 
   // Lock state
@@ -68,9 +126,6 @@ export default function EnterpriseAdminPage() {
     scenario_locked: false,
     locked_at: null,
   });
-
-  // 教练邀请码
-  const [inviteCode, setInviteCode] = useState('');
 
   // Initiate state
   const [initiateRecords, setInitiateRecords] = useState<InitiateRecord[]>([]);
@@ -85,53 +140,6 @@ export default function EnterpriseAdminPage() {
   const [customizeName, setCustomizeName] = useState('');
   const [customizeDesc, setCustomizeDesc] = useState('');
 
-  // Progress drill-down state
-  type ProgressView = 'overview' | 'classes' | 'class-detail' | 'person-detail' | 'all-people';
-  const [progressView, setProgressView] = useState<ProgressView>('overview');
-  const [selectedClassId, setSelectedClassId] = useState<string | null>(null);
-  const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
-  const [peopleFilter, setPeopleFilter] = useState<'all' | 'completed' | 'partial' | 'logged'>('all');
-
-  // Mock class data
-  interface ClassData {
-    id: string;
-    name: string;
-    note: string;
-    time: string;
-    status: 'in_progress' | 'completed';
-    totalPeople: number;
-    loggedPeople: number;
-    completedPeople: number;
-    partialPeople: number;
-  }
-
-  interface PersonDetail {
-    id: string;
-    classId: string;
-    name: string;
-    role: string;
-    loginTime: string;
-    startTime: string;
-    stages: { name: string; completed: boolean; time?: string; attempts?: number }[];
-    totalCompleted: number;
-  }
-
-  const [classData] = useState<ClassData[]>([
-    { id: 'c1', name: '2024 Q1 销售精英班', note: '华东区销售团队培训', time: '2024-01-15 ~ 2024-03-15', status: 'in_progress', totalPeople: 50, loggedPeople: 30, completedPeople: 10, partialPeople: 20 },
-    { id: 'c2', name: '2024 Q1 新人训练营', note: '新入职销售培训', time: '2024-02-01 ~ 2024-04-01', status: 'in_progress', totalPeople: 35, loggedPeople: 25, completedPeople: 5, partialPeople: 15 },
-    { id: 'c3', name: '2024 Q2 管理层进阶班', note: '销售管理层专项', time: '2024-03-01 ~ 2024-05-01', status: 'in_progress', totalPeople: 20, loggedPeople: 18, completedPeople: 8, partialPeople: 10 },
-    { id: 'c4', name: '2023 Q4 销售精英班', note: '华东区销售团队培训', time: '2023-10-15 ~ 2023-12-15', status: 'completed', totalPeople: 45, loggedPeople: 45, completedPeople: 40, partialPeople: 5 },
-    { id: 'c5', name: '2023 Q4 新人训练营', note: '新入职销售培训', time: '2023-11-01 ~ 2024-01-01', status: 'completed', totalPeople: 30, loggedPeople: 30, completedPeople: 28, partialPeople: 2 },
-  ]);
-
-  const [personDetails] = useState<PersonDetail[]>([
-    { id: 'p1', classId: 'c1', name: '张伟', role: '销售经理', loginTime: '2024-01-15 09:30', startTime: '2024-01-15 10:00', stages: [{ name: '第一次见面', completed: true, time: '2024-01-16 14:30', attempts: 2 }, { name: '第二次沟通', completed: true, time: '2024-01-20 11:00', attempts: 1 }, { name: '持续沟通', completed: true, time: '2024-02-01 15:00', attempts: 3 }, { name: '铁杆同盟', completed: true, time: '2024-02-15 10:30', attempts: 1 }], totalCompleted: 4 },
-    { id: 'p2', classId: 'c1', name: '李娜', role: '销售主管', loginTime: '2024-01-15 10:15', startTime: '2024-01-15 11:00', stages: [{ name: '第一次见面', completed: true, time: '2024-01-17 09:00', attempts: 1 }, { name: '第二次沟通', completed: true, time: '2024-01-22 14:00', attempts: 2 }, { name: '持续沟通', completed: false, attempts: 0 }, { name: '铁杆同盟', completed: false, attempts: 0 }], totalCompleted: 2 },
-    { id: 'p3', classId: 'c1', name: '王强', role: '销售代表', loginTime: '2024-01-16 08:45', startTime: '2024-01-16 09:00', stages: [{ name: '第一次见面', completed: true, time: '2024-01-18 16:00', attempts: 3 }, { name: '第二次沟通', completed: false, attempts: 0 }, { name: '持续沟通', completed: false, attempts: 0 }, { name: '铁杆同盟', completed: false, attempts: 0 }], totalCompleted: 1 },
-    { id: 'p4', classId: 'c1', name: '赵敏', role: '销售总监', loginTime: '2024-01-15 08:00', startTime: '2024-01-15 09:00', stages: [{ name: '第一次见面', completed: true, time: '2024-01-15 15:00', attempts: 1 }, { name: '第二次沟通', completed: true, time: '2024-01-18 10:00', attempts: 1 }, { name: '持续沟通', completed: true, time: '2024-01-25 14:00', attempts: 2 }, { name: '铁杆同盟', completed: true, time: '2024-02-05 11:00', attempts: 1 }], totalCompleted: 4 },
-    { id: 'p5', classId: 'c1', name: '陈晨', role: '销售代表', loginTime: '2024-01-17 14:20', startTime: '', stages: [{ name: '第一次见面', completed: false, attempts: 0 }, { name: '第二次沟通', completed: false, attempts: 0 }, { name: '持续沟通', completed: false, attempts: 0 }, { name: '铁杆同盟', completed: false, attempts: 0 }], totalCompleted: 0 },
-  ]);
-
   // Student reports
   const [studentReports, setStudentReports] = useState<StudentReport[]>([]);
 
@@ -141,38 +149,79 @@ export default function EnterpriseAdminPage() {
   const [playerForm, setPlayerForm] = useState({ username: '', role: 'player' });
 
   useEffect(() => {
-    fetch('/api/enterprise/players')
-      .then(r => r.json())
-      .then(d => setPlayers(d.data || []))
-      .catch(() => {})
+    enterpriseFetch('/api/enterprise/players')
+      .then(r => readEnterpriseApiResponse(r, '玩家数据暂不可用'))
+      .then(d => {
+        if (!Array.isArray(d.data)) throw new Error('玩家数据格式无效');
+        setPlayers(d.data as Player[]);
+        setPlayersAvailable(true);
+      })
+      .catch(error => {
+        setPlayersAvailable(false);
+        if (isEnterpriseAccessError(error)) setAccessError(error.message);
+      })
       .finally(() => setLoading(false));
 
     // Load lock config
-    fetch('/api/enterprise/lock')
-      .then(r => r.json())
-      .then(d => { if (d.data) setLockConfig(d.data); })
-      .catch(() => {});
+    enterpriseFetch('/api/enterprise/lock')
+      .then(r => readEnterpriseApiResponse(r, '场景锁定配置暂不可用'))
+      .then(d => {
+        if (!d.data || typeof d.data !== 'object') throw new Error('场景锁定配置格式无效');
+        setLockConfig(d.data as LockConfig);
+        setLockAvailable(true);
+      })
+      .catch(error => {
+        setLockAvailable(false);
+        if (isEnterpriseAccessError(error)) setAccessError(error.message);
+      });
 
     // Load initiate records
-    fetch('/api/enterprise/initiate')
-      .then(r => r.json())
-      .then(d => setInitiateRecords(d.data || []))
-      .catch(() => {});
+    enterpriseFetch('/api/enterprise/initiate')
+      .then(r => readEnterpriseApiResponse(r, '发起对局数据暂不可用'))
+      .then(d => {
+        if (!Array.isArray(d.data)) throw new Error('发起对局数据格式无效');
+        setInitiateRecords(d.data as InitiateRecord[]);
+        setInitiateAvailable(true);
+      })
+      .catch(error => {
+        setInitiateAvailable(false);
+        if (isEnterpriseAccessError(error)) setAccessError(error.message);
+      });
 
     // Load custom items
-    fetch('/api/enterprise/customize')
-      .then(r => r.json())
-      .then(d => setCustomItems(d.data || []))
-      .catch(() => {});
+    enterpriseFetch('/api/enterprise/customize')
+      .then(r => readEnterpriseApiResponse(r, '定制内容数据暂不可用'))
+      .then(d => {
+        if (!Array.isArray(d.data)) throw new Error('定制内容数据格式无效');
+        setCustomItems(d.data as CustomItem[]);
+        setCustomizeAvailable(true);
+      })
+      .catch(error => {
+        setCustomizeAvailable(false);
+        if (isEnterpriseAccessError(error)) setAccessError(error.message);
+      });
+
+    // Game progress is intentionally an explicit empty state until its data model is available.
+    enterpriseFetch('/api/enterprise/progress')
+      .then(r => readEnterpriseApiResponse(r, '游戏进度数据暂不可用'))
+      .then(() => setProgressAvailable(true))
+      .catch(error => {
+        setProgressAvailable(false);
+        if (isEnterpriseAccessError(error)) setAccessError(error.message);
+      });
 
     // Load student reports
-    fetch('/api/enterprise/reports')
-      .then(r => {
-        if (!r.ok) return { data: [] };
-        return r.json();
+    enterpriseFetch('/api/enterprise/history')
+      .then(r => readEnterpriseApiResponse(r, '学员报告数据暂不可用'))
+      .then(d => {
+        if (!Array.isArray(d.data)) throw new Error('学员报告数据格式无效');
+        setStudentReports(d.data as StudentReport[]);
+        setReportsAvailable(true);
       })
-      .then(d => setStudentReports(d.data || []))
-      .catch(() => {});
+      .catch(error => {
+        setReportsAvailable(false);
+        if (isEnterpriseAccessError(error)) setAccessError(error.message);
+      });
   }, []);
 
   const handleAddPlayer = () => {
@@ -189,94 +238,81 @@ export default function EnterpriseAdminPage() {
 
   const handleSavePlayer = async () => {
     if (!playerForm.username.trim()) return;
+    setActionError(null);
     try {
       if (editingPlayer) {
-        const res = await fetch(`/api/enterprise/players?id=${editingPlayer.id}`, {
+        const res = await enterpriseFetch(`/api/enterprise/players?id=${editingPlayer.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(playerForm),
         });
-        const d = await res.json();
-        if (d.data) setPlayers(players.map(p => p.id === editingPlayer.id ? d.data : p));
+        const d = await readEnterpriseApiResponse(res, '保存玩家失败');
+        if (!d.data) throw new Error('服务器未返回玩家数据');
+        setPlayers(players.map(p => p.id === editingPlayer.id ? d.data as Player : p));
       } else {
-        const res = await fetch('/api/enterprise/players', {
+        const res = await enterpriseFetch('/api/enterprise/players', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(playerForm),
         });
-        const d = await res.json();
-        if (d.data) setPlayers([...players, d.data]);
+        const d = await readEnterpriseApiResponse(res, '添加玩家失败');
+        if (!d.data) throw new Error('服务器未返回玩家数据');
+        setPlayers([...players, d.data as Player]);
       }
       setShowPlayerModal(false);
-    } catch (e) {
-      console.error(e);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '保存玩家失败');
     }
   };
 
   const handleDeletePlayer = async (id: number) => {
     if (!confirm('确定删除该玩家？')) return;
+    setActionError(null);
     try {
-      await fetch(`/api/enterprise/players?id=${id}`, { method: 'DELETE' });
+      const res = await enterpriseFetch(`/api/enterprise/players?id=${id}`, { method: 'DELETE' });
+      await readEnterpriseApiResponse(res, '删除玩家失败');
       setPlayers(players.filter(p => p.id !== id));
-    } catch (e) {
-      console.error(e);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '删除玩家失败');
     }
   };
 
   const handleSaveLock = async () => {
+    setActionError(null);
     try {
-      const res = await fetch('/api/enterprise/lock', {
+      const res = await enterpriseFetch('/api/enterprise/lock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...lockConfig, scenario_locked: true }),
       });
-      const d = await res.json();
-      if (d.data) setLockConfig(d.data);
-    } catch (e) {
-      console.error(e);
+      const d = await readEnterpriseApiResponse(res, '锁定场景失败');
+      if (!d.data || typeof d.data !== 'object') throw new Error('服务器未返回场景配置');
+      setLockConfig(d.data as LockConfig);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '锁定场景失败');
     }
   };
 
   const handleUnlock = async () => {
+    setActionError(null);
     try {
-      const res = await fetch('/api/enterprise/lock', {
+      const res = await enterpriseFetch('/api/enterprise/lock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...lockConfig, scenario_locked: false }),
       });
-      const d = await res.json();
-      if (d.data) setLockConfig(d.data);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleGenerateInviteCode = async () => {
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-    try {
-      const res = await fetch('/api/enterprise/invite-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
-      });
-      if (res.ok) {
-        const d = await res.json();
-        if (d.success) {
-          setInviteCode(code);
-        }
-      } else {
-        // API not available, just set the code locally
-        setInviteCode(code);
-      }
-    } catch (e) {
-      console.error(e);
-      setInviteCode(code);
+      const d = await readEnterpriseApiResponse(res, '解锁场景失败');
+      if (!d.data || typeof d.data !== 'object') throw new Error('服务器未返回场景配置');
+      setLockConfig(d.data as LockConfig);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '解锁场景失败');
     }
   };
 
   const handleInitiate = async () => {
+    setActionError(null);
     try {
-      const res = await fetch('/api/enterprise/initiate', {
+      const res = await enterpriseFetch('/api/enterprise/initiate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -284,42 +320,43 @@ export default function EnterpriseAdminPage() {
           allow_coach_view: initiateCoachVisible,
         }),
       });
-      const d = await res.json();
-      if (d.data) {
-        setInitiateRecords([d.data, ...initiateRecords]);
-        setShowInitiateModal(false);
-      }
-    } catch (e) {
-      console.error(e);
+      const d = await readEnterpriseApiResponse(res, '发起对局失败');
+      if (!d.data) throw new Error('服务器未返回对局记录');
+      setInitiateRecords([d.data as InitiateRecord, ...initiateRecords]);
+      setShowInitiateModal(false);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '发起对局失败');
     }
   };
 
   const handleAddCustomItem = async () => {
     if (!customizeName.trim()) return;
+    setActionError(null);
     try {
-      const res = await fetch('/api/enterprise/customize', {
+      const res = await enterpriseFetch('/api/enterprise/customize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: customizeName, type: customizeType, description: customizeDesc }),
       });
-      const d = await res.json();
-      if (d.data) {
-        setCustomItems([...customItems, d.data]);
-        setShowCustomizeModal(false);
-        setCustomizeName('');
-        setCustomizeDesc('');
-      }
-    } catch (e) {
-      console.error(e);
+      const d = await readEnterpriseApiResponse(res, '保存定制内容失败');
+      if (!d.data) throw new Error('服务器未返回定制内容');
+      setCustomItems([...customItems, d.data as CustomItem]);
+      setShowCustomizeModal(false);
+      setCustomizeName('');
+      setCustomizeDesc('');
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '保存定制内容失败');
     }
   };
 
   const handleDeleteCustomItem = async (id: number) => {
+    setActionError(null);
     try {
-      await fetch(`/api/enterprise/customize?id=${id}`, { method: 'DELETE' });
+      const res = await enterpriseFetch(`/api/enterprise/customize?id=${id}`, { method: 'DELETE' });
+      await readEnterpriseApiResponse(res, '删除定制内容失败');
       setCustomItems(customItems.filter(i => i.id !== id));
-    } catch (e) {
-      console.error(e);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '删除定制内容失败');
     }
   };
 
@@ -385,6 +422,11 @@ export default function EnterpriseAdminPage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 sm:px-8 py-6">
+        {(actionError || accessError) && (
+          <div role="alert" className="mb-4 rounded-xl border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            {actionError ?? accessError}
+          </div>
+        )}
         {/* Stats */}
         <div className="grid grid-cols-4 gap-4 mb-6">
           <div className="bg-card rounded-xl border border-border px-5 py-4 flex items-center gap-4">
@@ -392,7 +434,7 @@ export default function EnterpriseAdminPage() {
               <Users className="w-4 h-4" style={{ color: '#0EA5E9' }} />
             </div>
             <div>
-              <div className="text-2xl font-bold text-foreground">{players.length}</div>
+              <div className="text-2xl font-bold text-foreground">{playersAvailable ? players.length : '—'}</div>
               <div className="text-xs text-muted-foreground">玩家总数</div>
             </div>
           </div>
@@ -401,7 +443,7 @@ export default function EnterpriseAdminPage() {
               <Play className="w-4 h-4 text-success" />
             </div>
             <div>
-              <div className="text-2xl font-bold text-foreground">{progressStats.in_progress}</div>
+              <div className="text-2xl font-bold text-foreground">{playersAvailable ? progressStats.in_progress : '—'}</div>
               <div className="text-xs text-muted-foreground">进行中</div>
             </div>
           </div>
@@ -410,7 +452,7 @@ export default function EnterpriseAdminPage() {
               <Lock className="w-4 h-4" style={{ color: '#0EA5E9' }} />
             </div>
             <div>
-              <div className="text-2xl font-bold text-foreground">{lockConfig.scenario_locked ? '已锁定' : '未锁定'}</div>
+              <div className="text-2xl font-bold text-foreground">{lockAvailable ? (lockConfig.scenario_locked ? '已锁定' : '未锁定') : '—'}</div>
               <div className="text-xs text-muted-foreground">场景状态</div>
             </div>
           </div>
@@ -419,7 +461,7 @@ export default function EnterpriseAdminPage() {
               <BarChart3 className="w-4 h-4 text-purple-500" />
             </div>
             <div>
-              <div className="text-2xl font-bold text-foreground">{initiateRecords.length}</div>
+              <div className="text-2xl font-bold text-foreground">{initiateAvailable ? initiateRecords.length : '—'}</div>
               <div className="text-xs text-muted-foreground">发起次数</div>
             </div>
           </div>
@@ -452,7 +494,7 @@ export default function EnterpriseAdminPage() {
             <div>
               <div className="flex items-center justify-between mb-4">
                 <div className="text-sm font-semibold text-foreground">企业玩家列表</div>
-                <button onClick={handleAddPlayer} className="px-3 py-1.5 rounded-lg text-white text-xs font-semibold flex items-center gap-1" style={{ background: '#0EA5E9' }}>
+                <button onClick={handleAddPlayer} disabled={!playersAvailable} title={playersAvailable ? '添加玩家' : (accessError ?? '玩家管理接口尚未接入')} className="px-3 py-1.5 rounded-lg text-white text-xs font-semibold flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: '#0EA5E9' }}>
                   <Plus className="w-3.5 h-3.5" /> 添加玩家
                 </button>
               </div>
@@ -499,324 +541,21 @@ export default function EnterpriseAdminPage() {
                   </table>
                 </div>
               ) : (
-                <div className="text-center py-12 text-sm text-muted-foreground">暂无玩家，点击「添加玩家」开始</div>
+                <div className="text-center py-12 text-sm text-muted-foreground">
+                  {playersAvailable ? '暂无玩家，点击「添加玩家」开始' : (accessError ?? '玩家数据接口尚未接入真实数据服务，当前仅显示空状态。')}
+                </div>
               )}
             </div>
           )}
 
           {/* 游戏进度 */}
           {activeTab === 'progress' && (
-            <div>
-              {/* Breadcrumb navigation */}
-              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-4">
-                <button onClick={() => { setProgressView('overview'); setSelectedClassId(null); setSelectedPersonId(null); }} className="hover:text-foreground">游戏进度</button>
-                {progressView === 'classes' && <><span>/</span><span className="text-foreground">班次列表</span></>}
-                {progressView === 'class-detail' && <><span>/</span><button onClick={() => setProgressView('classes')} className="hover:text-foreground">班次列表</button><span>/</span><span className="text-foreground">{classData.find(c => c.id === selectedClassId)?.name}</span></>}
-                {progressView === 'person-detail' && <><span>/</span><button onClick={() => setProgressView('classes')} className="hover:text-foreground">班次列表</button><span>/</span><button onClick={() => setProgressView('class-detail')} className="hover:text-foreground">{classData.find(c => c.id === selectedClassId)?.name}</button><span>/</span><span className="text-foreground">{personDetails.find(p => p.id === selectedPersonId)?.name}</span></>}
-                {progressView === 'all-people' && <><span>/</span><span className="text-foreground">全部人员</span></>}
-              </div>
-
-              {/* Overview */}
-              {progressView === 'overview' && (
-                <div>
-                  <div className="text-sm font-semibold text-foreground mb-4">游戏完成进度</div>
-                  <div className="grid grid-cols-4 gap-4 mb-6">
-                    <button onClick={() => setProgressView('classes')} className="rounded-xl border border-border p-4 text-center hover:border-primary/30 hover:shadow-sm transition-all">
-                      <Clock className="w-6 h-6 text-primary mx-auto mb-2" />
-                      <div className="text-2xl font-bold text-foreground">{classData.filter(c => c.status === 'in_progress').length}个班</div>
-                      <div className="text-xs text-muted-foreground">进行中</div>
-                    </button>
-                    <button onClick={() => setProgressView('classes')} className="rounded-xl border border-border p-4 text-center hover:border-success/30 hover:shadow-sm transition-all">
-                      <CheckCircle2 className="w-6 h-6 text-success mx-auto mb-2" />
-                      <div className="text-2xl font-bold text-foreground">{classData.filter(c => c.status === 'completed').length}个班</div>
-                      <div className="text-xs text-muted-foreground">已完成</div>
-                    </button>
-                    <button onClick={() => { setProgressView('all-people'); setPeopleFilter('all'); }} className="rounded-xl border border-border p-4 text-center hover:border-purple-500/30 hover:shadow-sm transition-all">
-                      <Users className="w-6 h-6 text-purple-500 mx-auto mb-2" />
-                      <div className="text-2xl font-bold text-foreground">{classData.reduce((sum, c) => sum + c.totalPeople, 0)}人</div>
-                      <div className="text-xs text-muted-foreground">总数</div>
-                    </button>
-                    <div className="rounded-xl border border-border p-4 text-center">
-                      <BarChart3 className="w-6 h-6 mx-auto mb-2" style={{ color: '#0EA5E9' }} />
-                      <div className="text-2xl font-bold text-foreground">{Math.round(classData.reduce((sum, c) => sum + c.completedPeople, 0) / classData.reduce((sum, c) => sum + c.totalPeople, 0) * 100)}%</div>
-                      <div className="text-xs text-muted-foreground">完成率</div>
-                    </div>
-                  </div>
-
-                  {/* Summary stats */}
-                  <div className="grid grid-cols-4 gap-4 mb-6">
-                    <div className="rounded-xl border border-success/20 bg-success/5 p-4 text-center">
-                      <div className="text-xl font-bold text-success">{classData.reduce((sum, c) => sum + c.completedPeople, 0)}人</div>
-                      <div className="text-xs text-muted-foreground mt-1">全部完成（四关全过）</div>
-                    </div>
-                    <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-center">
-                      <div className="text-xl font-bold text-primary">{classData.reduce((sum, c) => sum + c.partialPeople, 0)}人</div>
-                      <div className="text-xs text-muted-foreground mt-1">部分完成（至少一关）</div>
-                    </div>
-                    <div className="rounded-xl border border-border p-4 text-center">
-                      <div className="text-xl font-bold text-foreground">{classData.reduce((sum, c) => sum + c.loggedPeople, 0)}人</div>
-                      <div className="text-xs text-muted-foreground mt-1">已登录</div>
-                    </div>
-                    <div className="rounded-xl border border-border p-4 text-center">
-                      <div className="text-xl font-bold text-foreground">{classData.reduce((sum, c) => sum + c.totalPeople, 0)}人</div>
-                      <div className="text-xs text-muted-foreground mt-1">总人数</div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Classes list */}
-              {progressView === 'classes' && (
-                <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="text-sm font-semibold text-foreground">班次列表</div>
-                    <div className="flex gap-2">
-                      <button onClick={() => setProgressView('classes')} className="px-3 py-1 rounded-lg bg-primary/10 text-primary text-xs font-semibold">全部</button>
-                    </div>
-                  </div>
-                  {/* In Progress Classes */}
-                  <div className="mb-6">
-                    <div className="text-xs font-semibold text-muted-foreground mb-3 flex items-center gap-2"><Clock className="w-3.5 h-3.5 text-primary" /> 进行中（{classData.filter(c => c.status === 'in_progress').length}个班）</div>
-                    <div className="space-y-2">
-                      {classData.filter(c => c.status === 'in_progress').map(cls => (
-                        <button key={cls.id} onClick={() => { setSelectedClassId(cls.id); setProgressView('class-detail'); }} className="w-full rounded-xl border border-border p-4 text-left hover:border-primary/30 hover:shadow-sm transition-all">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="font-semibold text-foreground text-sm">{cls.name}</div>
-                            <span className="px-2 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-bold">进行中</span>
-                          </div>
-                          <div className="text-xs text-muted-foreground mb-3">{cls.note} | {cls.time}</div>
-                          <div className="flex items-center gap-4 text-xs">
-                            <span className="text-success font-semibold">完成 {cls.completedPeople}人</span>
-                            <span className="text-primary font-semibold">登录 {cls.loggedPeople}人</span>
-                            <span className="text-muted-foreground">总数 {cls.totalPeople}人</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  {/* Completed Classes */}
-                  <div>
-                    <div className="text-xs font-semibold text-muted-foreground mb-3 flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-success" /> 已完成（{classData.filter(c => c.status === 'completed').length}个班）</div>
-                    <div className="space-y-2">
-                      {classData.filter(c => c.status === 'completed').map(cls => (
-                        <button key={cls.id} onClick={() => { setSelectedClassId(cls.id); setProgressView('class-detail'); }} className="w-full rounded-xl border border-border p-4 text-left hover:border-success/30 hover:shadow-sm transition-all">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="font-semibold text-foreground text-sm">{cls.name}</div>
-                            <span className="px-2 py-0.5 rounded bg-success/10 text-success text-[10px] font-bold">已完成</span>
-                          </div>
-                          <div className="text-xs text-muted-foreground mb-3">{cls.note} | {cls.time}</div>
-                          <div className="flex items-center gap-4 text-xs">
-                            <span className="text-success font-semibold">完成 {cls.completedPeople}人</span>
-                            <span className="text-muted-foreground">总数 {cls.totalPeople}人</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Class detail */}
-              {progressView === 'class-detail' && selectedClassId && (() => {
-                const cls = classData.find(c => c.id === selectedClassId);
-                const classPeople = personDetails.filter(p => p.classId === selectedClassId);
-                if (!cls) return null;
-                return (
-                  <div>
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="text-sm font-semibold text-foreground">{cls.name}</div>
-                      <button onClick={() => { setProgressView('all-people'); setPeopleFilter('all'); }} className="px-3 py-1.5 rounded-lg bg-purple-500/10 text-purple-500 text-xs font-semibold flex items-center gap-1">
-                        <Users className="w-3.5 h-3.5" /> 总数 {cls.totalPeople}人
-                      </button>
-                    </div>
-                    {/* Stats */}
-                    <div className="grid grid-cols-4 gap-3 mb-6">
-                      <button onClick={() => setPeopleFilter('completed')} className="rounded-xl border border-success/20 bg-success/5 p-3 text-center hover:shadow-sm">
-                        <div className="text-lg font-bold text-success">{cls.completedPeople}人</div>
-                        <div className="text-[10px] text-muted-foreground">全部完成</div>
-                      </button>
-                      <button onClick={() => setPeopleFilter('partial')} className="rounded-xl border border-primary/20 bg-primary/5 p-3 text-center hover:shadow-sm">
-                        <div className="text-lg font-bold text-primary">{cls.partialPeople}人</div>
-                        <div className="text-[10px] text-muted-foreground">部分完成</div>
-                      </button>
-                      <div className="rounded-xl border border-border p-3 text-center">
-                        <div className="text-lg font-bold text-foreground">{cls.loggedPeople}人</div>
-                        <div className="text-[10px] text-muted-foreground">已登录</div>
-                      </div>
-                      <div className="rounded-xl border border-border p-3 text-center">
-                        <div className="text-lg font-bold text-foreground">{cls.totalPeople}人</div>
-                        <div className="text-[10px] text-muted-foreground">总数</div>
-                      </div>
-                    </div>
-                    {/* People list */}
-                    <div className="rounded-xl border border-border overflow-hidden">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="bg-surface-container border-b border-border">
-                            <th className="px-4 py-3 text-left font-semibold text-foreground">姓名</th>
-                            <th className="px-4 py-3 text-left font-semibold text-foreground">角色</th>
-                            <th className="px-4 py-3 text-left font-semibold text-foreground">登录时间</th>
-                            <th className="px-4 py-3 text-left font-semibold text-foreground">完成关卡</th>
-                            <th className="px-4 py-3 text-left font-semibold text-foreground">状态</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {classPeople.map(p => (
-                            <tr key={p.id} className="border-b border-border hover:bg-muted/50 cursor-pointer" onClick={() => { setSelectedPersonId(p.id); setProgressView('person-detail'); }}>
-                              <td className="px-4 py-3 font-semibold text-foreground">{p.name}</td>
-                              <td className="px-4 py-3 text-muted-foreground">{p.role}</td>
-                              <td className="px-4 py-3 text-xs text-muted-foreground">{p.loginTime}</td>
-                              <td className="px-4 py-3">
-                                <div className="flex items-center gap-1">
-                                  {[0,1,2,3].map(i => (
-                                    <div key={i} className={`w-5 h-1.5 rounded-full ${p.stages[i]?.completed ? 'bg-success' : 'bg-muted'}`} />
-                                  ))}
-                                  <span className="text-xs text-muted-foreground ml-1">{p.totalCompleted}/4</span>
-                                </div>
-                              </td>
-                              <td className="px-4 py-3">
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                  p.totalCompleted === 4 ? 'bg-success/10 text-success' :
-                                  p.totalCompleted > 0 ? 'bg-primary/10 text-primary' :
-                                  p.loginTime ? 'bg-muted text-muted-foreground' : 'bg-muted/50 text-muted-foreground/50'
-                                }`}>
-                                  {p.totalCompleted === 4 ? '已完成' : p.totalCompleted > 0 ? '进行中' : p.loginTime ? '已登录' : '未登录'}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Person detail */}
-              {progressView === 'person-detail' && selectedPersonId && (() => {
-                const person = personDetails.find(p => p.id === selectedPersonId);
-                if (!person) return null;
-                return (
-                  <div>
-                    <div className="text-sm font-semibold text-foreground mb-4">{person.name} - 个人详情</div>
-                    <div className="grid grid-cols-3 gap-4 mb-6">
-                      <div className="rounded-xl border border-border p-4">
-                        <div className="text-xs text-muted-foreground mb-1">登录时间</div>
-                        <div className="text-sm font-semibold text-foreground">{person.loginTime || '未登录'}</div>
-                      </div>
-                      <div className="rounded-xl border border-border p-4">
-                        <div className="text-xs text-muted-foreground mb-1">开始时间</div>
-                        <div className="text-sm font-semibold text-foreground">{person.startTime || '未开始'}</div>
-                      </div>
-                      <div className="rounded-xl border border-border p-4">
-                        <div className="text-xs text-muted-foreground mb-1">完成关卡</div>
-                        <div className="text-sm font-semibold text-foreground">{person.totalCompleted} / 4</div>
-                      </div>
-                    </div>
-                    <div className="text-xs font-semibold text-muted-foreground mb-3">各关卡详情</div>
-                    <div className="space-y-3">
-                      {person.stages.map((stage, i) => (
-                        <div key={i} className="rounded-xl border border-border p-4">
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="font-semibold text-foreground text-sm">{stage.name}</div>
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${stage.completed ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
-                              {stage.completed ? '已完成' : '未完成'}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-6 text-xs text-muted-foreground">
-                            {stage.time && <span>完成时间: {stage.time}</span>}
-                            {stage.attempts !== undefined && stage.attempts > 0 && <span>尝试次数: {stage.attempts}次</span>}
-                            {!stage.completed && <span>尚未完成此关卡</span>}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    {/* Report button */}
-                    {person.totalCompleted > 0 && (
-                      <div className="mt-6 flex justify-end">
-                        <button className="px-4 py-2 rounded-lg text-white text-xs font-semibold flex items-center gap-1.5" style={{ background: '#0EA5E9' }}>
-                          <BarChart3 className="w-3.5 h-3.5" /> 查看结算报告
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-
-              {/* All people popup */}
-              {progressView === 'all-people' && (() => {
-                const allPeople = personDetails;
-                const completedCount = allPeople.filter(p => p.totalCompleted === 4).length;
-                const partialCount = allPeople.filter(p => p.totalCompleted > 0 && p.totalCompleted < 4).length;
-                const loggedCount = allPeople.filter(p => p.loginTime).length;
-                const totalCount = allPeople.length;
-
-                const filteredPeople = peopleFilter === 'completed' ? allPeople.filter(p => p.totalCompleted === 4) :
-                  peopleFilter === 'partial' ? allPeople.filter(p => p.totalCompleted > 0 && p.totalCompleted < 4) :
-                  peopleFilter === 'logged' ? allPeople.filter(p => p.loginTime) :
-                  allPeople;
-
-                return (
-                  <div>
-                    <div className="text-sm font-semibold text-foreground mb-4">全部人员</div>
-                    {/* Stats */}
-                    <div className="grid grid-cols-4 gap-3 mb-6">
-                      <button onClick={() => setPeopleFilter('completed')} className={`rounded-xl border p-3 text-center transition-all ${peopleFilter === 'completed' ? 'border-success bg-success/10' : 'border-success/20 bg-success/5 hover:shadow-sm'}`}>
-                        <div className="text-lg font-bold text-success">{completedCount}人</div>
-                        <div className="text-[10px] text-muted-foreground">全部完成（四关全过）</div>
-                      </button>
-                      <button onClick={() => setPeopleFilter('partial')} className={`rounded-xl border p-3 text-center transition-all ${peopleFilter === 'partial' ? 'border-primary bg-primary/10' : 'border-primary/20 bg-primary/5 hover:shadow-sm'}`}>
-                        <div className="text-lg font-bold text-primary">{partialCount}人</div>
-                        <div className="text-[10px] text-muted-foreground">部分完成（至少一关）</div>
-                      </button>
-                      <button onClick={() => setPeopleFilter('logged')} className={`rounded-xl border p-3 text-center transition-all ${peopleFilter === 'logged' ? 'border-border bg-muted' : 'border-border hover:shadow-sm'}`}>
-                        <div className="text-lg font-bold text-foreground">{loggedCount}人</div>
-                        <div className="text-[10px] text-muted-foreground">已登录</div>
-                      </button>
-                      <button onClick={() => setPeopleFilter('all')} className={`rounded-xl border p-3 text-center transition-all ${peopleFilter === 'all' ? 'border-border bg-muted' : 'border-border hover:shadow-sm'}`}>
-                        <div className="text-lg font-bold text-foreground">{totalCount}人</div>
-                        <div className="text-[10px] text-muted-foreground">总人数</div>
-                      </button>
-                    </div>
-                    {/* People table */}
-                    <div className="rounded-xl border border-border overflow-hidden">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="bg-surface-container border-b border-border">
-                            <th className="px-4 py-3 text-left font-semibold text-foreground">姓名</th>
-                            <th className="px-4 py-3 text-left font-semibold text-foreground">角色</th>
-                            <th className="px-4 py-3 text-left font-semibold text-foreground">登录时间</th>
-                            <th className="px-4 py-3 text-left font-semibold text-foreground">开始时间</th>
-                            <th className="px-4 py-3 text-left font-semibold text-foreground">完成关卡</th>
-                            <th className="px-4 py-3 text-left font-semibold text-foreground">次数(单机)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredPeople.map(p => (
-                            <tr key={p.id} className="border-b border-border hover:bg-muted/50 cursor-pointer" onClick={() => { setSelectedPersonId(p.id); setProgressView('person-detail'); }}>
-                              <td className="px-4 py-3 font-semibold text-foreground">{p.name}</td>
-                              <td className="px-4 py-3 text-muted-foreground">{p.role}</td>
-                              <td className="px-4 py-3 text-xs text-muted-foreground">{p.loginTime || '-'}</td>
-                              <td className="px-4 py-3 text-xs text-muted-foreground">{p.startTime || '-'}</td>
-                              <td className="px-4 py-3">
-                                <div className="flex items-center gap-1">
-                                  {[0,1,2,3].map(i => (
-                                    <div key={i} className={`w-5 h-1.5 rounded-full ${p.stages[i]?.completed ? 'bg-success' : 'bg-muted'}`} />
-                                  ))}
-                                  <span className="text-xs text-muted-foreground ml-1">{p.totalCompleted}/4</span>
-                                </div>
-                              </td>
-                              <td className="px-4 py-3 text-xs text-muted-foreground">
-                                {p.stages.reduce((sum, s) => sum + (s.attempts || 0), 0)}次
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                );
-              })()}
+            <div className="rounded-xl border border-dashed border-border p-10 text-center">
+              <BarChart3 className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+              <div className="text-sm font-semibold text-foreground">游戏进度</div>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                {progressAvailable ? '暂无游戏进度数据。' : (accessError ?? '游戏进度数据接口尚未接入真实数据服务，暂不展示班次、学员或完成率。')}
+              </p>
             </div>
           )}
 
@@ -829,11 +568,11 @@ export default function EnterpriseAdminPage() {
                   <div className="text-xs text-muted-foreground mt-0.5">锁定后，所有玩家将使用统一的甲乙方场景，无法自行选择</div>
                 </div>
                 {lockConfig.scenario_locked ? (
-                  <button onClick={handleUnlock} className="px-3 py-1.5 rounded-lg bg-destructive/10 text-destructive text-xs font-semibold flex items-center gap-1 hover:bg-destructive/20">
+                  <button onClick={handleUnlock} disabled={!lockAvailable} title={lockAvailable ? '解锁场景' : (accessError ?? '场景锁定接口尚未接入')} className="px-3 py-1.5 rounded-lg bg-destructive/10 text-destructive text-xs font-semibold flex items-center gap-1 hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-50">
                     <Unlock className="w-3.5 h-3.5" /> 解锁
                   </button>
                 ) : (
-                  <button onClick={handleSaveLock} className="px-3 py-1.5 rounded-lg text-white text-xs font-semibold flex items-center gap-1" style={{ background: '#0EA5E9' }}>
+                  <button onClick={handleSaveLock} disabled={!lockAvailable} title={lockAvailable ? '锁定场景' : (accessError ?? '场景锁定接口尚未接入')} className="px-3 py-1.5 rounded-lg text-white text-xs font-semibold flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: '#0EA5E9' }}>
                     <Lock className="w-3.5 h-3.5" /> 锁定场景
                   </button>
                 )}
@@ -851,6 +590,7 @@ export default function EnterpriseAdminPage() {
                         type="text"
                         value={lockConfig.client_unit}
                         onChange={e => setLockConfig({ ...lockConfig, client_unit: e.target.value })}
+                        disabled={!lockAvailable}
                         className="w-full px-3 py-2 rounded-lg bg-surface-container border-none text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/30"
                         placeholder="如：某市公安局"
                       />
@@ -861,6 +601,7 @@ export default function EnterpriseAdminPage() {
                         type="text"
                         value={lockConfig.client_industry}
                         onChange={e => setLockConfig({ ...lockConfig, client_industry: e.target.value })}
+                        disabled={!lockAvailable}
                         className="w-full px-3 py-2 rounded-lg bg-surface-container border-none text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/30"
                         placeholder="如：政府/医疗/教育"
                       />
@@ -878,6 +619,7 @@ export default function EnterpriseAdminPage() {
                       type="text"
                       value={lockConfig.vendor_product}
                       onChange={e => setLockConfig({ ...lockConfig, vendor_product: e.target.value })}
+                      disabled={!lockAvailable}
                       className="w-full px-3 py-2 rounded-lg bg-surface-container border-none text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/30"
                       placeholder="如：智慧政务云平台 V3.0"
                     />
@@ -899,41 +641,17 @@ export default function EnterpriseAdminPage() {
 
               {/* 教练邀请码 */}
               <div className="mt-6 rounded-xl border border-border p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <div>
-                    <div className="text-sm font-semibold text-foreground flex items-center gap-2">
-                      <KeyRound className="w-4 h-4" style={{ color: '#EA580C' }} /> 培训教练邀请码
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-0.5">生成邀请码后，培训教练需输入邀请码才能进行操作</div>
-                  </div>
-                  <button
-                    onClick={handleGenerateInviteCode}
-                    className="px-3 py-1.5 rounded-lg text-white text-xs font-semibold flex items-center gap-1 hover:opacity-90"
-                    style={{ background: '#EA580C' }}
-                  >
-                    <Plus className="w-3.5 h-3.5" /> 生成邀请码
-                  </button>
+               <div className="flex items-center justify-between mb-4">
+                 <div>
+                   <div className="text-sm font-semibold text-foreground flex items-center gap-2">
+                     <KeyRound className="w-4 h-4" style={{ color: '#EA580C' }} /> 培训教练邀请码
+                   </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">邀请码数据模型尚未接入</div>
+                 </div>
+               </div>
+                <div className="text-center py-6 text-sm text-muted-foreground">
+                  邀请码服务尚未接入真实数据，当前无法生成或复制邀请码。
                 </div>
-                {inviteCode ? (
-                  <div className="rounded-lg p-4 flex items-center justify-between" style={{ background: 'rgba(234,88,12,0.05)', border: '1px solid rgba(234,88,12,0.2)' }}>
-                    <div>
-                      <div className="text-xs text-muted-foreground mb-1">当前邀请码</div>
-                      <div className="text-2xl font-bold font-mono tracking-widest" style={{ color: '#EA580C' }}>{inviteCode}</div>
-                      <div className="text-xs text-muted-foreground mt-1">将此邀请码提供给培训教练使用</div>
-                    </div>
-                    <button
-                      onClick={() => { navigator.clipboard.writeText(inviteCode); }}
-                      className="p-2 rounded-lg bg-surface-container hover:bg-surface-container/80"
-                      title="复制邀请码"
-                    >
-                      <Copy className="w-4 h-4 text-muted-foreground" />
-                    </button>
-                  </div>
-                ) : (
-                  <div className="text-center py-6 text-sm text-muted-foreground">
-                    尚未生成邀请码，培训教练当前无法操作
-                  </div>
-                )}
               </div>
             </div>
           )}
@@ -943,7 +661,7 @@ export default function EnterpriseAdminPage() {
             <div>
               <div className="flex items-center justify-between mb-4">
                 <div className="text-sm font-semibold text-foreground">发起对局记录</div>
-                <button onClick={() => setShowInitiateModal(true)} className="px-3 py-1.5 rounded-lg text-white text-xs font-semibold flex items-center gap-1" style={{ background: '#0EA5E9' }}>
+                <button onClick={() => setShowInitiateModal(true)} disabled={!initiateAvailable} title={initiateAvailable ? '发起新对局' : (accessError ?? '发起对局接口尚未接入')} className="px-3 py-1.5 rounded-lg text-white text-xs font-semibold flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: '#0EA5E9' }}>
                   <Play className="w-3.5 h-3.5" /> 发起新对局
                 </button>
               </div>
@@ -989,7 +707,9 @@ export default function EnterpriseAdminPage() {
                   </table>
                 </div>
               ) : (
-                <div className="text-center py-12 text-sm text-muted-foreground">暂无发起记录</div>
+                <div className="text-center py-12 text-sm text-muted-foreground">
+                  {initiateAvailable ? '暂无发起记录' : (accessError ?? '发起对局接口尚未接入真实数据，当前仅显示空状态。')}
+                </div>
               )}
             </div>
           )}
@@ -999,7 +719,7 @@ export default function EnterpriseAdminPage() {
             <div>
               <div className="flex items-center justify-between mb-4">
                 <div className="text-sm font-semibold text-foreground">定制内容管理</div>
-                <button onClick={() => { setCustomizeName(''); setCustomizeDesc(''); setShowCustomizeModal(true); }} className="px-3 py-1.5 rounded-lg text-white text-xs font-semibold flex items-center gap-1" style={{ background: '#0EA5E9' }}>
+                <button onClick={() => { setCustomizeName(''); setCustomizeDesc(''); setShowCustomizeModal(true); }} disabled={!customizeAvailable} title={customizeAvailable ? '新增定制内容' : (accessError ?? '定制内容接口尚未接入')} className="px-3 py-1.5 rounded-lg text-white text-xs font-semibold flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-50" style={{ background: '#0EA5E9' }}>
                   <Plus className="w-3.5 h-3.5" /> 新增内容
                 </button>
               </div>
@@ -1009,6 +729,7 @@ export default function EnterpriseAdminPage() {
                 {(['all', 'client', 'product', 'knowledge', 'history'] as const).map(type => (
                   <button
                     key={type}
+                    disabled={!customizeAvailable}
                     className="px-3 py-1 rounded-full text-xs font-medium border border-border text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
                   >
                     {type === 'all' ? '全部' : customizeTypeLabels[type]}
@@ -1040,7 +761,9 @@ export default function EnterpriseAdminPage() {
                   })}
                 </div>
               ) : (
-                <div className="text-center py-12 text-sm text-muted-foreground">暂无定制内容</div>
+                <div className="text-center py-12 text-sm text-muted-foreground">
+                  {customizeAvailable ? '暂无定制内容' : (accessError ?? '定制内容接口尚未接入真实数据，当前仅显示空状态。')}
+                </div>
               )}
             </div>
           )}
@@ -1082,7 +805,7 @@ export default function EnterpriseAdminPage() {
                           </td>
                           <td className="px-4 py-3 text-muted-foreground">{new Date(r.completed_at).toLocaleString('zh-CN')}</td>
                           <td className="px-4 py-3 text-right">
-                            <button className="text-primary hover:text-primary/80">
+                            <button disabled title={accessError ?? '报告详情接口尚未接入'} className="text-primary hover:text-primary/80 disabled:cursor-not-allowed disabled:opacity-50">
                               <Eye className="w-4 h-4" />
                             </button>
                           </td>
@@ -1092,7 +815,9 @@ export default function EnterpriseAdminPage() {
                   </table>
                 </div>
               ) : (
-                <div className="text-center py-12 text-sm text-muted-foreground">暂无学员报告</div>
+                <div className="text-center py-12 text-sm text-muted-foreground">
+                  {reportsAvailable ? '暂无学员报告' : (accessError ?? '学员报告接口尚未接入真实数据，当前仅显示空状态。')}
+                </div>
               )}
             </div>
           )}

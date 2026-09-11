@@ -7,8 +7,11 @@
     "dev": "tsx watch src/server.ts",
     "preinstall": "npx only-allow pnpm",
     "lint": "eslint",
+    "lint:cached": "eslint . --quiet --cache --cache-location node_modules/.cache/eslint/",
     "lint:build": "eslint . --quiet",
     "local:check": "tsx scripts/check-local-env.ts",
+    "local:check:prompt-test": "tsx scripts/check-local-env.ts prompt-test",
+    "test:local-env": "tsx scripts/test-local-env.ts",
     "start": "node dist/server.js",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",
@@ -19,6 +22,9 @@
     "test:email-attachments": "tsx scripts/test-email-attachments.ts",
     "test:project-one-preview-ai": "tsx scripts/test-project-one-preview-ai.ts",
     "test:prompt-test": "tsx scripts/test-prompt-test.ts",
+    "test:prompt-test-auth": "tsx scripts/test-prompt-test-auth.ts",
+    "test:prompt-test-ui": "tsx scripts/test-prompt-test-ui.ts",
+    "test:completion-timestamp-e2e": "tsx scripts/test-completion-timestamp-e2e.ts",
     "test:invitation-intent": "tsx scripts/test-invitation-intent.ts",
     "test:game-state:legacy": "tsx scripts/test-game-state.ts",
     "test:ai-provider": "tsx scripts/test-ai-provider.ts",
@@ -105,6 +111,7 @@
   },
   "packageManager": "pnpm@9.0.0",
   "engines": {
-    "pnpm": ">=9.0.0"
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0 <10.0.0"
   }
 }

@@ -113,7 +113,9 @@ async function requestCompletion(
     temperature: options?.temperature ?? 0.7,
     max_tokens: options?.maxTokens,
     ...(options?.jsonMode ? { response_format: { type: 'json_object' } } : {}),
-    ...(options?.thinking && /(^|\.)deepseek\.com$/i.test(new URL(config.baseUrl).hostname)
+    ...(options?.thinking && (
+      provider === 'doubao' || /(^|\.)deepseek\.com$/i.test(new URL(config.baseUrl).hostname)
+    )
       ? { thinking: { type: options.thinking } }
       : {}),
     stream,
@@ -125,9 +127,10 @@ async function requestCompletion(
     options: { provider, temperature: requestBody.temperature, maxTokens: options?.maxTokens, jsonMode: Boolean(options?.jsonMode), thinking: options?.thinking },
     stream,
   });
-  let response: Response;
-  try {
-    response = await fetch(chatCompletionsUrl(config.baseUrl), {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(chatCompletionsUrl(config.baseUrl), {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
@@ -135,17 +138,30 @@ async function requestCompletion(
       },
       body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(config.timeoutMs),
-    });
-  } catch (error) {
-    finishFastAiTrace(trace, { error });
-    throw error;
-  }
-  if (!response.ok) {
+      });
+    } catch (cause) {
+      const error = new Error(cause instanceof Error && ['TimeoutError', 'AbortError'].includes(cause.name)
+        ? 'AI_PROVIDER_TIMEOUT' : 'AI_PROVIDER_NETWORK_ERROR');
+      if (attempt === 0) {
+        console.warn('AI provider request retry', { provider, code: error.message, attempt: 1 });
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        continue;
+      }
+      finishFastAiTrace(trace, { error });
+      throw error;
+    }
+    if (response.ok) return { response, trace };
     const error = new Error(`AI_PROVIDER_HTTP_${response.status}`);
+    await response.body?.cancel().catch(() => undefined);
+    if (attempt === 0 && (response.status === 429 || response.status >= 500)) {
+      console.warn('AI provider request retry', { provider, code: error.message, attempt: 1 });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      continue;
+    }
     finishFastAiTrace(trace, { error });
     throw error;
   }
-  return { response, trace };
+  throw new Error('AI_PROVIDER_NETWORK_ERROR');
 }
 
 export async function invokeLLM(
@@ -185,10 +201,11 @@ export async function* streamLLM(
     const data = trimmed.slice(5).trim();
     if (!data || data === '[DONE]') return '';
     try {
-      const chunk = JSON.parse(data) as ChatCompletionChunk;
+      const chunk = JSON.parse(data) as ChatCompletionChunk & { error?: unknown };
+      if (!chunk || typeof chunk !== 'object' || chunk.error) throw new Error('AI_PROVIDER_STREAM_PROTOCOL');
       return extractText(chunk.choices?.[0]?.delta?.content);
     } catch {
-      return '';
+      throw new Error('AI_PROVIDER_STREAM_PROTOCOL');
     }
   };
   let rawResponse = '';
@@ -197,7 +214,7 @@ export async function* streamLLM(
       const { done, value } = await reader.read();
       if (done) break;
       const decoded = decoder.decode(value, { stream: true });
-      rawResponse += decoded;
+      rawResponse = truncateRawProviderText(rawResponse + decoded);
       buffer += decoded;
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || '';
@@ -215,5 +232,8 @@ export async function* streamLLM(
   } catch (error) {
     finishFastAiTrace(trace, { error });
     throw error;
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }

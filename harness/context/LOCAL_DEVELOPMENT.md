@@ -1,6 +1,6 @@
 # 本地开发环境
 
-项目不再依赖 Coze。应用运行需要 Node.js 20+、pnpm 9+；当前开发流程使用托管 Supabase，不要求 Docker Desktop；AI 使用任意兼容 OpenAI Chat Completions 的模型服务。
+项目不再依赖 Coze。应用运行需要 Node.js 20+、项目锁定的 pnpm 9.0.0（通过 Corepack 调用）；当前开发流程使用托管 Supabase，不要求 Docker Desktop；AI 使用兼容 OpenAI Chat Completions 的模型服务。不要使用 PATH 中可能存在的 pnpm 11 重建依赖。
 
 ## 日常一键启动
 
@@ -11,7 +11,7 @@
 在 `projects/` 执行：
 
 ```powershell
-pnpm install
+corepack pnpm install --frozen-lockfile
 ./scripts/setup-local.ps1
 ```
 
@@ -45,5 +45,24 @@ pnpm test:game-state
 pnpm test:metrics
 pnpm build
 ```
+
+### 2026-09-08 缺陷回归与离线验证
+
+日常命令建议使用 `corepack pnpm` 前缀，以读取 `package.json` 的精确版本。已有依赖时，启动/构建/验证脚本优先直接使用 `node_modules/.bin`，无需联网安装。首次安装或依赖变更仍需要相应缓存或网络；离线不等于数据库和模型服务可离线使用。
+
+```powershell
+corepack pnpm local:check:prompt-test
+corepack pnpm test:local-env
+corepack pnpm lint:cached
+corepack pnpm test:prompt-test
+corepack pnpm test:prompt-test-auth
+corepack pnpm test:prompt-test-ui
+corepack pnpm test:project-one-preview-ai
+corepack pnpm test:completion-timestamp-e2e
+```
+
+双模型测试另需 `DEEPSEEK_AI_BASE_URL`、`DEEPSEEK_AI_API_KEY`、`DEEPSEEK_AI_MODEL` 和对应 `DOUBAO_AI_*`，不回退到全局模型。预检只显示变量名，不显示值。提示词工作台 API 只允许平台设计师权限；普通玩家/教练/企业管理员调用返回 403。
+
+`test:completion-timestamp-e2e` 会连接已配置开发数据库，创建唯一临时对局验证完成时间、通知、重放与冲突，结束后只清理本次对局。其余上述专项使用本地确定性输入，不调用真实模型。两类 PDF、多尺寸和真实双模型完整发布验收仍见 TEST-003。
 
 `test:ai-provider` 使用本地 mock，不需要真实 API key；`test:e2e` 会访问已配置的托管数据库和真实模型服务。

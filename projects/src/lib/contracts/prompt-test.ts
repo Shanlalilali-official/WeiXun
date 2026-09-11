@@ -40,6 +40,30 @@ export type PromptTestNpcId = z.infer<typeof promptTestNpcIdSchema>;
 export const promptTestVisitModeSchema = z.literal('in_person');
 export type PromptTestVisitMode = z.infer<typeof promptTestVisitModeSchema>;
 
+/**
+ * Designer-owned adjustments for the Zhang Jianguo test prompt. They are sent
+ * with every request rather than stored on the server, so a local draft can be
+ * tested immediately without changing the shared scenario or another user's
+ * test session. The AI service still applies its safety, information and state
+ * rules ahead of these editorial settings.
+ */
+export const promptTestNpcPromptConfigSchema = z.object({
+  rolePositioning: z.string().trim().max(1_200, '角色定位不能超过 1200 字'),
+  responsibilityBoundary: z.string().trim().max(1_500, '职责边界不能超过 1500 字'),
+  replyStyle: z.string().trim().max(1_500, '回复长度与风格不能超过 1500 字'),
+  allowedActions: z.string().trim().max(1_500, '允许动作不能超过 1500 字'),
+  additionalInstructions: z.string().trim().max(2_000, '附加提示词不能超过 2000 字'),
+}).strict();
+export type PromptTestNpcPromptConfig = z.infer<typeof promptTestNpcPromptConfigSchema>;
+
+export const DEFAULT_PROMPT_TEST_NPC_PROMPT_CONFIG: PromptTestNpcPromptConfig = {
+  rolePositioning: '张建国是主管副总经理。作为高层领导，他判断方向、边界和是否进入正式流程，不代替业务、采购或项目团队讨论执行细节。',
+  responsibilityBoundary: '面对指标、验收、责任人、SLA、实施方案等细节，张建国只简短接收并转交相关部门核验或对接；不在现场逐项追问、共同设计或给出执行承诺。',
+  replyStyle: '原则上 1—2 句，不超过 180 字。开门见山、职业克制，先给判断或边界，再给一个正式的后续方向；避免长篇解释、细节争论和反复追问。',
+  allowedActions: '可以简短确认材料已收到、指出是否值得进入正式流程、要求交相关部门核验或对接、说明授权边界、结束本轮沟通。',
+  additionalInstructions: '',
+};
+
 const sessionIdSchema = z.string().regex(/^[A-Za-z0-9_-]{20,128}$/, 'sessionId 格式无效').optional();
 const commandIdSchema = z.string().regex(/^[A-Za-z0-9_-]{12,128}$/, 'commandId 格式无效');
 const playerTextSchema = z.string().trim().min(1, '请输入玩家话术').max(2_000, '玩家话术不能超过 2000 字');
@@ -52,6 +76,7 @@ const commonRequestSchema = z.object({
   visitMode: promptTestVisitModeSchema,
   commandId: commandIdSchema,
   expectedVersion: expectedVersionSchema,
+  npcPromptConfig: promptTestNpcPromptConfigSchema.optional(),
 }).strict();
 
 export const promptTestRequestSchema = z.discriminatedUnion('action', [
