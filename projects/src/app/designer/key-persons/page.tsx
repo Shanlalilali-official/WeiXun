@@ -1,24 +1,23 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Edit2, Save, X, Users, GitBranch } from 'lucide-react';
-import { useState } from 'react';
+import { ArrowLeft, Edit2, FileSpreadsheet, Save, X, Users, GitBranch } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import {
   PROJECT_ONE_FIVE_PERSON_NPCS,
   PROJECT_ONE_FIVE_PERSON_IDS,
   type ProjectOneCategory,
-  type ProjectOneFivePersonId,
   type ProjectOneHierarchy,
   type ProjectOneVisitTask,
 } from '@/lib/designer/project-one-five-person';
 
 type EditablePerson = {
-  id: ProjectOneFivePersonId;
+  id: string;
   name: string;
   title: string;
   category: ProjectOneCategory;
   level: ProjectOneHierarchy;
-  parentId: ProjectOneFivePersonId | null;
+  parentId: string | null;
   displayLevel: number;
   displayOrder: number;
   organization: string;
@@ -88,10 +87,34 @@ function roleTone(level: ProjectOneHierarchy): string {
 export default function KeyPersonsPage() {
   const router = useRouter();
   const [persons, setPersons] = useState<EditablePerson[]>(initialPersons);
-  const [editingId, setEditingId] = useState<ProjectOneFivePersonId | null>(null);
+  const [importNotice, setImportNotice] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<PersonDraft | null>(null);
 
-  const parentName = (parentId: ProjectOneFivePersonId | null): string => {
+  useEffect(() => {
+    const raw = window.localStorage.getItem('weixun_designer_excel_import:key-persons');
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as { importedAt?: string; rows?: EditablePerson[] };
+      if (!Array.isArray(parsed.rows) || parsed.rows.length === 0) return;
+      setPersons(parsed.rows.map((person) => ({
+        ...person,
+        parentId: person.parentId || null,
+        coreNeeds: [...(person.coreNeeds || [])],
+        facts: [...(person.facts || [])],
+        clues: [...(person.clues || [])],
+        informationBoundary: [...(person.informationBoundary || [])],
+        memoryFocus: [...(person.memoryFocus || [])],
+        taboos: [...(person.taboos || [])],
+        allowedTasks: [...(person.allowedTasks || [])],
+      })));
+      setImportNotice(`已载入 Excel 草稿，共 ${parsed.rows.length} 位人物。`);
+    } catch {
+      setImportNotice('Excel 草稿读取失败，请重新上传。');
+    }
+  }, []);
+
+  const parentName = (parentId: string | null): string => {
     if (!parentId) return '顶层节点';
     return persons.find((person) => person.id === parentId)?.name ?? parentId;
   };
@@ -158,11 +181,13 @@ export default function KeyPersonsPage() {
         </button>
         <div>
           <h1 className="text-lg font-semibold text-foreground">项目一·五人关键人主档</h1>
-          <p className="text-xs text-muted-foreground">当前版本固定五人结构；字段编辑仅保留在本地页面，不写入生产数据。</p>
+          <p className="text-xs text-muted-foreground">支持 Excel 模板导出和校验导入；当前编辑与导入结果保存为浏览器草稿。</p>
         </div>
+        <button onClick={() => router.push('/designer/data-import-export')} className="ml-auto flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10"><FileSpreadsheet className="h-4 w-4" />Excel 导入导出</button>
       </header>
 
       <main className="space-y-5 p-6">
+        {importNotice && <div role="status" className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">{importNotice}</div>}
         <section className="rounded-xl border border-primary/15 bg-primary/5 p-4">
           <div className="flex items-start gap-3">
             <div className="rounded-lg bg-primary/10 p-2 text-primary"><Users className="h-5 w-5" /></div>
@@ -232,7 +257,7 @@ export default function KeyPersonsPage() {
               <Field label="职务"><input value={draft.title} onChange={(event) => updateDraft('title', event.target.value)} className="field-input" /></Field>
               <Field label="层级"><select value={draft.level} onChange={(event) => updateDraft('level', event.target.value as ProjectOneHierarchy)} className="field-input"><option value="高层">高层</option><option value="中层">中层</option><option value="一线">一线</option></select></Field>
               <Field label="角色类别"><select value={draft.category} onChange={(event) => updateDraft('category', event.target.value as ProjectOneCategory)} className="field-input"><option value="高层">高层</option><option value="中层">中层</option><option value="采购">采购</option><option value="一线使用者">一线使用者</option><option value="办公室">办公室</option></select></Field>
-              <Field label="上级人物"><select value={draft.parentId ?? ''} onChange={(event) => updateDraft('parentId', event.target.value ? event.target.value as ProjectOneFivePersonId : null)} className="field-input"><option value="">无（顶层节点）</option>{persons.filter((person) => person.id !== draft.id).map((person) => <option key={person.id} value={person.id}>{person.name} · {person.id}</option>)}</select></Field>
+              <Field label="上级人物"><select value={draft.parentId ?? ''} onChange={(event) => updateDraft('parentId', event.target.value || null)} className="field-input"><option value="">无（顶层节点）</option>{persons.filter((person) => person.id !== draft.id).map((person) => <option key={person.id} value={person.id}>{person.name} · {person.id}</option>)}</select></Field>
               <Field label="性格类型"><select value={draft.personalityType} onChange={(event) => updateDraft('personalityType', event.target.value)} className="field-input"><option value="老虎型">老虎型</option><option value="猫头鹰型">猫头鹰型</option><option value="孔雀型">孔雀型</option><option value="考拉型">考拉型</option></select></Field>
               <Field label="组织关系" wide><textarea value={draft.organization} onChange={(event) => updateDraft('organization', event.target.value)} rows={2} className="field-input resize-none" /></Field>
               <Field label="性格与对话表现" wide><textarea value={draft.personality} onChange={(event) => updateDraft('personality', event.target.value)} rows={3} className="field-input resize-y" /></Field>

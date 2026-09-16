@@ -9,6 +9,7 @@
 # Local harness scratch data
 harness/local/
 harness/tmp/
+/tmp/
 
 # Editors and operating system files
 .vscode/
@@ -22,4 +23,3 @@ Desktop.ini
 *.tmp
 *.temp
 .cache/
-

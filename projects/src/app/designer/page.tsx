@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Wand2, Building2, Users, FileText, Save, ArrowLeft, Megaphone, UserCog, BarChart3, Copy, Plus, Trash2, Pencil, X, LogOut, ShieldCheck, FlaskConical, Library, Database, ImageIcon, FileBarChart, TestTube2, PlayCircle, ClipboardList, Upload, Sparkles, FolderOpen } from 'lucide-react';
+import { Wand2, Building2, Users, FileText, Save, ArrowLeft, UserCog, BarChart3, Copy, Plus, Trash2, Pencil, X, LogOut, ShieldCheck, FlaskConical, Library, Database, ImageIcon, FileBarChart, TestTube2, PlayCircle, ClipboardList, Upload, Sparkles, FolderOpen } from 'lucide-react';
 import { aMetrics, bMetrics, cMetrics } from '@/lib/metrics-data';
 import {
   PROJECT_ONE_CHANNEL_MODIFIERS,
@@ -225,6 +225,23 @@ export default function DesignerPage() {
   const [promptView, setPromptView] = useState<'edit' | 'preview'>('edit');
 
   useEffect(() => {
+    const importedMetrics = window.localStorage.getItem('weixun_designer_excel_import:metrics');
+    if (importedMetrics) {
+      try {
+        const parsed = JSON.parse(importedMetrics) as { rows?: Array<Record<string, unknown>> };
+        const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
+        if (rows.length > 0) {
+          setA(rows.filter((row) => row.kind === 'A').map((row) => ({ tag: String(row.tag), name: String(row.name), desc: String(row.desc || ''), init: String(row.value ?? '0'), ...(row.category ? { category: String(row.category) } : {}) })));
+          setB(rows.filter((row) => row.kind === 'B').map((row) => ({ tag: String(row.tag), name: String(row.name), desc: String(row.desc || ''), formula: String(row.value ?? '0'), ...(row.category ? { category: String(row.category) } : {}) })));
+          setC(rows.filter((row) => row.kind === 'C').map((row) => ({ tag: String(row.tag), name: String(row.name), desc: String(row.desc || ''), formula: String(row.value ?? '0'), ...(row.category ? { category: String(row.category) } : {}) })));
+          setSelectedModule('data');
+          setSelectedDataTab('metrics');
+        }
+      } catch {
+        // 无效草稿保持默认指标，不阻断设计师工作台。
+      }
+    }
+
     // 加载项目数据
     fetch('/api/game-data/projects')
       .then(r => r.json())
@@ -532,6 +549,12 @@ export default function DesignerPage() {
                 </button>
               );
             })}
+            <button
+              onClick={() => router.push('/designer/data-import-export')}
+              className="ml-auto flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary transition-colors hover:bg-primary/10"
+            >
+              <Upload className="h-3.5 w-3.5" /> Excel 导入导出
+            </button>
           </div>
         )}
 
@@ -550,7 +573,7 @@ export default function DesignerPage() {
               <span className="rounded-full bg-success/10 px-2.5 py-1 text-[10px] font-medium text-success">当前项目 · {currentProject?.name || '项目一'}</span>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               <button
                 onClick={() => router.push('/designer/key-persons')}
                 className="group rounded-xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md"
@@ -566,28 +589,15 @@ export default function DesignerPage() {
 
               <button
                 onClick={() => router.push('/designer/prompt-library')}
-                className="group rounded-xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-md"
-              >
-                <div className="mb-4 flex items-center justify-between">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600"><Megaphone className="h-5 w-5" /></span>
-                  <span className="rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">提示词</span>
-                </div>
-                <div className="text-sm font-semibold text-foreground">人物评估提示词</div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">配置玩家表现评估和人物反馈所使用的提示词。</p>
-                <div className="mt-4 text-xs font-medium text-primary">打开提示词配置 →</div>
-              </button>
-
-              <button
-                onClick={() => router.push('/designer/prompt-library')}
                 className="group rounded-xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-violet-400/60 hover:shadow-md"
               >
                 <div className="mb-4 flex items-center justify-between">
                   <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-500/10 text-violet-600"><FlaskConical className="h-5 w-5" /></span>
                   <span className="rounded-full bg-violet-500/10 px-2 py-1 text-[10px] text-violet-600">提示词</span>
                 </div>
-                <div className="text-sm font-semibold text-foreground">人物对话提示词</div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">集中管理人物角色、对话分层、渠道规则和评估补充提示。</p>
-                <div className="mt-4 text-xs font-medium text-violet-600">打开提示词管理 →</div>
+                <div className="text-sm font-semibold text-foreground">人物提示词设计</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">按人物和交流渠道维护角色表达；系统规则由代码统一保护。</p>
+                <div className="mt-4 text-xs font-medium text-violet-600">打开人物提示词 →</div>
               </button>
 
               <div className="rounded-xl border border-dashed border-border bg-muted/40 p-5">
@@ -610,7 +620,7 @@ export default function DesignerPage() {
               </div>
               <div className="grid gap-3 text-xs leading-5 text-muted-foreground md:grid-cols-3">
                 <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">人物资料</span><br />用于维护人物主档和游戏中的可披露信息。</div>
-                <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">人物提示词</span><br />分为评估提示词与对话提示词，按用途独立维护。</div>
+                <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">人物提示词</span><br />按人物和交流渠道维护角色表达，规则性约束不开放编辑。</div>
                 <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">图片素材</span><br />当前保留空状态，不影响文字和模型测试流程。</div>
               </div>
             </div>
@@ -824,7 +834,7 @@ export default function DesignerPage() {
                       <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-medium text-primary">共享配置源</span>
                     </div>
                     <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
-                      提示词按硬约束、人物规则、状态节点、运行时状态、记忆、历史和渠道组合生成；页面编辑只影响当前设计会话的草稿。
+                      硬约束、状态节点、运行时状态、记忆和渠道通用规则由系统统一管理；设计师只维护人物及人物渠道提示词。
                     </p>
                   </div>
                 </div>
@@ -1071,10 +1081,10 @@ export default function DesignerPage() {
 
                 <section className="rounded-xl border border-border bg-card">
                   <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><Pencil className="h-4 w-4 text-primary" /> 分层提示词结构预览</div>
+                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><Pencil className="h-4 w-4 text-primary" /> 系统提示词结构预览</div>
                     <span className="text-[10px] text-muted-foreground">{selectedPromptNpc?.name || '未选择'} · {configText(selectedPromptNode, 'label', 'name') || selectedPromptNode?.id || '未选择节点'}</span>
                     <div className="ml-auto flex items-center gap-1 rounded-lg bg-muted p-1">
-                      <button onClick={() => setPromptView('edit')} className={`rounded-md px-3 py-1.5 text-xs font-medium ${promptView === 'edit' ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>编辑</button>
+                      <button onClick={() => setPromptView('edit')} className={`rounded-md px-3 py-1.5 text-xs font-medium ${promptView === 'edit' ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>单层查看</button>
                       <button onClick={() => setPromptView('preview')} className={`rounded-md px-3 py-1.5 text-xs font-medium ${promptView === 'preview' ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>预览</button>
                     </div>
                   </div>
@@ -1113,7 +1123,7 @@ export default function DesignerPage() {
                                 onClick={() => router.push('/designer/prompt-library')}
                                 className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90"
                               >
-                                <Library className="h-3.5 w-3.5" /> 进入提示词库编辑并保存
+                                <Library className="h-3.5 w-3.5" /> 编辑人物提示词
                               </button>
                               <button
                                 onClick={() => { if (selectedPromptLayerText) void navigator.clipboard.writeText(selectedPromptLayerText); }}

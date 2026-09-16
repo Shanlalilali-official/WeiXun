@@ -1,8 +1,8 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, FileText, Plus, Save, Trash2, Edit3, Check, X, ChevronUp, ChevronDown } from 'lucide-react';
-import { useState } from 'react';
+import { ArrowLeft, FileSpreadsheet, FileText, Plus, Save, Trash2, Edit3, Check, X, ChevronUp, ChevronDown } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 interface ProjectInfo {
   id: string;
@@ -39,6 +39,20 @@ export default function ClientInfoPage() {
   const [editValue, setEditValue] = useState('');
   const [newKey, setNewKey] = useState('');
   const [newValue, setNewValue] = useState('');
+  const [importNotice, setImportNotice] = useState('');
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem('weixun_designer_excel_import:client-info');
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as { rows?: ProjectInfo[] };
+      if (!Array.isArray(parsed.rows) || parsed.rows.length === 0) return;
+      setProjectInfo(parsed.rows);
+      setImportNotice(`已载入 Excel 草稿，共 ${parsed.rows.length} 条项目信息。`);
+    } catch {
+      setImportNotice('Excel 草稿读取失败，请重新上传。');
+    }
+  }, []);
 
   const handleEdit = (item: ProjectInfo) => {
     setEditingId(item.id);
@@ -106,9 +120,11 @@ export default function ClientInfoPage() {
           <ArrowLeft className="w-4 h-4" />
         </button>
         <h1 className="text-lg font-semibold text-foreground">甲方基本信息</h1>
+        <button onClick={() => router.push('/designer/data-import-export')} className="ml-auto flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10"><FileSpreadsheet className="h-4 w-4" />Excel 导入导出</button>
       </header>
 
       <main className="p-6 max-w-4xl mx-auto">
+        {importNotice && <div role="status" className="mb-4 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary">{importNotice}</div>}
         {/* 项目介绍词 */}
         <div className="bg-card rounded-xl p-6 mb-4">
           <div className="flex items-center gap-2 mb-4">
