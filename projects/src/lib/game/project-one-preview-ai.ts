@@ -4,7 +4,7 @@ import { invokeLLM, type ChatMessage } from '@/lib/ai/client';
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import {
-  attachmentDecisionAiOutputSchema, briefVisitAiOutputSchema, messageAiOutputSchema, planAiOutputSchema, previewAiResponseSchema,
+  attachmentDecisionAiOutputSchema, briefVisitAiOutputSchema, messageAiOutputSchema, phoneMessageAiOutputSchema, planAiOutputSchema, previewAiResponseSchema,
   previewEndReasonSchema, previewVisitTaskSchema, type PreviewAiRequest, type PreviewAiResponse,
   previewNpcEvaluationAiOutputSchema, previewWorkingMemoryStatusSchema, previewWorkingMemoryTypeSchema,
   type PreviewBlockerId, type PreviewNpcId, visitPreparationAiOutputSchema, visitTurnAiOutputSchema, wechatAiOutputSchema,
@@ -49,7 +49,19 @@ const MEMORY_CONTEXT_LIMIT = 8;
 
 
 type SavedAttachment = { title: string; content?: string; viewed: boolean; impact: string };
-type ConversationMessage = { messageId: string; role: 'player' | 'npc'; channel: string; text: string; attachment?: SavedAttachment; at: number };
+type MessageDelivery = {
+  responseAction: 'reply' | 'read_no_reply';
+  readStatus?: 'read';
+  /** Server diagnostic fields. They are not included in PreviewAiResponse. */
+  reasonCode?: z.infer<typeof messageAiOutputSchema> extends infer Output
+    ? Output extends { responseAction: 'read_no_reply'; reasonCode: infer Code } ? Code : never
+    : never;
+  reasonEvidence?: string;
+};
+type ConversationMessage = {
+  messageId: string; role: 'player' | 'npc'; channel: string; text: string; attachment?: SavedAttachment; at: number;
+  delivery?: MessageDelivery;
+};
 type ActiveMeeting = { npcId: PreviewNpcId; turn: number; completedTasks: VisitTask[]; ended: boolean; endReason?: z.infer<typeof previewEndReasonSchema> };
 type WorkingMemoryType = z.infer<typeof previewWorkingMemoryTypeSchema>;
 type WorkingMemoryStatus = z.infer<typeof previewWorkingMemoryStatusSchema>;
@@ -86,9 +98,12 @@ export function createPreviewServerState(userId: string, previewSessionId: strin
 /** Process-local preview state; this is intentionally not persistent game state. */
 export class PreviewSessionStore {
   private sessions = new Map<string, PreviewServerState>();
+  /** Retries of a first command have no session id yet, so bind them by user+command. */
+  private initialCommandSessions = new Map<string, string>();
   constructor(private readonly config: { ttlMs?: number; capacity?: number; perUserCapacity?: number; now?: () => number } = {}) {}
   private now(): number { return this.config.now?.() ?? Date.now(); }
   private key(userId: string, id: string): string { return userId + '\u0000' + id; }
+  private initialCommandKey(userId: string, commandId: string): string { return userId + '\u0000' + commandId; }
   private cleanup(now = this.now()): void {
     const ttl = this.config.ttlMs ?? 7_200_000;
     for (const [key, state] of this.sessions) if (now - state.lastActiveAt > ttl) this.sessions.delete(key);
@@ -96,6 +111,11 @@ export class PreviewSessionStore {
     if (this.sessions.size > capacity) {
       const oldest = [...this.sessions.entries()].sort((a, b) => a[1].lastActiveAt - b[1].lastActiveAt);
       for (const [key] of oldest.slice(0, this.sessions.size - capacity)) this.sessions.delete(key);
+    }
+    for (const [key, sessionId] of this.initialCommandSessions) {
+      const separator = key.indexOf('\u0000');
+      const userId = separator < 0 ? '' : key.slice(0, separator);
+      if (!this.sessions.has(this.key(userId, sessionId))) this.initialCommandSessions.delete(key);
     }
   }
   create(userId: string): PreviewServerState {
@@ -108,6 +128,19 @@ export class PreviewSessionStore {
     const created = createPreviewServerState(userId, id, now);
     this.sessions.set(key, created);
     this.cleanup(now);
+    return created;
+  }
+  getOrCreateForInitialCommand(userId: string, commandId: string): PreviewServerState {
+    this.cleanup();
+    const key = this.initialCommandKey(userId, commandId);
+    const existingId = this.initialCommandSessions.get(key);
+    if (existingId) {
+      const existing = this.get(userId, existingId);
+      if (existing) return existing;
+      this.initialCommandSessions.delete(key);
+    }
+    const created = this.create(userId);
+    this.initialCommandSessions.set(key, created.previewSessionId);
     return created;
   }
   get(userId: string, id: string): PreviewServerState | undefined {
@@ -139,6 +172,7 @@ export class PreviewSessionStore {
           text: message.text.slice(0, 2_000),
           at: message.at,
           attachment: message.attachment ? { title: message.attachment.title, viewed: message.attachment.viewed, impact: message.attachment.impact } : undefined,
+          delivery: message.delivery ? { ...message.delivery } : undefined,
         }))])),
         npcStates: Object.fromEntries(PREVIEW_NPC_IDS.map((npcId) => {
           const npcState = state.npcStates[npcId];
@@ -184,7 +218,7 @@ function addMessage(state: PreviewServerState, npcId: PreviewNpcId, item: Conver
 function newMessage(role: ConversationMessage['role'], channel: string, text: string, attachment?: SavedAttachment): ConversationMessage {
   return { messageId: randomUUID(), role, channel, text, attachment, at: Date.now() };
 }
-type PreviewNode = 'N1' | 'N2' | 'N3' | 'N4' | 'BLOCKED';
+export type PreviewNode = 'N1' | 'N2' | 'N3' | 'N4' | 'BLOCKED';
 const NODE_REQUIREMENTS: Record<Exclude<PreviewNode, 'BLOCKED'>, { support: number; contacts: number; tag?: string; goal: string; disclosure: string }> = Object.fromEntries(
   (['N1', 'N2', 'N3', 'N4'] as const).map((nodeId) => {
     const node = PROJECT_ONE_PROMPT_NODES[nodeId];
@@ -370,30 +404,59 @@ function applyEvaluation(
     updateBlockerMemory(npcState, blockerId, 'resolved', '玩家已撤回不合规提议，并明确回到正式、可留痕流程。', sourceMessageIds);
   }
 }
+function sanitizeReadNoReplyEvaluation(
+  npcState: PreviewNpcRuntimeState,
+  evaluation: z.infer<typeof previewNpcEvaluationAiOutputSchema>,
+) {
+  const progressionTags = new Set(
+    Object.values(NODE_REQUIREMENTS)
+      .map((requirement) => requirement.tag)
+      .filter((tag): tag is string => Boolean(tag)),
+  );
+  return {
+    ...evaluation,
+    // A silent NPC cannot create or revise a commitment, nor can a model use a
+    // player-only assertion to inject the evidence tag that unlocks a node.
+    // Other factual/evidence notes remain eligible and retain only the actual
+    // player message as their source below.
+    memoryUpdates: evaluation.memoryUpdates
+      .filter((update) => update.type !== 'commitment')
+      .map((update) => ({ ...update, tags: update.tags.filter((tag) => !progressionTags.has(tag)) }))
+      // A silent turn may add a new player-sourced note, but never rewrites an
+      // existing note. This prevents a player claim from changing an older NPC
+      // evidence record even when a model reuses its type/tag.
+      .filter((update) => {
+        const primaryTag = update.tags[0];
+        return !npcState.workingMemory.some((entry) => entry.type === update.type
+          && (primaryTag ? entry.tags[0] === primaryTag : entry.summary === update.summary));
+      }),
+  };
+}
 async function evaluateNpcTurn(
   invoker: LlmInvoker, state: PreviewServerState, npcId: PreviewNpcId, channel: string,
-  playerMessage: ConversationMessage, npcMessage: ConversationMessage, promptConfig: ProjectOnePromptConfig,
+  playerMessage: ConversationMessage, npcMessage: ConversationMessage | null, responseAction: 'reply' | 'read_no_reply', promptConfig: ProjectOnePromptConfig,
 ): Promise<z.infer<typeof previewNpcEvaluationAiOutputSchema>> {
   const hardBlocker = isHardBlockerText(playerMessage.text);
   const evaluation = await callStructuredAi(invoker,
     layeredNpcPrompt(state, npcId, channel, [
-      '独立评估刚刚完成的 NPC 正文。只输出评分对象，不续写 NPC 正文。严格按 playerMessage 与 npcMessage 判断。',
+      '独立评估刚刚完成的 NPC 正文或一次 NPC 沟通处理。只输出评分对象，不续写 NPC 正文。严格按 playerMessage、responseAction 和可空 npcMessage 判断。已读不回不代表同意、拒绝、承诺或负面反馈；评分只评估玩家本轮内容及其历史语境。',
       '固定 JSON 契约：{"pleasureDelta":0,"supportDelta":0,"dimensionDeltas":{"decisionAnalysis":0,"relationshipBuilding":0,"valuePresentation":0,"objectionHandling":0,"informationDiscovery":0},"effectiveContact":false,"memoryUpdates":[],"blockerUpdates":[]}。',
-      '评分锚点：只有礼貌问候、宣传口号或宽泛询问时，supportDelta 通常为 0，effectiveContact 可为 false。玩家提出与该人物核心诉求直接相关的具体里程碑、可量化验收口径、书面风险闭环或可复核证据，并且为合规、本轮新增且能推进下一步时，supportDelta 应在 1..4，effectiveContact 应为 true，对应的分析决策或价值呈现维度应为 1..3。不得因 NPC 仍然追问细节就把玩家已经提供的具体价值证据评为 0。',
+      '评分锚点：只有礼貌问候、感谢、自然收尾、宣传口号或宽泛询问时，supportDelta 通常为 0，effectiveContact 可为 false；已读不回本身不能令这些内容扣分。玩家提出与该人物核心诉求直接相关的具体里程碑、可量化验收口径、书面风险闭环或可复核证据，并且为合规、本轮新增且能推进下一步时，supportDelta 应在 1..4，effectiveContact 应为 true，对应的分析决策或价值呈现维度应为 1..3。即使 responseAction 为 read_no_reply，也要按内容独立评估有效性；不得因 NPC 未回复或仍然追问细节就把玩家已经提供的具体价值证据评为 0。',
       '合规锚点：现金、回扣、利益交换、规避采购或保证中标时，pleasureDelta 和 supportDelta 必须为负，effectiveContact 必须为 false，并建议添加 compliance_redline。解除只可建议 remove compliance_redline；服务端会独立核验玩家是否明确撤回不合规提议并回到正式、可留痕流程。',
-      'memoryUpdates 每项必须是 {"type":"fact|commitment|evidence|blocker|preference|relationship_event|other","summary":"摘要","status":"active|fulfilled|superseded|resolved","tags":["标签"],"mustMention":false}。',
+      'memoryUpdates 每项必须是 {"type":"fact|commitment|evidence|blocker|preference|relationship_event|other","summary":"摘要","status":"active|fulfilled|superseded|resolved","tags":["标签"],"mustMention":false}。玩家的自述只能记录为其报告或待核验证据，不得写成 NPC 已确认事实。',
       'blockerUpdates 每项必须是 {"action":"add|remove","value":"compliance_redline"}。没有更新时必须输出空数组，不得省略字段。',
       '设计师评估补充提示：' + promptConfig.previewEvaluatorPrompt,
     ].join('\n'), promptConfig),
-    { npcContext: layeredNpcContext(state, npcId, channel, promptConfig), playerMessage, npcMessage, hardBlocker, instruction: '输出 pleasureDelta(-8..6)、supportDelta(-5..4)、五维 dimensionDeltas(-3..3 整数)、effectiveContact、memoryUpdates、blockerUpdates。blockerUpdates 仅能使用 compliance_redline；红线状态由服务端确定性规则处理。' },
+    { npcContext: layeredNpcContext(state, npcId, channel, promptConfig), playerMessage, responseAction, npcMessage, hardBlocker, instruction: '输出 pleasureDelta(-8..6)、supportDelta(-5..4)、五维 dimensionDeltas(-3..3 整数)、effectiveContact、memoryUpdates、blockerUpdates。blockerUpdates 仅能使用 compliance_redline；红线状态由服务端确定性规则处理。' },
     previewNpcEvaluationAiOutputSchema);
   const normalizedText = playerMessage.text.trim().replace(/\s+/g, ' ');
   const repeated = state.conversations[npcId].some((message) => message.role === 'player' && message.text.trim().replace(/\s+/g, ' ') === normalizedText);
   const eligibleEffectiveContact = normalizedText.length >= 8 && !repeated && !FAREWELL_PATTERN.test(normalizedText) && !hardBlocker;
+  const evaluatedForOutcome = responseAction === 'read_no_reply' ? sanitizeReadNoReplyEvaluation(state.npcStates[npcId], evaluation) : evaluation;
   const enforcedEvaluation = hardBlocker
-    ? { ...evaluation, pleasureDelta: Math.min(-8, evaluation.pleasureDelta), supportDelta: Math.min(-5, evaluation.supportDelta), effectiveContact: false }
-    : { ...evaluation, effectiveContact: evaluation.effectiveContact && eligibleEffectiveContact };
-  applyEvaluation(state.npcStates[npcId], enforcedEvaluation, [playerMessage.messageId, npcMessage.messageId], hardBlocker, playerMessage.text);
+    ? { ...evaluatedForOutcome, pleasureDelta: Math.min(-8, evaluatedForOutcome.pleasureDelta), supportDelta: Math.min(-5, evaluatedForOutcome.supportDelta), effectiveContact: false }
+    : { ...evaluatedForOutcome, effectiveContact: evaluatedForOutcome.effectiveContact && eligibleEffectiveContact };
+  applyEvaluation(state.npcStates[npcId], enforcedEvaluation, [playerMessage.messageId, ...(npcMessage ? [npcMessage.messageId] : [])], hardBlocker, playerMessage.text);
   return enforcedEvaluation;
 }
 function disclosedFor(ids: PreviewNpcId[], plan: string) {
@@ -409,10 +472,15 @@ function meetingResponse(state: PreviewServerState) {
   if (!meeting) return undefined;
   return { meetingEnded: meeting.ended, ...(meeting.endReason ? { endReason: meeting.endReason } : {}), turn: meeting.turn, completedTasks: meeting.completedTasks };
 }
-function messagePurpose(channel: string, hasAttachment: boolean): string {
+function messagePurpose(channel: string, hasAttachment: boolean, allowReadNoReply: boolean): string {
   const channelName = channel === 'email' ? '邮件' : channel === 'wechat' ? '工作微信' : '电话';
-  return '请通过' + channelName + '回复。输出 {content,invitationStatus,appointment?}。invitationStatus 只能是 none、accepted、rejected、later。'
-    + '仅当玩家明确邀约且你接受时使用 accepted，并必须填写 appointment={timeWindow,location,agenda}；其他状态必须省略 appointment。'
+  const replyRule = '请通过' + channelName + '回复。输出 {content,invitationStatus,appointment?}。invitationStatus 只能是 none、accepted、rejected、later。'
+    + '仅当玩家明确邀约且你接受时使用 accepted，并必须填写 appointment={timeWindow,location,agenda}；其他状态必须省略 appointment。';
+  return (allowReadNoReply
+    ? replyRule
+      + '邮件和工作微信可选择已读不回。必须输出严格二选一 JSON：回复时 {"responseAction":"reply","content":"非空正文","invitationStatus":"none|accepted|rejected|later","appointment?":{...}}；已读不回时 {"responseAction":"read_no_reply","content":null,"invitationStatus":"none","reasonCode":"natural_closure|no_new_value|repeated_follow_up|not_responsible|current_priority_low|unwilling_to_advance","reasonEvidence":"基于已给上下文的简短证据"}。'
+      + '只在自然收尾、无新增价值、重复追问、已明确非本人职责、当前优先级低或当前不愿推进时选择已读不回。职位、低支持度或消息短本身不足以沉默；具体有效新信息必须重新考虑。不得编造忙、开会、出差等事实。已读不回不得确认邀约、承诺、拒绝或披露新线索。涉及合规红线时必须回复明确拒绝，不能已读不回。'
+    : replyRule)
     + (hasAttachment ? '玩家附带了材料。若上下文说明未查看，只能知道已收到，不能假设或引用材料正文。' : '没有附件。');
 }
 
@@ -440,6 +508,27 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
       const disclosed = output.needsDetail ? [] : disclosedFor([...new Set(output.matchedNpcIds)], request.text);
       return previewAiResponseSchema.parse({ ...base, ...output, disclosureKeys: disclosed.map((item) => item.npcId), disclosed });
     }
+    if (request.action === 'test_adjust_npcs') {
+      for (const adjustment of request.adjustments) {
+        const npcState = state.npcStates[adjustment.npcId];
+        npcState.support = adjustment.support;
+        npcState.pleasantness = adjustment.pleasantness;
+        npcState.effectiveContactCount = adjustment.effectiveContactCount;
+      }
+      return previewAiResponseSchema.parse({
+        ...base,
+        npcTestStates: request.adjustments.map(({ npcId }) => {
+          const npcState = state.npcStates[npcId];
+          return {
+            npcId,
+            support: npcState.support,
+            pleasantness: npcState.pleasantness,
+            effectiveContactCount: npcState.effectiveContactCount,
+            node: resolvePreviewNode(npcState),
+          };
+        }),
+      });
+    }
     if (request.action === 'start_visit') {
       if (state.activeMeeting && !state.activeMeeting.ended) throw new PreviewAiError('conflict', 'VISIT_ALREADY_ACTIVE');
       if (!state.approvedVisitPreparations[request.npcId]) throw new PreviewAiError('protocol', 'VISIT_PREPARATION_REQUIRED');
@@ -457,6 +546,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
     const npc = PREVIEW_NPCS[npcId];
     if (request.action === 'message' || request.action === 'phone_connect') {
       const channel = request.action === 'phone_connect' ? 'work_phone' : request.channel;
+      const allowReadNoReply = request.action === 'message' && (channel === 'email' || channel === 'wechat');
       const attachment = request.action === 'message' ? request.attachment : undefined;
       let attachmentResult: SavedAttachment | undefined;
       if (attachment) {
@@ -466,18 +556,41 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
         attachmentResult = { title: attachment.title, viewed: decision.viewed, impact: decision.impact, ...(decision.viewed ? { content: attachment.content } : {}) };
       }
       const playerMessage = newMessage('player', channel, request.text, attachmentResult);
-      const output = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, channel, messagePurpose(channel, Boolean(attachment)), promptConfig),
-        { npcContext: { ...layeredNpcContext(state, npcId, channel, promptConfig), recentHistory: [...historyFor(state, npcId), { ...playerMessage, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : undefined }] }, npc: { id: npc.id, name: npc.name, title: npc.title }, channel, playerText: request.text, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : null, phase: request.phase ?? 1 },
-        messageAiOutputSchema,
-        (value) => value.invitationStatus !== 'accepted' || Boolean(value.appointment));
-      const safeOutput: z.infer<typeof messageAiOutputSchema> = isHardBlockerText(request.text)
-        ? { content: COMPLIANCE_REFUSAL, invitationStatus: 'rejected' as const }
+      const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, channel, promptConfig), recentHistory: [...historyFor(state, npcId), { ...playerMessage, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : undefined }] }, npc: { id: npc.id, name: npc.name, title: npc.title }, channel, playerText: request.text, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : null, phase: request.phase ?? 1 };
+      type MessageOutput = z.infer<typeof messageAiOutputSchema>;
+      let output: MessageOutput;
+      if (allowReadNoReply) {
+        output = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, channel, messagePurpose(channel, Boolean(attachment), true), promptConfig),
+          promptPayload, messageAiOutputSchema,
+          (value) => value.responseAction !== 'reply' || (value.invitationStatus !== 'accepted' || Boolean(value.appointment)));
+      } else {
+        const phoneOutput = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, channel, messagePurpose(channel, Boolean(attachment), false), promptConfig),
+          promptPayload, phoneMessageAiOutputSchema,
+          (value) => value.invitationStatus !== 'accepted' || Boolean(value.appointment));
+        output = { responseAction: 'reply', ...phoneOutput };
+      }
+      const safeOutput: MessageOutput = isHardBlockerText(request.text)
+        ? { responseAction: 'reply', content: COMPLIANCE_REFUSAL, invitationStatus: 'rejected' }
         : output;
-      const npcMessage = newMessage('npc', channel, safeOutput.content);
-      await evaluateNpcTurn(invoker, state, npcId, channel, playerMessage, npcMessage, promptConfig);
+      const npcMessage = safeOutput.responseAction === 'reply' ? newMessage('npc', channel, safeOutput.content) : null;
+      playerMessage.delivery = safeOutput.responseAction === 'read_no_reply'
+        ? { responseAction: 'read_no_reply', readStatus: 'read', reasonCode: safeOutput.reasonCode, reasonEvidence: safeOutput.reasonEvidence }
+        : { responseAction: 'reply', ...(allowReadNoReply ? { readStatus: 'read' as const } : {}) };
+      await evaluateNpcTurn(invoker, state, npcId, channel, playerMessage, npcMessage, safeOutput.responseAction, promptConfig);
       addMessage(state, npcId, playerMessage);
-      addMessage(state, npcId, npcMessage);
-      return previewAiResponseSchema.parse({ ...base, ...safeOutput, attachment: attachmentResult ? { viewed: attachmentResult.viewed, impact: attachmentResult.impact } : undefined, appointment: safeOutput.invitationStatus === 'accepted' ? safeOutput.appointment : undefined });
+      if (npcMessage) addMessage(state, npcId, npcMessage);
+      return previewAiResponseSchema.parse({
+        ...base,
+        content: safeOutput.content,
+        ...(allowReadNoReply ? {
+          responseAction: safeOutput.responseAction,
+          readStatus: 'read' as const,
+          playerMessageId: playerMessage.messageId,
+        } : {}),
+        invitationStatus: safeOutput.invitationStatus,
+        attachment: attachmentResult ? { viewed: attachmentResult.viewed, impact: attachmentResult.impact } : undefined,
+        ...(safeOutput.responseAction === 'reply' && safeOutput.invitationStatus === 'accepted' ? { appointment: safeOutput.appointment } : {}),
+      });
     }
     if (request.action === 'wechat_request') {
       const playerMessage = newMessage('player', 'wechat_request', request.text);
@@ -485,7 +598,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
         { npcContext: { ...layeredNpcContext(state, npcId, 'wechat_request', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npc.id, name: npc.name, title: npc.title }, playerText: request.text, phase: request.phase ?? 1 }, wechatAiOutputSchema);
       const safeOutput = isHardBlockerText(request.text) ? { content: COMPLIANCE_REFUSAL, accepted: false } : output;
       const npcMessage = newMessage('npc', 'wechat_request', safeOutput.content);
-      await evaluateNpcTurn(invoker, state, npcId, 'wechat_request', playerMessage, npcMessage, promptConfig);
+      await evaluateNpcTurn(invoker, state, npcId, 'wechat_request', playerMessage, npcMessage, 'reply', promptConfig);
       state.wechat[npcId] = safeOutput.accepted ? 'accepted' : 'rejected';
       addMessage(state, npcId, playerMessage);
       addMessage(state, npcId, npcMessage);
@@ -528,7 +641,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
         output = { content: COMPLIANCE_REFUSAL, completedTask: null };
       }
       const npcMessage = newMessage('npc', 'visit', output.content);
-      await evaluateNpcTurn(invoker, state, npcId, 'visit', playerMessage, npcMessage, promptConfig);
+      await evaluateNpcTurn(invoker, state, npcId, 'visit', playerMessage, npcMessage, 'reply', promptConfig);
       meeting.turn = nextTurn;
       addMessage(state, npcId, playerMessage);
       addMessage(state, npcId, npcMessage);
@@ -540,7 +653,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
   }
 
   async function execute(userId: string, request: PreviewAiRequest, promptConfig: ProjectOnePromptConfig = DEFAULT_PROJECT_ONE_PROMPT_CONFIG): Promise<PreviewAiResponse> {
-    const state = request.previewSessionId ? store.get(userId, request.previewSessionId) : store.create(userId);
+    const state = request.previewSessionId ? store.get(userId, request.previewSessionId) : store.getOrCreateForInitialCommand(userId, request.commandId);
     if (!state) throw new PreviewAiError('not_found', 'PREVIEW_SESSION_NOT_FOUND');
     const replay = state.completedCommands.get(request.commandId);
     if (replay) return replay;
@@ -549,14 +662,19 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
     if (inFlightSessions.has(lockKey)) throw new PreviewAiError('conflict', 'PREVIEW_SESSION_BUSY');
     inFlightSessions.add(lockKey);
     try {
-      const raw = await executeUnsafe(state, request, promptConfig);
-      state.version += 1;
-      const response = previewAiResponseSchema.parse({ ...raw, version: state.version });
-      state.completedCommands.set(request.commandId, response);
-      if (state.completedCommands.size > COMPLETED_COMMAND_LIMIT) {
-        const first = state.completedCommands.keys().next().value as string | undefined;
-        if (first) state.completedCommands.delete(first);
+      // Model calls and all response validation operate on an isolated state.
+      // Do not expose a player message, score delta, or version increment until
+      // the whole command has produced a valid public response.
+      const pending = structuredClone(state) as PreviewServerState;
+      const raw = await executeUnsafe(pending, request, promptConfig);
+      pending.version += 1;
+      const response = previewAiResponseSchema.parse({ ...raw, version: pending.version });
+      pending.completedCommands.set(request.commandId, response);
+      if (pending.completedCommands.size > COMPLETED_COMMAND_LIMIT) {
+        const first = pending.completedCommands.keys().next().value as string | undefined;
+        if (first) pending.completedCommands.delete(first);
       }
+      Object.assign(state, pending);
       return response;
     } finally {
       inFlightSessions.delete(lockKey);

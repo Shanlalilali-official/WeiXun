@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
 import { previewAiRequestSchema } from '@/lib/contracts/project-one-preview-ai';
 import { PreviewAiError, previewAiService } from '@/lib/game/project-one-preview-ai';
-import { runWithFastTestObservability } from '@/lib/testing/fast-test-observability';
+import { isFastDebugEnabled, runWithFastTestObservability } from '@/lib/testing/fast-test-observability';
 import { DEFAULT_PROJECT_ONE_PROMPT_CONFIG } from '@/lib/designer/prompt-config';
 import { loadProjectOnePromptConfig } from '@/lib/designer/prompt-config-repository';
 
@@ -45,6 +45,9 @@ export async function POST(request: NextRequest) {
     const parsed = previewAiRequestSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json({ error: '五人预览 AI 请求字段无效', details: parsed.error.flatten() }, { status: 400 });
+    }
+    if (parsed.data.action === 'test_adjust_npcs' && !isFastDebugEnabled()) {
+      return NextResponse.json({ error: 'NPC 测试调节仅在测试环境开放' }, { status: 403 });
     }
     const promptConfig = await loadProjectOnePromptConfig()
       .then((stored) => stored.config)

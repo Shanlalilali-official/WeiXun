@@ -198,7 +198,27 @@ linear-gradient(180deg,#f6f9fd,#f2f6fa);padding:14px}.workspace-body>*{animation
 .message.player{margin-left:auto;background:linear-gradient(180deg,#3d76f0,#2757cd);color:#eef4ff;border-bottom-right-radius:4px;box-shadow:0 5px 14px rgba(39,87,205,.3),inset 0 1px 0 rgba(255,255,255,.25)}
 .message.npc{background:linear-gradient(180deg,#f6f8fb,#eff3f8);color:#3d4c64;border:1px solid #e4eaf3;border-bottom-left-radius:4px;box-shadow:0 3px 8px rgba(24,44,84,.06)}
 .message .meta{font-size:7px;color:#8c99ad;margin-bottom:3px}
+.message .read-status{display:inline-flex;align-items:center;margin-left:6px;color:#d9e6ff;font-weight:800;letter-spacing:.02em}
+.message.npc .read-status{color:#6c7d96}
 .message-attachment{margin-top:6px;padding:5px 7px;border-radius:6px;background:rgba(255,255,255,.75);border:1px solid rgba(47,107,255,.18);font-size:8px;color:#33589c}
+.expression-tools{display:flex;gap:7px;align-items:center;margin-top:8px}
+.expression-tool{border:1px solid #d7e1ee;background:#fff;color:#536580;border-radius:8px;padding:6px 9px;font-size:9px;font-weight:800;transition:.2s var(--ease)}
+.expression-tool:hover,.expression-tool[aria-expanded="true"]{border-color:#9eb9ee;background:#f1f6ff;color:#2c5cd0;box-shadow:0 4px 10px rgba(47,107,255,.11)}
+.expression-panels{margin-top:8px}
+.expression-panel{border:1px solid #dbe5f2;border-radius:11px;background:linear-gradient(180deg,#fff,#f8fbff);padding:10px;box-shadow:0 8px 18px rgba(24,43,77,.08);animation:panelIn .2s var(--ease) both}
+.expression-panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;color:#465a78;font-size:9px;font-weight:900}
+.expression-panel-head span{font-size:8px;color:#8795aa;font-weight:600}
+.emoji-grid{display:grid;grid-template-columns:repeat(8,minmax(28px,1fr));gap:5px}
+.emoji-btn{border:1px solid #e0e8f2;border-radius:8px;background:#fff;min-height:34px;font-size:20px;line-height:1;transition:.18s var(--spring)}
+.emoji-btn:hover{border-color:#9eb9ee;background:#f1f6ff;transform:translateY(-2px);box-shadow:0 5px 10px rgba(47,107,255,.12)}
+.sticker-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+.sticker-option{border:1px solid #dbe5f2;border-radius:10px;background:linear-gradient(180deg,#fff,#f6f9fe);padding:8px 5px;min-height:84px;text-align:center;color:#33445f;transition:.2s var(--spring)}
+.sticker-option:hover:not([disabled]){border-color:#8eace5;background:#f0f5ff;transform:translateY(-2px);box-shadow:0 7px 14px rgba(47,107,255,.13)}
+.sticker-option[disabled]{opacity:.5;cursor:not-allowed}
+.sticker-option .sticker-symbol{display:block;font-size:30px;line-height:1.1;margin-bottom:4px}
+.sticker-option strong{display:block;font-size:9px}.sticker-option small{display:block;color:#7b8aa0;font-size:7px;line-height:1.35;margin-top:3px}
+.sticker-message{padding:7px 8px!important}.sticker-bubble{display:flex;align-items:center;gap:8px;min-width:122px}.sticker-bubble .sticker-bubble-symbol{font-size:32px;line-height:1}.sticker-bubble strong{font-size:10px;color:#fff;white-space:nowrap}
+.message.npc .sticker-bubble strong{color:#33445f}
 .composer{border-top:1px solid #e7edf6;padding:12px 14px;background:#fcfdff}
 .composer textarea,.form-area{width:100%;resize:vertical;border:1px solid #dbe4f0;border-radius:10px;padding:10px 11px;font-size:10px;line-height:1.55;outline:none;background:#fbfcfe;color:var(--text);transition:.22s var(--ease)}
 .composer textarea:hover,.form-area:hover{background:#fff;border-color:#c2d3ec}
@@ -288,6 +308,19 @@ linear-gradient(135deg,#33465c,#1b2836 55%,#0d141d);color:#fff;padding:17px;disp
 .check-list{display:flex;flex-direction:column;gap:7px;margin:10px 0}
 .check-item{display:flex;justify-content:space-between;align-items:center;border:1px solid #e2eaf4;border-radius:9px;padding:9px 10px;font-size:9px;background:#fafcfe;animation:panelIn .35s var(--ease) both}
 .check-item:nth-child(2){animation-delay:.05s}.check-item:nth-child(3){animation-delay:.1s}.check-item:nth-child(4){animation-delay:.15s}.check-item:nth-child(5){animation-delay:.2s}
+.test-controls-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+.test-control{border:1px solid #e2eaf4;border-radius:10px;background:#f8fbfd;padding:9px}
+.test-control label{display:block;font-size:8px;font-weight:900;color:#536580;margin-bottom:5px}
+.test-control input,.test-wechat-row select,.test-npc-metric input{width:100%;border:1px solid #d5e0ee;border-radius:8px;background:#fff;color:var(--text);padding:7px 8px;font-size:10px;outline:none}
+.test-control input:focus,.test-wechat-row select:focus,.test-npc-metric input:focus{border-color:#7fa4f5;box-shadow:0 0 0 3px rgba(47,107,255,.1)}
+.test-wechat-list{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:10px}
+.test-wechat-row{display:flex;align-items:center;gap:8px;border:1px solid #e2eaf4;border-radius:9px;background:#fff;padding:8px 9px}
+.test-wechat-row label{min-width:72px;font-size:9px;font-weight:800;color:#40516b}.test-wechat-row select{flex:1}
+.test-npc-state-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.test-npc-state-row{border:1px solid #e2eaf4;border-radius:10px;background:#fff;padding:9px}
+.test-npc-state-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:9px}.test-npc-state-head strong{color:#40516b}.test-npc-state-actions{display:flex;align-items:center;gap:8px}.test-npc-enable{display:flex;align-items:center;gap:4px;color:#60718b;font-weight:800;cursor:pointer}.test-npc-enable input{accent-color:#2f6bff}.test-node{border-radius:999px;background:#eef4ff;color:#315fb7;padding:3px 7px;font-weight:900}
+.test-npc-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.test-npc-metric label{display:block;font-size:8px;font-weight:800;color:#6b7a91;margin-bottom:4px}
+.test-npc-metric input:disabled{background:#f1f4f8;color:#8b98aa;cursor:not-allowed}
 .ok{color:#12996b;font-weight:800;text-shadow:0 0 10px rgba(18,153,107,.3)}.warn{color:#b97a10;font-weight:800;text-shadow:0 0 10px rgba(223,148,22,.28)}
 .toast-root{position:fixed;right:20px;bottom:20px;z-index:200;display:flex;flex-direction:column;gap:7px}
 .toast{position:relative;background:rgba(20,31,54,.94);backdrop-filter:blur(12px);border:1px solid rgba(110,146,208,.32);color:#e5edfa;padding:11px 13px 11px 17px;border-radius:10px;box-shadow:0 16px 38px rgba(1,4,12,.55);font-size:9px;max-width:340px;animation:toastIn .3s var(--spring) both;overflow:hidden}
@@ -356,12 +389,35 @@ const DemoOnlyApi = {
 };
 
 (() => {
-const STORAGE_KEY='project1_interactive_prototype_v10';
-const LEGACY_STORAGE_KEY='project1_interactive_prototype_v9';
-const app=document.getElementById('app'),modalRoot=document.getElementById('modal-root'),toastRoot=document.getElementById('toast-root');
-const npcIds=new Set(MockData.npcs.map(n=>n.id));
-const blankConversations=()=>Object.fromEntries(MockData.npcs.map(n=>[n.id,{email:[],work_phone:[],wechat:[],meeting:[],postal:[]}]))
+ const STORAGE_KEY='project1_interactive_prototype_v10';
+ const LEGACY_STORAGE_KEY='project1_interactive_prototype_v9';
+ const app=document.getElementById('app'),modalRoot=document.getElementById('modal-root'),toastRoot=document.getElementById('toast-root');
+ const npcIds=new Set(MockData.npcs.map(n=>n.id));
+ const COMMON_WECHAT_EMOJIS=Object.freeze(['😀','🙂','😊','👍','👏','🙏','🎉','💡','✅','🙌','🤝','⏳','✨','💪','😄','📌']);
+ const WECHAT_STICKERS=Object.freeze([
+  {id:'received',name:'收到',symbol:'📩',hint:'已收到，马上跟进'},
+  {id:'okay',name:'好的',symbol:'👌',hint:'好的，按这个推进'},
+  {id:'thanks',name:'感谢',symbol:'🙏',hint:'感谢你的配合'},
+  {id:'cheer',name:'加油',symbol:'💪',hint:'一起加油推进'},
+  {id:'like',name:'赞',symbol:'👍',hint:'这个建议很好'},
+  {id:'wait',name:'稍等',symbol:'⏳',hint:'我确认后回复'},
+  {id:'hard-work',name:'辛苦了',symbol:'☕',hint:'辛苦你跟进了'},
+  {id:'handshake',name:'握手',symbol:'🤝',hint:'合作愉快'}
+ ]);
+ let expressionCaret={start:0,end:0};
+ const blankConversations=()=>Object.fromEntries(MockData.npcs.map(n=>[n.id,{email:[],work_phone:[],wechat:[],meeting:[],postal:[]}]))
 const normalizeNpcMap=(value,fallback={})=>Object.fromEntries(MockData.npcs.map(n=>[n.id,value&&Object.prototype.hasOwnProperty.call(value,n.id)?value[n.id]:fallback[n.id]]));
+const blankNpcTestStates=()=>Object.fromEntries(MockData.npcs.map(n=>[n.id,{support:0,pleasantness:50,effectiveContactCount:0,node:''}]));
+const normalizeNpcTestStates=value=>Object.fromEntries(MockData.npcs.map(n=>{const item=value?.[n.id]||{},node=['N1','N2','N3','N4','BLOCKED'].includes(item.node)?item.node:'';return [n.id,{support:clampTestInteger(item.support,0,100,0),pleasantness:clampTestInteger(item.pleasantness,0,100,50),effectiveContactCount:clampTestInteger(item.effectiveContactCount,0,100,0),node}]}));
+ const PREVIEW_RETRY_ACTIONS=new Set(['plan','message','wechat_request','phone_connect','visit_preparation','brief_visit','start_visit','visit_turn','end_visit','test_adjust_npcs','reset']);
+ function normalizeRetryRequest(value){
+  if(!value||typeof value!=='object'||!PREVIEW_RETRY_ACTIONS.has(value.action)||typeof value.commandId!=='string'||!value.payload||typeof value.payload!=='object')return null;
+  return {action:value.action,commandId:value.commandId,payload:value.payload,kind:typeof value.kind==='string'?value.kind:value.action,meta:value.meta&&typeof value.meta==='object'?value.meta:null};
+ }
+ function retryHasCommittedMessage(retry,conversations){
+  if(!retry?.commandId||!conversations||typeof conversations!=='object')return false;
+  return Object.values(conversations).some(channels=>channels&&typeof channels==='object'&&Object.values(channels).some(messages=>Array.isArray(messages)&&messages.some(message=>message?.commandId===retry.commandId)));
+ }
 const initialState=()=>({
   screen:'projects',playMode:'solo',phase:1,actionPoints:28,totalSpent:0,
   selectedNpcId:null,workspaceMode:'overview',channel:null,phoneActive:false,phoneAttempts:{},
@@ -370,7 +426,7 @@ const initialState=()=>({
   workPlans:{global:'',byNpc:{}},planAnalysis:{global:null,byNpc:{}},submittedPlans:{global:null,byNpc:{}},publicIntel:{},
   infoUpdates:[{created:'项目开始',body:'项目已进入第 1 阶段。你可以先描述整体工作计划，也可以从人物结构图选择对象。'}],
   notifications:[],competitorEventsSeen:[],result:null,
-  coachForceSimulation:false,lastBriefResult:null,previewSessionId:null,previewVersion:0,aiStatus:'',aiError:'',aiErrorCanRefresh:false
+  coachForceSimulation:false,lastBriefResult:null,npcTestStates:blankNpcTestStates(),previewSessionId:null,previewVersion:0,aiStatus:'',aiError:'',aiErrorCanRefresh:false,aiRetry:null
 });
 let state=loadState();
 function normalizeConversations(value){
@@ -378,7 +434,7 @@ function normalizeConversations(value){
  const result=blankConversations();
  MockData.npcs.forEach(n=>{
   const saved=raw[n.id]&&typeof raw[n.id]==='object'?raw[n.id]:{};
-  Object.keys(result[n.id]).forEach(channel=>{result[n.id][channel]=Array.isArray(saved[channel])?saved[channel]:[]});
+  Object.keys(result[n.id]).forEach(channel=>{result[n.id][channel]=Array.isArray(saved[channel])?saved[channel].filter(message=>message&&typeof message==='object').map(message=>{const next={...message};if(next.readStatus!=='read')delete next.readStatus;if(!['reply','read_no_reply'].includes(next.responseAction))delete next.responseAction;return next}):[]});
  });
  return result;
 }
@@ -392,7 +448,14 @@ function normalizeState(saved){
  const next={...base,...raw};
  next.selectedNpcId=npcIds.has(raw.selectedNpcId)?raw.selectedNpcId:null;
  next.conversations=normalizeConversations(raw.conversations);
+ next.aiRetry=normalizeRetryRequest(raw.aiRetry);
+ next.aiStatus='';
+ if(next.aiRetry&&['message','sticker'].includes(next.aiRetry.kind)){
+  if(retryHasCommittedMessage(next.aiRetry,next.conversations))next.aiRetry=null;
+  else {next.aiError='上次发送尚未确认，请重试。';next.aiErrorCanRefresh=false}
+ }
  next.wechat=normalizeNpcMap(raw.wechat,base.wechat);
+ next.npcTestStates=normalizeNpcTestStates(raw.npcTestStates);
  next.phoneAttempts=normalizeNpcMap(raw.phoneAttempts,base.phoneAttempts);
  next.visitPreparations=normalizeNpcMap(raw.visitPreparations,base.visitPreparations);
  next.visitPreparationFeedback=normalizeNpcMap(raw.visitPreparationFeedback,base.visitPreparationFeedback);
@@ -432,7 +495,8 @@ function clearAiRuntimeState(){
  state.conversations=clean.conversations;state.wechat=clean.wechat;state.phoneAttempts=clean.phoneAttempts;
  state.appointments=[];state.meeting=null;state.completedVisits=[];
  state.visitPreparations=clean.visitPreparations;state.visitPreparationFeedback=clean.visitPreparationFeedback;
- state.aiError='';state.aiErrorCanRefresh=false;clearPreviewSession();save();
+ state.npcTestStates=clean.npcTestStates;
+ state.aiError='';state.aiErrorCanRefresh=false;state.aiRetry=null;clearPreviewSession();save();
 }
 restorePreviewSession();
 function save(){sessionStorage.setItem(STORAGE_KEY,JSON.stringify(state));savePreviewSession()}
@@ -454,14 +518,36 @@ function apiErrorMessage(status,message){
  if(status===502||status===503)return 'AI 服务暂时不可用，请稍后重试。';
  return message||'网络请求失败，请检查网络后重试。';
 }
-async function apiCall(action,payload={}){
+function newPreviewCommandId(){return globalThis.crypto?.randomUUID?.()||`preview-${Date.now()}-${Math.random().toString(36).slice(2)}`}
+function normalizeMessageResponse(data,channel){
+ if(!data||typeof data!=='object')return null;
+ const explicit=data.responseAction;
+ const requiresOutcome=['email','wechat'].includes(channel);
+ if(explicit==='read_no_reply'){
+  if(!['email','wechat'].includes(channel)||data.content!==null||data.readStatus!=='read'||data.invitationStatus!=='none'||data.appointment!==undefined||typeof data.playerMessageId!=='string'||!data.playerMessageId.trim())return null;
+  return {...data,responseAction:'read_no_reply',content:null,readStatus:'read',invitationStatus:'none'};
+ }
+ const isLegacyReply=!explicit&&typeof data.content==='string'&&data.content.trim().length>0;
+ if((requiresOutcome&&!explicit)||(!requiresOutcome&&explicit==='read_no_reply')||(explicit!=='reply'&&!isLegacyReply))return null;
+ if(typeof data.content!=='string'||!data.content.trim())return null;
+ if(requiresOutcome&&(explicit!=='reply'||data.readStatus!=='read'||typeof data.playerMessageId!=='string'||!data.playerMessageId.trim()))return null;
+ if(explicit==='reply'&&data.readStatus!==undefined&&data.readStatus!=='read')return null;
+ if(channel==='work_phone'&&explicit==='reply'&&data.readStatus!==undefined)return null;
+ const invitationStatus=data.invitationStatus===undefined?'none':data.invitationStatus;
+ if(!['none','accepted','rejected','later'].includes(invitationStatus))return null;
+ if(invitationStatus==='accepted'&&!data.appointment)return null;
+ if(invitationStatus!=='accepted'&&data.appointment!==undefined)return null;
+ return {...data,responseAction:'reply',invitationStatus,readStatus:data.readStatus==='read'?'read':undefined};
+}
+async function apiCall(action,payload={},options={}){
  if(requestBusy){toast('AI 正在处理中，请稍候。','warn');return null}
+ const commandId=options.commandId||newPreviewCommandId();
+ state.aiRetry={action,commandId,payload,kind:options.retryKind||action,meta:options.retryMeta||null};
  requestBusy=true;
  state.aiStatus='AI 思考中…';state.aiError='';state.aiErrorCanRefresh=false;save();render();
  try{
   const token=getSessionToken();
   if(!token)throw {status:401};
-  const commandId=globalThis.crypto?.randomUUID?.()||`preview-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const request={action,commandId,...payload};
   if(state.previewSessionId)request.previewSessionId=state.previewSessionId;
   if(Number.isFinite(state.previewVersion))request.expectedVersion=state.previewVersion;
@@ -476,7 +562,15 @@ async function apiCall(action,payload={}){
   if(Number.isFinite(body?.data?.version))state.previewVersion=body.data.version;
   if(!response.ok||body?.success===false)throw {status:response.status,message:body?.error||body?.message};
   if(body?.previewSessionId)state.previewSessionId=body.previewSessionId;
-  return body?.data||{};
+  const data=body?.data||{};
+  if(action==='message'){
+   const normalized=normalizeMessageResponse(data,payload.channel);
+   if(!normalized)throw {status:502,message:'服务端返回的消息结果不符合预览协议，请重试。'};
+   if(options.retainRetryUntilCommit!==true)state.aiRetry=null;
+   return normalized;
+  }
+  if(options.retainRetryUntilCommit!==true)state.aiRetry=null;
+  return data;
  }catch(error){
   const message=apiErrorMessage(error?.status,error?.message);
   if([401,404,410].includes(error?.status))clearAiRuntimeState();
@@ -485,13 +579,63 @@ async function apiCall(action,payload={}){
   requestBusy=false;state.aiStatus='';save();
  }
 }
-function npc(id=state.selectedNpcId){return MockData.npcs.find(n=>n.id===id)}
-function phaseMeta(){return MockData.phases[state.phase-1]}
-function esc(v=''){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
-function toast(t,tone='default'){const e=document.createElement('div');e.className=`toast ${tone}`;e.textContent=t;toastRoot.appendChild(e);setTimeout(()=>e.remove(),2600)}
-function spend(p,reason){
- if(state.actionPoints<p){toast(`行动点不足：${reason}`,'error');return false}
- state.actionPoints-=p;state.totalSpent+=p;save();
+ function npc(id=state.selectedNpcId){return MockData.npcs.find(n=>n.id===id)}
+ function phaseMeta(){return MockData.phases[state.phase-1]}
+ function esc(v=''){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+ function stickerById(id){return WECHAT_STICKERS.find(sticker=>sticker.id===id)||null}
+ function renderStickerBubble(message){
+  const sticker=stickerById(message?.stickerId);
+  if(!sticker)return esc(message?.text||'');
+  return `<div class="sticker-bubble" role="img" aria-label="表情包：${esc(sticker.name)}"><span class="sticker-bubble-symbol" aria-hidden="true">${esc(sticker.symbol)}</span><strong>${esc(sticker.name)}</strong></div>`;
+ }
+ function renderConversationMessage(message,channel,n){
+  const role=message?.role==='player'?'player':'npc',sticker=message?.messageType==='sticker'&&stickerById(message?.stickerId);
+  const content=sticker?renderStickerBubble(message):esc(message?.text||'');
+  const attachment=message?.attachment?`<div class="message-attachment">附件：${esc(message.attachment)}</div>`:'';
+  const readLabel=message?.readStatus==='read'?(channel==='email'?'已阅读':'已读'):'';
+  const readStatus=readLabel?`<span class="read-status" aria-label="${readLabel}">${readLabel}</span>`:'';
+  return `<div class="message ${role}${sticker?' sticker-message':''}"><div class="meta">${role==='player'?'你':esc(n.name)} · ${esc(message?.channel||channelLabel(channel))}${readStatus}</div>${content}${attachment}</div>`;
+ }
+ function renderExpressionTools(){
+  return `<div class="expression-tools" aria-label="微信表情工具"><button type="button" class="expression-tool" data-expression-toggle="emoji" aria-expanded="false">😊 Emoji</button><button type="button" class="expression-tool" data-expression-toggle="sticker" aria-expanded="false">🎴 表情包</button></div><div class="expression-panels"><div class="expression-panel hidden" data-expression-panel="emoji" role="region" aria-label="Emoji 面板"><div class="expression-panel-head"><span>常用 Emoji</span><span>点击插入当前光标位置</span></div><div class="emoji-grid">${COMMON_WECHAT_EMOJIS.map(emoji=>`<button type="button" class="emoji-btn" data-expression-emoji="${esc(emoji)}" aria-label="插入 ${esc(emoji)}">${esc(emoji)}</button>`).join('')}</div></div><div class="expression-panel hidden" data-expression-panel="sticker" role="region" aria-label="表情包面板"><div class="expression-panel-head"><span>工作表情包</span><span>点击即可发送 · 1 行动点</span></div><div class="sticker-grid">${WECHAT_STICKERS.map(sticker=>`<button type="button" class="sticker-option" data-sticker-id="${esc(sticker.id)}" ${requestBusy?'disabled':''} aria-label="发送表情包：${esc(sticker.name)}"><span class="sticker-symbol" aria-hidden="true">${esc(sticker.symbol)}</span><strong>${esc(sticker.name)}</strong><small>${esc(sticker.hint)}</small></button>`).join('')}</div></div></div>`;
+ }
+ function rememberMessageCaret(textarea=document.getElementById('message-text')){
+  if(!textarea)return;
+  const valueLength=textarea.value.length,start=Number.isInteger(textarea.selectionStart)?textarea.selectionStart:valueLength,end=Number.isInteger(textarea.selectionEnd)?textarea.selectionEnd:start;
+  expressionCaret={start:Math.max(0,Math.min(start,valueLength)),end:Math.max(0,Math.min(end,valueLength))};
+ }
+ function closeExpressionPanels(){
+  const panels=[...document.querySelectorAll('[data-expression-panel]:not(.hidden)')];
+  if(!panels.length)return false;
+  panels.forEach(panel=>panel.classList.add('hidden'));
+  document.querySelectorAll('[data-expression-toggle]').forEach(button=>button.setAttribute('aria-expanded','false'));
+  return true;
+ }
+ function toggleExpressionPanel(name){
+  const target=document.querySelector(`[data-expression-panel="${name}"]`);
+  if(!target)return;
+  const shouldOpen=target.classList.contains('hidden');
+  closeExpressionPanels();
+  if(shouldOpen){
+   target.classList.remove('hidden');
+   document.querySelector(`[data-expression-toggle="${name}"]`)?.setAttribute('aria-expanded','true');
+  }
+ }
+ function insertEmoji(emoji){
+  if(!COMMON_WECHAT_EMOJIS.includes(emoji))return;
+  const textarea=document.getElementById('message-text');
+  if(!textarea)return;
+  const active=document.activeElement===textarea,value=textarea.value,start=active?textarea.selectionStart:expressionCaret.start,end=active?textarea.selectionEnd:expressionCaret.end;
+  const safeStart=Math.max(0,Math.min(Number.isInteger(start)?start:value.length,value.length)),safeEnd=Math.max(safeStart,Math.min(Number.isInteger(end)?end:safeStart,value.length));
+  textarea.value=`${value.slice(0,safeStart)}${emoji}${value.slice(safeEnd)}`;
+  const cursor=safeStart+emoji.length;
+  textarea.focus();textarea.setSelectionRange(cursor,cursor);rememberMessageCaret(textarea);
+  textarea.dispatchEvent(new Event('input',{bubbles:true}));
+ }
+ function toast(t,tone='default'){const e=document.createElement('div');e.className=`toast ${tone}`;e.textContent=t;toastRoot.appendChild(e);setTimeout(()=>e.remove(),2600)}
+ function spend(p,reason,persist=true){
+  if(state.actionPoints<p){toast(`行动点不足：${reason}`,'error');return false}
+  state.actionPoints-=p;state.totalSpent+=p;if(persist)save();
  const badge=document.getElementById('ap-badge');
  if(badge){badge.classList.remove('spent-flash');void badge.offsetWidth;badge.classList.add('spent-flash');
   const f=document.createElement('span');f.className='float-ap';f.textContent=`-${p} ✦`;
@@ -511,7 +655,11 @@ function upsertAppointment(appointment,npcId){
 }
 function renderAiFeedback(){
  if(state.aiStatus)return `<div class="notice" style="margin:8px 18px 0">${esc(state.aiStatus)} NPC 回复、邀约与拜访结果以服务端预览会话为准。</div>`;
- if(state.aiError)return `<div class="notice red" style="margin:8px 18px 0">${esc(state.aiError)} ${state.aiErrorCanRefresh?'<button class="btn btn-sm" data-action="refresh-preview" style="margin-left:8px">刷新预览会话</button>':'可以直接重试，未生成固定 NPC 回复。'}</div>`;
+ if(state.aiError){
+  const retry=retryIsMessage()?'<button class="btn btn-sm" data-action="retry-ai" style="margin-left:8px">重试</button>':'';
+  const refresh=state.aiErrorCanRefresh?'<button class="btn btn-sm" data-action="refresh-preview" style="margin-left:8px">刷新预览会话</button>':'';
+  return `<div class="notice red" style="margin:8px 18px 0">${esc(state.aiError)} ${retry}${refresh}${!retry&&!refresh?'请稍后重试，未生成已读标记或 NPC 回复。':''}</div>`;
+ }
  return '';
 }
 function contactStatus(id){
@@ -523,7 +671,7 @@ function contactStatus(id){
 }
 function topbar(){
   if(state.screen==='projects')return '';
-  return `<header class="topbar"><div class="brand"><div class="brand-icon">▣</div><div><h1>项目一 · 单单位内部竞标</h1><p>销售作战台 · 真实AI预览会话（暂不写入正式存档）</p></div></div><div class="stage-pill"><span class="phase-dots">${[1,2,3,4,5].map(i=>`<i class="pdot ${i<state.phase?'done':i===state.phase?'cur':''}"></i>`).join('')}</span><span>第 ${state.phase} 阶段 · ${phaseMeta().name}</span><span class="sep"></span><span class="ap" id="ap-badge">✦ 行动点 <strong>${state.actionPoints}</strong></span></div><div class="top-actions"><button class="btn" data-action="reset">重置预览</button>${state.screen==='game'?`<button class="btn" data-action="end-phase">${state.phase===5?'进入提交检查':'结束本阶段'}</button><button class="btn btn-primary" data-action="submit">提交项目</button>`:''}</div></header>${renderAiFeedback()}`
+  return `<header class="topbar"><div class="brand"><div class="brand-icon">▣</div><div><h1>项目一 · 单单位内部竞标</h1><p>销售作战台 · 真实AI预览会话（暂不写入正式存档）</p></div></div><div class="stage-pill"><span class="phase-dots">${[1,2,3,4,5].map(i=>`<i class="pdot ${i<state.phase?'done':i===state.phase?'cur':''}"></i>`).join('')}</span><span>第 ${state.phase} 阶段 · ${phaseMeta().name}</span><span class="sep"></span><span class="ap" id="ap-badge">✦ 行动点 <strong>${state.actionPoints}</strong></span></div><div class="top-actions"><button class="btn" data-action="test-controls">测试调节</button><button class="btn" data-action="reset">重置预览</button>${state.screen==='game'?`<button class="btn" data-action="end-phase">${state.phase===5?'进入提交检查':'结束本阶段'}</button><button class="btn btn-primary" data-action="submit">提交项目</button>`:''}</div></header>${renderAiFeedback()}`
 }
 function render(){
  app.innerHTML=`<div class="app"><div class="shell">${topbar()}${state.screen==='projects'?renderProjects():state.screen==='result'?renderResult():renderGame()}</div></div>`;
@@ -535,7 +683,7 @@ function renderProjects(){
 function renderGame(){return `<main class="view"><div class="workspace">${renderContext()}${renderPeople()}${renderComm()}</div></main>`}
 function renderContext(){
  const p=phaseMeta();const updates=[...state.infoUpdates].reverse();
- return `<aside class="context-col"><section class="card context-card"><h3>项目背景</h3><p>${MockData.project.description}</p><div class="budget-box"><label>公开预算</label><strong>100 万</strong></div><div class="goal-box"><span>本阶段建议目标</span><strong>${p.goal}</strong><div class="tiny muted">${p.hint}</div></div></section><section class="card info-update"><div class="info-update-head"><strong>信息更新</strong><span class="tag blue">${updates.length}</span></div><div class="update-list">${updates.map(x=>`<div class="update-item"><b>${esc(x.created)}</b><span>${esc(x.body)}</span></div>`).join('')}</div></section><section class="card nav-card"><div><strong>行动点</strong><span>累计消耗 ${state.totalSpent} · 当前剩余 ${state.actionPoints}</span></div><span class="tag blue">${state.actionPoints}/28</span></section><section class="card nav-card"><div><strong>竞品情报</strong><span>竞品推进状态不可直接查看，只能在沟通中判断。</span></div><span>›</span></section>${state.competitorEventsSeen.length?`<section class="card context-card"><div class="eyebrow" style="color:#c35e37">近期压力</div><p>${esc(state.competitorEventsSeen.at(-1))}</p></section>`:''}</aside>`
+ return `<aside class="context-col"><section class="card context-card"><h3>项目背景</h3><p>${MockData.project.description}</p><div class="budget-box"><label>公开预算</label><strong>100 万</strong></div><div class="goal-box"><span>本阶段建议目标</span><strong>${p.goal}</strong><div class="tiny muted">${p.hint}</div></div></section><section class="card info-update"><div class="info-update-head"><strong>信息更新</strong><span class="tag blue">${updates.length}</span></div><div class="update-list">${updates.map(x=>`<div class="update-item"><b>${esc(x.created)}</b><span>${esc(x.body)}</span></div>`).join('')}</div></section><section class="card nav-card"><div><strong>行动点</strong><span>累计消耗 ${state.totalSpent} · 当前剩余 ${state.actionPoints}</span></div><span class="tag blue">${state.actionPoints>28?`${state.actionPoints} · 测试值`:`${state.actionPoints}/28`}</span></section><section class="card nav-card"><div><strong>竞品情报</strong><span>竞品推进状态不可直接查看，只能在沟通中判断。</span></div><span>›</span></section>${state.competitorEventsSeen.length?`<section class="card context-card"><div class="eyebrow" style="color:#c35e37">近期压力</div><p>${esc(state.competitorEventsSeen.at(-1))}</p></section>`:''}</aside>`
 }
 function personNode(id){
  const n=npc(id),intel=state.publicIntel[id]||[];
@@ -589,8 +737,8 @@ function renderOverview(){
 function channelLabel(ch){return ch==='email'?'邮件':ch==='wechat'?'微信':ch==='work_phone'?'电话':'沟通'}
 function renderMessageWorkspace(channel){
  const n=npc(),arr=state.conversations[n.id][channel],isWechat=channel==='wechat';
- const base=1;
- return `<div class="workspace-card"><div class="workspace-card-head"><h2>${isWechat?'工作微信':'邮件'} · ${n.name}</h2><p>${isWechat?'微信正文与附件均使用自然语言描述；有附件时额外消耗行动点。':'邮件正文与附件均可直接自然语言描述；无需预先建立“准备材料”。'}</p></div><div class="thread">${arr.length?arr.map(m=>`<div class="message ${m.role}"><div class="meta">${m.role==='player'?'你':n.name} · ${esc(m.channel||channelLabel(channel))}</div>${esc(m.text)}${m.attachment?`<div class="message-attachment">附件：${esc(m.attachment)}</div>`:''}</div>`).join(''):'<div class="notice">还没有沟通记录。</div>'}</div><div class="composer"><textarea id="message-text" rows="4" placeholder="${isWechat?'输入工作微信内容…':'输入邮件正文…'}"></textarea><div class="attach-area"><strong>附加材料（可选）</strong><p>直接自然语言描述本次附带的材料或文件内容。填写后，本次发送将额外消耗 1 行动点。</p><textarea id="attachment-text" rows="2" placeholder="例如：附上 1 页流程对比与一份验收边界清单，重点标注重复录入减少的位置……"></textarea></div><div class="composer-foot"><span class="cost-note">本次预计消耗 <strong>1 行动点</strong></span><button class="btn btn-primary" data-action="send-message">发送${isWechat?'微信':'邮件'} · 1点</button></div></div></div>`
+ const expressions=isWechat?renderExpressionTools():'';
+ return `<div class="workspace-card"><div class="workspace-card-head"><h2>${isWechat?'工作微信':'邮件'} · ${esc(n.name)}</h2><p>${isWechat?'可发送文字、Emoji、系统预设表情包或附件；有附件时额外消耗行动点。':'邮件正文与附件均可直接自然语言描述；无需预先建立“准备材料”。'}</p></div><div class="thread">${arr.length?arr.map(m=>renderConversationMessage(m,channel,n)).join(''):'<div class="notice">还没有沟通记录。</div>'}</div><div class="composer"><textarea id="message-text" rows="4" placeholder="${isWechat?'输入工作微信内容…':'输入邮件正文…'}"></textarea>${expressions}<div class="attach-area"><strong>附加材料（可选）</strong><p>直接自然语言描述本次附带的材料或文件内容。填写后，本次发送将额外消耗 1 行动点。</p><textarea id="attachment-text" rows="2" placeholder="例如：附上 1 页流程对比与一份验收边界清单，重点标注重复录入减少的位置……"></textarea></div><div class="composer-foot"><span class="cost-note">本次预计消耗 <strong>1 行动点</strong></span><button class="btn btn-primary" data-action="send-message">发送${isWechat?'微信':'邮件'} · 1点</button></div></div></div>`
 }
 function renderWechat(){
  const n=npc();
@@ -643,6 +791,9 @@ function bind(){
  document.querySelectorAll('[data-action]').forEach(e=>e.addEventListener('click',handleAction));
  document.querySelectorAll('[data-select-npc]').forEach(e=>e.addEventListener('click',()=>selectNpc(e.dataset.selectNpc)));
  document.querySelectorAll('[data-workspace]').forEach(e=>e.addEventListener('click',()=>chooseWorkspace(e.dataset.workspace)));
+ document.querySelectorAll('[data-expression-toggle]').forEach(button=>button.addEventListener('click',()=>toggleExpressionPanel(button.dataset.expressionToggle)));
+ document.querySelectorAll('[data-expression-emoji]').forEach(button=>button.addEventListener('click',()=>insertEmoji(button.dataset.expressionEmoji)));
+ document.querySelectorAll('[data-sticker-id]').forEach(button=>button.addEventListener('click',()=>sendSticker(button.dataset.stickerId)));
  if(state.screen==='result'){
   const el=document.querySelector('.score-box strong');
   if(el){const target=parseInt(el.textContent,10)||0,t0=performance.now();
@@ -656,6 +807,11 @@ function bind(){
  if(np)np.addEventListener('input',()=>{if(state.selectedNpcId){state.workPlans.byNpc[state.selectedNpcId]=np.value;save()}});
  const at=document.getElementById('attachment-text');
  if(at)at.addEventListener('input',updateMessageCost);
+ const messageText=document.getElementById('message-text');
+ if(messageText){
+  rememberMessageCaret(messageText);
+  ['click','keyup','select','input'].forEach(eventName=>messageText.addEventListener(eventName,()=>rememberMessageCaret(messageText)));
+ }
  updateMessageCost();
 }
 function updateMessageCost(){
@@ -764,27 +920,73 @@ function formatAttachment(description,result){
  return description;
 }
 function applyInvitationResult(n,data){
+ if(data?.responseAction==='read_no_reply')return;
  if(data?.appointment)upsertAppointment({...data.appointment,status:data.invitationStatus||'accepted'},n.id);
- if(!data?.invitationStatus)return;
+ if(!data?.invitationStatus||data.invitationStatus==='none')return;
  if(data.invitationStatus==='accepted'&&data.appointment){
   addUpdate(`${n.name} 已接受邀约。可以进入拜访准备。`);
   openModal('邀约已接受',`<div class="notice green">服务端预览会话确认 ${n.name} 已接受本阶段拜访邀约。</div><div class="info-block" style="margin-top:10px"><strong>下一步</strong><div class="small muted">建议先简述你准备如何开展这次拜访，再选择实际模拟或简述拜访方案。</div></div>`,`<button class="btn" data-modal-close>稍后准备</button><button class="btn btn-primary" id="go-prep">进入准备</button>`);
   document.getElementById('go-prep').onclick=()=>{closeModal();state.workspaceMode='visitPrep';save();render()};
  }else if(data.invitationStatus!=='accepted')toast(`邀约结果：${data.invitationStatus}`,'warn');
-}
-async function sendMessage(){
- const n=npc(),ch=state.workspaceMode;if(!['email','wechat'].includes(ch))return;
- const text=document.getElementById('message-text')?.value.trim()||'',att=document.getElementById('attachment-text')?.value.trim()||'';
- if(!text){toast('先输入要发送的内容','warn');return}
- const cost=1+(att?1:0);if(!canAfford(cost,`${channelLabel(ch)}发送`))return;
- const res=await apiCall('message',{npcId:n.id,channel:ch,text,attachment:att?{title:'附件说明',content:att}:undefined,phase:state.phase});
- if(!res){render();return}
- spend(cost,`${channelLabel(ch)}发送`);
- const arr=state.conversations[n.id][ch];arr.push({role:'player',channel:channelLabel(ch),text,attachment:formatAttachment(att,res.attachment)});
- if(res.content)arr.push({role:'npc',channel:channelLabel(ch),text:res.content});
- applyInvitationResult(n,res);addUpdate(`${n.name} 已处理你的${channelLabel(ch)}。`);save();render();toast(`${channelLabel(ch)}已发送，消耗 ${cost} 行动点`,'success');
-}
-async function requestWechat(){
+ }
+ function appendMessageResult(n,channel,text,attachmentDescription,result,extra={},localMessageId){
+  const outcome=normalizeMessageResponse(result,channel);
+  if(!outcome)return null;
+  const playerMessageId=typeof outcome.playerMessageId==='string'&&outcome.playerMessageId.trim()?outcome.playerMessageId:localMessageId||newPreviewCommandId();
+  const playerMessage={role:'player',channel:channelLabel(channel),text,messageId:playerMessageId,responseAction:outcome.responseAction,...(outcome.playerMessageId?{playerMessageId:outcome.playerMessageId}:{}),...(outcome.readStatus==='read'?{readStatus:'read'}:{}),...(attachmentDescription?{attachment:formatAttachment(attachmentDescription,outcome.attachment)}:{}),...extra};
+  const arr=state.conversations[n.id][channel];
+  const existing=arr.find(message=>message.role==='player'&&(message.playerMessageId===playerMessageId||message.messageId===playerMessageId));
+  if(!existing)arr.push(playerMessage);
+  if(outcome.responseAction==='reply'&&outcome.content&&!arr.some(message=>message.role==='npc'&&message.responseToMessageId===playerMessageId))arr.push({role:'npc',channel:channelLabel(channel),text:outcome.content,responseToMessageId:playerMessageId});
+  return {outcome,playerMessageId,isNew:!existing};
+ }
+ function recordMessageUpdate(n,channel,outcome){addUpdate(`${n.name} ${outcome.responseAction==='read_no_reply'?'已读':'已回复'}你的${channelLabel(channel)}。`)}
+ async function sendMessage(options={}){
+  const retryPayload=options.payload&&typeof options.payload==='object'?options.payload:null;
+  const ch=retryPayload?.channel||state.workspaceMode,n=npc(retryPayload?.npcId||state.selectedNpcId);if(!n||!['email','wechat'].includes(ch))return;
+  const text=retryPayload?.text||document.getElementById('message-text')?.value.trim()||'';
+  const att=retryPayload?retryPayload.attachment?.content||'':document.getElementById('attachment-text')?.value.trim()||'';
+  if(!text){toast('先输入要发送的内容','warn');return}
+  const cost=1+(att?1:0);if(!canAfford(cost,`${channelLabel(ch)}发送`))return;
+  const payload=retryPayload||{npcId:n.id,channel:ch,text,attachment:att?{title:'附件说明',content:att}:undefined,phase:state.phase};
+  const res=await apiCall('message',payload,{commandId:options.commandId,retryKind:'message',retainRetryUntilCommit:true});
+  if(!res){render();return}
+  const commandId=options.commandId||state.aiRetry?.commandId;
+  const committed=appendMessageResult(n,ch,text,att,res,commandId?{commandId}:{} ,commandId?`local-${commandId}`:undefined);
+  if(!committed){state.aiError='服务端返回的消息结果不符合预览协议，请重试。';save();render();return}
+  if(committed.isNew)spend(cost,`${channelLabel(ch)}发送`,false);
+  applyInvitationResult(n,committed.outcome);recordMessageUpdate(n,ch,committed.outcome);state.aiRetry=null;save();render();toast(`${channelLabel(ch)}已发送，${committed.outcome.responseAction==='read_no_reply'?(ch==='email'?'已阅读':'已读'):'NPC 已回复'}，消耗 ${committed.isNew?cost:0} 行动点`,'success');
+ }
+ async function sendSticker(stickerId,options={}){
+  const retryPayload=options.payload&&typeof options.payload==='object'?options.payload:null;
+  const sticker=stickerById(options.stickerId||stickerId),targetId=retryPayload?.npcId||state.selectedNpcId,n=npc(targetId);
+  if(!sticker||!n||((retryPayload?.channel||state.workspaceMode)!=='wechat')||state.wechat[n.id]!=='accepted')return;
+  if(requestBusy){toast('AI 正在处理中，请稍候。','warn');return}
+  if(!canAfford(1,'发送微信表情包'))return;
+  const text=retryPayload?.text||`[表情包：${sticker.name}]`;
+  const payload=retryPayload||{npcId:n.id,channel:'wechat',text,phase:state.phase};
+  const res=await apiCall('message',payload,{commandId:options.commandId,retryKind:'sticker',retryMeta:{stickerId:sticker.id},retainRetryUntilCommit:true});
+  if(!res){render();return}
+  const commandId=options.commandId||state.aiRetry?.commandId;
+  const committed=appendMessageResult(n,'wechat',text,'',res,{messageType:'sticker',stickerId:sticker.id,...(commandId?{commandId}:{})},commandId?`local-${commandId}`:undefined);
+  if(!committed){state.aiError='服务端返回的消息结果不符合预览协议，请重试。';save();render();return}
+  if(committed.isNew)spend(1,'发送微信表情包',false);
+ applyInvitationResult(n,committed.outcome);recordMessageUpdate(n,'wechat',committed.outcome);state.aiRetry=null;save();render();toast(`表情包“${sticker.name}”已发送，${committed.outcome.responseAction==='read_no_reply'?'已读':'NPC 已回复'}，消耗 ${committed.isNew?1:0} 行动点`,'success');
+ }
+ function retryIsMessage(){return ['message','sticker'].includes(state.aiRetry?.kind)}
+ function hasCommittedRetry(retry){
+  if(!retry?.commandId)return false;
+  return Object.values(state.conversations).some(channels=>Object.values(channels).some(messages=>messages.some(message=>message.commandId===retry.commandId)));
+ }
+ async function retryAiRequest(){
+  const retry=state.aiRetry;
+  if(!retry)return;
+  if(hasCommittedRetry(retry)){state.aiRetry=null;save();render();toast('这条操作已经完成，无需重复发送。','success');return}
+  if(retry.kind==='message')return sendMessage({commandId:retry.commandId,payload:retry.payload});
+  if(retry.kind==='sticker')return sendSticker(retry.meta?.stickerId,retry.payload?{commandId:retry.commandId,payload:retry.payload}: {commandId:retry.commandId});
+  toast('该操作请回到原入口重新尝试。','warn');
+ }
+ async function requestWechat(){
  const n=npc(),reason=document.getElementById('wechat-reason')?.value.trim()||'';
  if(reason.length<8){toast('请用自然语言说明添加工作微信的原因','warn');return}
  if(!canAfford(1,'申请工作微信'))return;
@@ -916,6 +1118,39 @@ async function resetPreview(){
  state=next;save();closeModal();render();toast('预览会话与本地演示进度已重置','success')
 }
 function refreshPreview(){clearAiRuntimeState();window.location.reload()}
+function clampTestInteger(value,min,max,fallback){
+ const parsed=Number.parseInt(value,10);
+ return Number.isFinite(parsed)?Math.max(min,Math.min(max,parsed)):fallback;
+}
+function openTestControls(){
+ const statusOptions=current=>[['','未添加'],['accepted','已添加'],['pending','待处理'],['rejected','已拒绝']].map(([value,label])=>`<option value="${value}" ${current===value?'selected':''}>${label}</option>`).join('');
+ const npcRows=MockData.npcs.map(person=>{const values=state.npcTestStates[person.id]||blankNpcTestStates()[person.id];return `<div class="test-npc-state-row"><div class="test-npc-state-head"><strong>${esc(person.name)} · ${esc(person.title)}</strong><div class="test-npc-state-actions"><label class="test-npc-enable"><input type="checkbox" data-test-npc-enable="${person.id}">覆盖本 NPC</label><span class="test-node">节点 ${esc(values.node||'待应用')}</span></div></div><div class="test-npc-metrics"><div class="test-npc-metric"><label for="test-support-${person.id}">支持度（0–100）</label><input id="test-support-${person.id}" data-test-npc="${person.id}" data-test-field="support" type="number" min="0" max="100" value="${values.support}" disabled></div><div class="test-npc-metric"><label for="test-pleasantness-${person.id}">愉悦度（0–100）</label><input id="test-pleasantness-${person.id}" data-test-npc="${person.id}" data-test-field="pleasantness" type="number" min="0" max="100" value="${values.pleasantness}" disabled></div><div class="test-npc-metric"><label for="test-contact-${person.id}">有效接触次数（0–100）</label><input id="test-contact-${person.id}" data-test-npc="${person.id}" data-test-field="effectiveContactCount" type="number" min="0" max="100" value="${values.effectiveContactCount}" disabled></div></div></div>`}).join('');
+ openModal('测试调节',`<div class="notice amber">测试值只作用于当前五人版预览会话，不写入正式存档。NPC 数值会同步到服务端，并影响后续 AI 对话。</div><div class="test-controls-grid" style="margin-top:10px"><div class="test-control"><label for="test-phase">当前阶段（1–5）</label><input id="test-phase" type="number" min="1" max="5" value="${state.phase}"></div><div class="test-control"><label for="test-action-points">行动点（0–999）</label><input id="test-action-points" type="number" min="0" max="999" value="${state.actionPoints}"></div><div class="test-control"><label for="test-total-spent">累计消耗（0–9999）</label><input id="test-total-spent" type="number" min="0" max="9999" value="${state.totalSpent}"></div></div><div class="info-block" style="margin-top:10px"><strong>NPC 状态数值</strong><div class="tiny muted">关系节点由支持度、有效接触和已获得证据共同计算；仅提高数值不一定直接升级节点。</div><div class="test-npc-state-list">${npcRows}</div></div><div class="info-block" style="margin-top:10px"><strong>工作微信状态</strong><div class="tiny muted">设为“已添加”后，可直接进入对应联系人的微信对话并测试 Emoji 和预设表情包。</div><div class="test-wechat-list">${MockData.npcs.map(person=>`<div class="test-wechat-row"><label for="test-wechat-${person.id}">${esc(person.name)}</label><select id="test-wechat-${person.id}" data-test-wechat="${person.id}">${statusOptions(state.wechat[person.id]||'')}</select></div>`).join('')}</div></div>`,`<button class="btn" data-modal-close>取消</button><button class="btn btn-primary" id="apply-test-controls">应用测试值</button>`);
+ document.getElementById('apply-test-controls').onclick=applyTestControls;
+ document.querySelectorAll('[data-test-npc-enable]').forEach(toggle=>toggle.addEventListener('change',()=>document.querySelectorAll(`[data-test-npc="${toggle.dataset.testNpcEnable}"]`).forEach(input=>{input.disabled=!toggle.checked})));
+}
+async function applyTestControls(){
+ const phase=clampTestInteger(document.getElementById('test-phase')?.value,1,5,state.phase);
+ const actionPoints=clampTestInteger(document.getElementById('test-action-points')?.value,0,999,state.actionPoints);
+ const totalSpent=clampTestInteger(document.getElementById('test-total-spent')?.value,0,9999,state.totalSpent);
+ const enabledNpcIds=new Set([...document.querySelectorAll('[data-test-npc-enable]:checked')].map(toggle=>toggle.dataset.testNpcEnable));
+ const adjustments=MockData.npcs.filter(person=>enabledNpcIds.has(person.id)).map(person=>({
+  npcId:person.id,
+  support:clampTestInteger(document.querySelector(`[data-test-npc="${person.id}"][data-test-field="support"]`)?.value,0,100,state.npcTestStates[person.id]?.support??0),
+  pleasantness:clampTestInteger(document.querySelector(`[data-test-npc="${person.id}"][data-test-field="pleasantness"]`)?.value,0,100,state.npcTestStates[person.id]?.pleasantness??50),
+  effectiveContactCount:clampTestInteger(document.querySelector(`[data-test-npc="${person.id}"][data-test-field="effectiveContactCount"]`)?.value,0,100,state.npcTestStates[person.id]?.effectiveContactCount??0)
+ }));
+ const response=adjustments.length?await apiCall('test_adjust_npcs',{adjustments,phase}):{npcTestStates:[]};
+ if(!response)return;
+ state.phase=phase;state.actionPoints=actionPoints;state.totalSpent=totalSpent;
+ (response.npcTestStates||[]).forEach(item=>{if(npcIds.has(item.npcId))state.npcTestStates[item.npcId]={support:item.support,pleasantness:item.pleasantness,effectiveContactCount:item.effectiveContactCount,node:item.node}});
+ const allowedWechatStatuses=new Set(['','accepted','pending','rejected']);
+ document.querySelectorAll('[data-test-wechat]').forEach(select=>{
+  const id=select.dataset.testWechat,value=allowedWechatStatuses.has(select.value)?select.value:'';
+  if(npcIds.has(id)){if(value)state.wechat[id]=value;else delete state.wechat[id]}
+ });
+ save();closeModal();render();toast('测试数值、NPC 状态与微信状态已更新','success');
+}
 
 async function handleAction(e){
  const a=e.currentTarget.dataset.action;
@@ -923,8 +1158,10 @@ async function handleAction(e){
  if(a==='select-project')document.querySelector('.project-detail')?.scrollIntoView({behavior:'smooth'});
  if(a==='mode')patch({playMode:e.currentTarget.dataset.mode});
  if(a==='start'){if(state.playMode==='multiplayer'){toast('多人模式当前只保留入口','warn');return}patch({screen:'game'})}
+ if(a==='test-controls')return openTestControls();
  if(a==='reset')openConfirm('重置预览','会清除浏览器本地的 v10 演示进度，并重置服务端预览会话。',()=>resetPreview());
  if(a==='refresh-preview')return refreshPreview();
+ if(a==='retry-ai')return retryAiRequest();
  if(a==='analyze-global-plan')return analyzePlan('global');
  if(a==='analyze-npc-plan')return analyzePlan('npc');
  if(a==='research')return research();
@@ -952,6 +1189,10 @@ function openModal(title,body,footer='<button class="btn btn-primary" data-modal
 function closeModal(){modalRoot.innerHTML=''}
 function openConfirm(title,text,fn){openModal(title,`<div class="notice red">${text}</div>`,`<button class="btn" data-modal-close>取消</button><button class="btn btn-danger" id="generic-confirm">确认</button>`);document.getElementById('generic-confirm').onclick=fn}
 document.addEventListener('keydown',e=>{
+ if(e.key==='Escape' && closeExpressionPanels()){
+   e.preventDefault();
+   return;
+ }
  if(e.key==='Escape' && state.screen==='game' && state.selectedNpcId && !modalRoot.innerHTML){
    backToGlobalPlan();
  }

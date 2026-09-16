@@ -16,6 +16,10 @@ const emptyEvaluation = {
   dimensionDeltas: { decisionAnalysis: 0, relationshipBuilding: 0, valuePresentation: 0, objectionHandling: 0, informationDiscovery: 0 },
   effectiveContact: false, memoryUpdates: [], blockerUpdates: [],
 };
+const reply = (content: string, invitationStatus: 'none' | 'accepted' | 'rejected' | 'later' = 'none') => ({ responseAction: 'reply' as const, content, invitationStatus });
+const readNoReply = (reasonCode: 'natural_closure' | 'no_new_value' | 'repeated_follow_up' | 'not_responsible' | 'current_priority_low' | 'unwilling_to_advance' = 'natural_closure') => ({
+  responseAction: 'read_no_reply' as const, content: null, invitationStatus: 'none' as const, reasonCode, reasonEvidence: '当前消息没有需要立即答复的新事项。',
+});
 
 async function main() {
   assert.deepEqual(PREVIEW_NPC_IDS, ['P1-001', 'P1-002', 'P1-003', 'P1-004', 'P1-005']);
@@ -27,6 +31,8 @@ async function main() {
   assert.equal(PREVIEW_NPCS['P1-002'].personality.length > 0, true);
   assert.equal(PREVIEW_NPCS['P1-003'].taboos.includes('现金回扣'), true);
   assert.equal(previewAiRequestSchema.safeParse(withMeta({ action: 'message', npcId: 'P1-001', text: '您好', channel: 'email', profile: { hidden: true } }, 0)).success, false);
+  assert.equal(previewAiRequestSchema.safeParse(withMeta({ action: 'test_adjust_npcs', adjustments: [{ npcId: 'P1-001', support: 101, pleasantness: 50, effectiveContactCount: 0 }] }, 0)).success, false, 'NPC test values enforce server bounds');
+  assert.equal(previewAiRequestSchema.safeParse(withMeta({ action: 'test_adjust_npcs', adjustments: [{ npcId: 'P1-001', support: 10, pleasantness: 50, effectiveContactCount: 1 }, { npcId: 'P1-001', support: 20, pleasantness: 60, effectiveContactCount: 2 }] }, 0)).success, false, 'NPC test adjustments reject duplicate people');
   assert.equal(previewAiResponseSchema.safeParse({ previewSessionId: 'x'.repeat(20), version: 1, action: 'reset' }).success, true);
   assert.equal(previewNpcEvaluationAiOutputSchema.safeParse({ ...emptyEvaluation, blockerUpdates: [{ action: 'add', value: 'model_invented_blocker' }] }).success, false, 'blocker IDs are a server-controlled enum');
 
@@ -44,7 +50,7 @@ async function main() {
         dimensionDeltas: { ...emptyEvaluation.dimensionDeltas, decisionAnalysis: 1 },
         memoryUpdates: [{ type: evaluationTurn === 1 ? 'commitment' : 'evidence', summary: tag, status: 'active', tags: [tag], mustMention: true }] });
     }
-    return json({ content: '请补充可验证的里程碑。', invitationStatus: 'none' });
+    return json(reply('请补充可验证的里程碑。'));
   } });
   const first = await service.execute('user-a', withMeta({ action: 'message', npcId: 'P1-002', channel: 'email', text: '确认里程碑并按约给出反馈', attachment: { title: '项目里程碑清单', content: 'SECRET_ATTACHMENT_BODY_SHOULD_NOT_LEAK' } }, 0));
   const sessionId = first.previewSessionId;
@@ -62,7 +68,141 @@ async function main() {
   assert.equal(prompts.some((prompt) => prompt.includes('SECRET_ATTACHMENT_BODY_SHOULD_NOT_LEAK')), false, 'unviewed attachment content never enters model context');
   assert.equal(state.conversations['P1-002'][0].attachment?.viewed, false, 'attachment viewing state is retained');
 
-  const second = await service.execute('user-a', withMeta({ action: 'message', npcId: 'P1-002', channel: 'email', text: '这里是已经验证的改进证据。' }, first.version, sessionId));
+  const readPrompts: string[] = [];
+  const readService = createPreviewAiService({ invoker: async (messages) => {
+    const prompt = messages.map((message) => message.content).join('\n');
+    readPrompts.push(prompt);
+    if (prompt.includes('判断是否查看已收到的附件')) return json({ viewed: true, impact: '材料已查看，作为后续核验依据。' });
+    if (prompt.includes('独立评估刚刚完成的 NPC 正文')) return json({
+      ...emptyEvaluation,
+      supportDelta: 2,
+      effectiveContact: true,
+      memoryUpdates: [
+        { type: 'commitment', summary: 'NPC 不应在沉默中作出的承诺', status: 'active', tags: ['last_commitment_or_feedback'], mustMention: true },
+        { type: 'evidence', summary: '玩家报告已完成验收记录，仍待 NPC 核验。', status: 'active', tags: ['last_commitment_or_feedback', 'player_report'], mustMention: true },
+      ],
+    });
+    return json(readNoReply('current_priority_low'));
+  } });
+  const initialReadRequest = {
+    action: 'message' as const, npcId: 'P1-001' as const, channel: 'wechat' as const, text: '验收记录已补齐，预算边界仍请您确认。',
+    attachment: { title: '验收记录', content: 'VIEWED_ATTACHMENT_BODY_MAY_REACH_CONTEXT' }, commandId: 'initial-read-command'.padEnd(24, 'x'), expectedVersion: 0,
+  };
+  const read = await readService.execute('user-read', initialReadRequest);
+  assert.equal(read.responseAction, 'read_no_reply');
+  assert.equal(read.readStatus, 'read');
+  assert.equal(read.content, null);
+  assert.equal(read.invitationStatus, 'none');
+  assert.equal(read.appointment, undefined);
+  assert.equal(typeof read.playerMessageId, 'string');
+  const readState = readService.store.get('user-read', read.previewSessionId)!;
+  assert.equal(readState.conversations['P1-001'].length, 1, 'a read-without-reply stores no fabricated NPC message');
+  assert.equal(readState.conversations['P1-001'][0]?.delivery?.reasonCode, 'current_priority_low', 'the internal diagnostic reason is retained with the real player message');
+  assert.equal(readState.conversations['P1-001'][0]?.attachment?.viewed, true, 'attachment viewing remains independent from replying');
+  assert.equal(readPrompts.some((prompt) => prompt.includes('VIEWED_ATTACHMENT_BODY_MAY_REACH_CONTEXT')), true, 'viewed attachment content can inform the NPC handling');
+  assert.equal(readState.npcStates['P1-001'].support, 2, 'valuable player content remains scoreable without a reply');
+  assert.equal(readState.npcStates['P1-001'].effectiveContactCount, 1, 'valuable player content remains an effective contact without a reply');
+  assert.equal(readState.npcStates['P1-001'].workingMemory.some((entry) => entry.type === 'commitment' || entry.tags.includes('last_commitment_or_feedback')), false, 'silence cannot create commitments or node-unlocking memory');
+  assert.equal(readState.npcStates['P1-001'].workingMemory.every((entry) => entry.sourceMessageIds.length === 1 && entry.sourceMessageIds[0] === read.playerMessageId), true, 'silent-turn memories cite only the real player message');
+  const replayedInitialRead = await readService.execute('user-read', initialReadRequest);
+  assert.deepEqual(replayedInitialRead, read, 'a lost initial response replays from the same command without a session id');
+  readState.conversations['P1-001'].push({ messageId: 'prior-npc-evidence', role: 'npc', channel: 'wechat', text: '此前已收到的核验口径。', at: Date.now() });
+  readState.npcStates['P1-001'].workingMemory.push({
+    id: 'prior-npc-evidence-memory', type: 'evidence', summary: 'NPC 已确认的旧核验事实', status: 'active', tags: ['player_report'], mustMention: true, sourceMessageIds: ['prior-npc-evidence'],
+  });
+  const laterRead = await readService.execute('user-read', withMeta({ action: 'message', npcId: 'P1-001', channel: 'wechat', text: '补充同一份验收记录，请您有空核验。' }, read.version, read.previewSessionId));
+  const preservedNpcEvidence = readState.npcStates['P1-001'].workingMemory.find((entry) => entry.id === 'prior-npc-evidence-memory')!;
+  assert.equal(laterRead.responseAction, 'read_no_reply');
+  assert.equal(preservedNpcEvidence.summary, 'NPC 已确认的旧核验事实', 'silence cannot rewrite an existing NPC-sourced evidence record');
+  assert.deepEqual(preservedNpcEvidence.sourceMessageIds, ['prior-npc-evidence']);
+
+  const badReadService = createPreviewAiService({ invoker: async (messages) => messages.some((message) => message.content.includes('独立评估刚刚完成的 NPC 正文'))
+    ? json(emptyEvaluation)
+    : json({ responseAction: 'read_no_reply', content: null, invitationStatus: 'none' }) });
+  const badReadState = badReadService.store.create('user-bad-read');
+  await assert.rejects(
+    badReadService.execute('user-bad-read', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '收到，谢谢。' }, 0, badReadState.previewSessionId)),
+    (error: unknown) => error instanceof PreviewAiError && error.kind === 'protocol',
+  );
+  assert.equal(badReadState.conversations['P1-001'].length, 0, 'invalid read_no_reply output cannot leave a partial message');
+
+  const whitespaceReplyService = createPreviewAiService({ invoker: async () => json({ responseAction: 'reply', content: '   ', invitationStatus: 'none' }) });
+  const whitespaceReplyState = whitespaceReplyService.store.create('user-whitespace-reply');
+  await assert.rejects(
+    whitespaceReplyService.execute('user-whitespace-reply', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '请确认。' }, 0, whitespaceReplyState.previewSessionId)),
+    (error: unknown) => error instanceof PreviewAiError && error.kind === 'protocol',
+  );
+  assert.equal(whitespaceReplyState.conversations['P1-001'].length, 0, 'blank reply output cannot leave a partial message');
+
+  const appointmentSilenceService = createPreviewAiService({ invoker: async () => json({ ...readNoReply(), appointment: { timeWindow: '明天', location: '会议室', agenda: '错误预约' } }) });
+  const appointmentSilenceState = appointmentSilenceService.store.create('user-silent-appointment');
+  await assert.rejects(
+    appointmentSilenceService.execute('user-silent-appointment', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '明天方便吗？' }, 0, appointmentSilenceState.previewSessionId)),
+    (error: unknown) => error instanceof PreviewAiError && error.kind === 'protocol',
+  );
+  assert.equal(appointmentSilenceState.conversations['P1-001'].length, 0, 'silent output cannot carry an appointment');
+
+  const silentEvaluationFailureService = createPreviewAiService({ invoker: async (messages) => messages.some((message) => message.content.includes('独立评估刚刚完成的 NPC 正文'))
+    ? json({ pleasureDelta: 99 })
+    : json(readNoReply()) });
+  const silentEvaluationFailureState = silentEvaluationFailureService.store.create('user-silent-evaluation-failure');
+  await assert.rejects(
+    silentEvaluationFailureService.execute('user-silent-evaluation-failure', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '验收记录已补齐。' }, 0, silentEvaluationFailureState.previewSessionId)),
+    (error: unknown) => error instanceof PreviewAiError && error.kind === 'protocol',
+  );
+  assert.equal(silentEvaluationFailureState.version, 0, 'failed silent evaluation cannot increment the version');
+  assert.equal(silentEvaluationFailureState.conversations['P1-001'].length, 0, 'failed silent evaluation cannot store a read receipt');
+  assert.equal(silentEvaluationFailureState.npcStates['P1-001'].support, 0, 'failed silent evaluation cannot apply scoring');
+
+  const emailSilencePrompts: string[] = [];
+  const emailSilenceService = createPreviewAiService({ invoker: async (messages) => {
+    const prompt = messages.map((message) => message.content).join('\n');
+    emailSilencePrompts.push(prompt);
+    if (prompt.includes('判断是否查看已收到的附件')) return json({ viewed: false, impact: '暂未查看附件。' });
+    if (prompt.includes('独立评估刚刚完成的 NPC 正文')) return json(emptyEvaluation);
+    return json(readNoReply('natural_closure'));
+  } });
+  const emailSilence = await emailSilenceService.execute('user-email-silence', withMeta({ action: 'message', npcId: 'P1-002', channel: 'email', text: '收到，谢谢。', attachment: { title: '未读附件', content: 'EMAIL_UNVIEWED_ATTACHMENT_MUST_NOT_LEAK' } }, 0));
+  assert.equal(emailSilence.responseAction, 'read_no_reply');
+  assert.equal(emailSilence.readStatus, 'read');
+  assert.equal(emailSilence.attachment?.viewed, false, 'email silence can retain an unviewed attachment');
+  assert.equal(emailSilencePrompts.some((prompt) => prompt.includes('EMAIL_UNVIEWED_ATTACHMENT_MUST_NOT_LEAK')), false, 'unviewed email attachment content cannot enter a silent decision or evaluation');
+
+  const phoneService = createPreviewAiService({ invoker: async (messages) => messages.some((message) => message.content.includes('独立评估刚刚完成的 NPC 正文'))
+    ? json(emptyEvaluation)
+    : json({ content: '请通过电话先说明具体事项。', invitationStatus: 'none' }) });
+  const phone = await phoneService.execute('user-phone', withMeta({ action: 'phone_connect', npcId: 'P1-001', text: '请确认技术验收口径。' }, 0));
+  assert.equal(phone.responseAction, undefined, 'phone retains its legacy public reply contract');
+  assert.equal(phone.readStatus, undefined, 'phone does not expose asynchronous read status');
+  assert.equal(phone.content, '请通过电话先说明具体事项。');
+  const legacyWorkPhone = await phoneService.execute('user-phone', withMeta({ action: 'message', npcId: 'P1-001', channel: 'work_phone', text: '请确认技术验收口径。' }, phone.version, phone.previewSessionId));
+  assert.equal(legacyWorkPhone.responseAction, undefined, 'work_phone message cannot enter the read_no_reply contract');
+  assert.equal(legacyWorkPhone.readStatus, undefined, 'work_phone message remains a legacy synchronous reply');
+  assert.equal(legacyWorkPhone.content, '请通过电话先说明具体事项。');
+
+  const redlineReadService = createPreviewAiService({ invoker: async (messages) => messages.some((message) => message.content.includes('独立评估刚刚完成的 NPC 正文'))
+    ? json(emptyEvaluation)
+    : json(readNoReply('unwilling_to_advance')) });
+  const forcedRedlineReply = await redlineReadService.execute('user-redline-read', withMeta({ action: 'message', npcId: 'P1-003', channel: 'wechat', text: '我们可以给现金回扣并保证中标。' }, 0));
+  assert.equal(forcedRedlineReply.responseAction, 'reply', 'a compliance redline overrides a model read_no_reply decision');
+  assert.equal(forcedRedlineReply.readStatus, 'read');
+  assert.equal(forcedRedlineReply.invitationStatus, 'rejected');
+  assert.match(forcedRedlineReply.content ?? '', /不能接受/);
+
+  const adjusted = await service.execute('user-a', withMeta({ action: 'test_adjust_npcs', adjustments: [
+    { npcId: 'P1-001', support: 35, pleasantness: 82, effectiveContactCount: 4 },
+    { npcId: 'P1-005', support: 66, pleasantness: 21, effectiveContactCount: 7 },
+  ] }, first.version, sessionId));
+  assert.deepEqual(adjusted.npcTestStates, [
+    { npcId: 'P1-001', support: 35, pleasantness: 82, effectiveContactCount: 4, node: 'N1' },
+    { npcId: 'P1-005', support: 66, pleasantness: 21, effectiveContactCount: 7, node: 'N1' },
+  ], 'test adjustment returns the authoritative server values and computed nodes');
+  assert.equal(state.npcStates['P1-001'].support, 35);
+  assert.equal(state.npcStates['P1-001'].pleasantness, 82);
+  assert.equal(state.npcStates['P1-001'].effectiveContactCount, 4);
+  assert.equal(prompts.length, 3, 'test adjustment does not invoke the model');
+
+  const second = await service.execute('user-a', withMeta({ action: 'message', npcId: 'P1-002', channel: 'email', text: '这里是已经验证的改进证据。' }, adjusted.version, sessionId));
   state.npcStates['P1-002'].support = 50;
   assert.equal(resolvePreviewNode(state.npcStates['P1-002']), 'N3');
   const third = await service.execute('user-a', withMeta({ action: 'message', npcId: 'P1-002', channel: 'email', text: '关键诉求已经按验收记录兑现。' }, second.version, sessionId));
@@ -81,7 +221,7 @@ async function main() {
   const redlineService = createPreviewAiService({ invoker: async (messages) => {
     const prompt = messages.map((message) => message.content).join('\n');
     if (prompt.includes('独立评估刚刚完成的 NPC 正文')) return json({ ...emptyEvaluation, pleasureDelta: 6, supportDelta: 4, effectiveContact: true });
-    return json({ content: '请按正式流程沟通。', invitationStatus: 'none' });
+    return json(reply('请按正式流程沟通。'));
   } });
   const redline = await redlineService.execute('user-red', withMeta({ action: 'message', npcId: 'P1-003', channel: 'email', text: '我们可以先给现金回扣，也保证中标。' }, 0));
   assert.match(redline.content ?? '', /不能接受/);
@@ -122,7 +262,7 @@ async function main() {
 
   const failedService = createPreviewAiService({ invoker: async (messages) => {
     const prompt = messages.map((message) => message.content).join('\n');
-    return prompt.includes('独立评估刚刚完成的 NPC 正文') ? json({ pleasureDelta: 99 }) : json({ content: '请说明。', invitationStatus: 'none' });
+    return prompt.includes('独立评估刚刚完成的 NPC 正文') ? json({ pleasureDelta: 99 }) : json(reply('请说明。'));
   } });
   const failedState = failedService.store.create('user-failure');
   await assert.rejects(
@@ -137,7 +277,7 @@ async function main() {
     if (prompt.includes('独立评估刚刚完成的 NPC 正文')) {
       return json({ ...emptyEvaluation, blockerUpdates: [{ action: 'add', value: 'compliance_redline' }], memoryUpdates: [{ type: 'blocker', summary: 'model_invented_blocker', status: 'active', tags: ['blocker', 'compliance_redline'], mustMention: true }] });
     }
-    return json({ content: '请按正式流程沟通。', invitationStatus: 'none' });
+    return json(reply('请按正式流程沟通。'));
   } });
   const modelBlockerMemory = await modelBlockerMemoryService.execute('user-memory', withMeta({ action: 'message', npcId: 'P1-003', channel: 'email', text: '请说明正式验收口径。' }, 0));
   const modelBlockerMemoryState = modelBlockerMemoryService.store.get('user-memory', modelBlockerMemory.previewSessionId)!;
@@ -148,7 +288,7 @@ async function main() {
   const staleMemoryService = createPreviewAiService({ invoker: async (messages) => {
     const prompt = messages.map((message) => message.content).join('\n');
     staleMemoryPrompts.push(prompt);
-    return prompt.includes('独立评估刚刚完成的 NPC 正文') ? json(emptyEvaluation) : json({ content: '请说明正式验收口径。', invitationStatus: 'none' });
+    return prompt.includes('独立评估刚刚完成的 NPC 正文') ? json(emptyEvaluation) : json(reply('请说明正式验收口径。'));
   } });
   const staleMemoryState = staleMemoryService.store.create('user-stale-memory');
   staleMemoryState.npcStates['P1-003'].workingMemory.push({ id: 'stale-memory', type: 'commitment', summary: 'STALE_MEMORY_MUST_NOT_REACH_PROMPT', status: 'superseded', tags: ['stale'], mustMention: true, sourceMessageIds: [] });
