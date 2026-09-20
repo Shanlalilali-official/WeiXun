@@ -36,7 +36,9 @@ const HISTORY_LIMIT = 12;
 const COMPLETED_COMMAND_LIMIT = 40;
 const MAX_CONCURRENT_LLM_CALLS = 8;
 let activeLlmCalls = 0;
-const FAREWELL_PATTERN = /(?:告辞|先到这里|今天先这样|改天再聊|再见|先走了|先离开|不打扰了|结束拜访)/i;
+const FAREWELL_PATTERN = /(?:告辞|(?:今天|咱们|我们)?(?:就|先)?到这(?:里|儿)?|今天先这样|改天再聊|下次再聊|再见|拜拜|回头见|先走了|先离开|不打扰了|结束拜访)/i;
+const NPC_TIME_CONSTRAINT_PATTERN = /(?:我(?:今天|这会儿|现在)?(?:有点|有些|比较|挺|很)?忙|我(?:马上|一会儿|等会儿)?(?:还有|有)(?:个|一个)?会|我(?:马上|一会儿|等会儿)?(?:要|得|去|赶着?)开会|我得赶会|后面还有会)/i;
+const NPC_TIME_CONSTRAINT_NEGATION_PATTERN = /(?:我(?:今天|这会儿|现在)?不忙|我(?:今天|这会儿|现在)?没那么忙|我(?:没有|没)(?:别的|其他)?会|我不(?:用|需要|打算)开会)/i;
 const HARD_BLOCKER_PATTERN = /(?:现金|回扣|返现|私下利益|利益交换|保证中标|内定中标|陪标|围标|规避(?:招采|采购|流程))/i;
 const REDLINE_TERM_PATTERN = /(?:现金|回扣|返现|私下利益|利益交换|保证中标|内定中标|陪标|围标|规避(?:招采|采购|流程))/i;
 const SELF_COMPLIANCE_WITHDRAWAL_PATTERN = /(?:我方|我们|本人|我司|本公司|我)(?:.{0,16})(?:撤回|撤销|取消|停止|放弃)(?:.{0,40})(?:现金|回扣|返现|私下利益|利益交换|保证中标|内定中标|陪标|围标|规避(?:招采|采购|流程))/i;
@@ -62,7 +64,14 @@ type ConversationMessage = {
   messageId: string; role: 'player' | 'npc'; channel: string; text: string; attachment?: SavedAttachment; at: number;
   delivery?: MessageDelivery;
 };
-type ActiveMeeting = { npcId: PreviewNpcId; turn: number; completedTasks: VisitTask[]; ended: boolean; endReason?: z.infer<typeof previewEndReasonSchema> };
+type ActiveMeeting = {
+  npcId: PreviewNpcId;
+  turn: number;
+  completedTasks: VisitTask[];
+  ended: boolean;
+  endReason?: z.infer<typeof previewEndReasonSchema>;
+  awaitingFinalReplyFrom?: 'player';
+};
 export type PreviewAppointment = z.infer<typeof previewAppointmentSchema>;
 type WorkingMemoryType = z.infer<typeof previewWorkingMemoryTypeSchema>;
 type WorkingMemoryStatus = z.infer<typeof previewWorkingMemoryStatusSchema>;
@@ -198,11 +207,20 @@ export class PreviewAiError extends Error {
   constructor(public readonly kind: 'protocol' | 'unavailable' | 'conflict' | 'not_found' | 'limit', message: string) { super(message); }
 }
 export function getAllowedTasks(id: PreviewNpcId): readonly VisitTask[] { return PREVIEW_NPCS[id].allowedTasks; }
-export function resolveMeetingEnd(meeting: ActiveMeeting, playerFarewell: boolean): z.infer<typeof previewEndReasonSchema> | undefined {
-  const allTasksDone = meeting.completedTasks.length >= PREVIEW_NPCS[meeting.npcId].allowedTasks.length;
-  const reason = playerFarewell ? 'player_farewell' : allTasksDone ? 'npc_task_completed' : meeting.turn > 20 ? 'turn_limit' : undefined;
-  if (reason) { meeting.ended = true; meeting.endReason = reason; }
+function endMeeting(meeting: ActiveMeeting, reason: z.infer<typeof previewEndReasonSchema>): z.infer<typeof previewEndReasonSchema> {
+  meeting.ended = true;
+  meeting.endReason = reason;
+  delete meeting.awaitingFinalReplyFrom;
   return reason;
+}
+export function resolveMeetingEnd(meeting: ActiveMeeting): z.infer<typeof previewEndReasonSchema> | undefined {
+  const allTasksDone = meeting.completedTasks.length >= PREVIEW_NPCS[meeting.npcId].allowedTasks.length;
+  const reason = allTasksDone ? 'npc_task_completed' : meeting.turn > 20 ? 'turn_limit' : undefined;
+  return reason ? endMeeting(meeting, reason) : undefined;
+}
+function npcHasImmediateTimeConstraint(text: string, signal?: 'continue' | 'farewell' | 'forced_exit'): boolean {
+  if (signal === 'forced_exit') return true;
+  return !NPC_TIME_CONSTRAINT_NEGATION_PATTERN.test(text) && NPC_TIME_CONSTRAINT_PATTERN.test(text);
 }
 function historyFor(state: PreviewServerState, npcId: PreviewNpcId): ConversationMessage[] {
   return state.conversations[npcId].slice(-HISTORY_LIMIT).map((item) => ({
@@ -473,7 +491,13 @@ function disclosedFor(ids: PreviewNpcId[], plan: string) {
 function meetingResponse(state: PreviewServerState) {
   const meeting = state.activeMeeting;
   if (!meeting) return undefined;
-  return { meetingEnded: meeting.ended, ...(meeting.endReason ? { endReason: meeting.endReason } : {}), turn: meeting.turn, completedTasks: meeting.completedTasks };
+  return {
+    meetingEnded: meeting.ended,
+    ...(meeting.endReason ? { endReason: meeting.endReason } : {}),
+    ...(meeting.awaitingFinalReplyFrom ? { awaitingFinalReplyFrom: meeting.awaitingFinalReplyFrom } : {}),
+    turn: meeting.turn,
+    completedTasks: meeting.completedTasks,
+  };
 }
 type PreviewAppointmentStatus = z.infer<typeof previewAppointmentStatusSchema>;
 type PreviewAppointmentAdjustment = Extract<PreviewAiRequest, { action: 'test_adjust_appointments' }>['appointments'][number];
@@ -584,6 +608,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
     if (request.action === 'end_visit') {
       const meeting = state.activeMeeting;
       if (!meeting || meeting.npcId !== request.npcId || meeting.ended) throw new PreviewAiError('protocol', 'NO_ACTIVE_VISIT_FOR_NPC');
+      if (meeting.awaitingFinalReplyFrom === 'player') throw new PreviewAiError('protocol', 'FINAL_PLAYER_REPLY_REQUIRED');
       meeting.ended = true; meeting.endReason = 'player_farewell';
       const appointment = completeAppointment(state, request.npcId);
       return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state), ...(appointment ? { appointment } : {}) });
@@ -671,15 +696,17 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
       if (!meeting || meeting.npcId !== npcId || meeting.ended) throw new PreviewAiError('protocol', 'NO_ACTIVE_VISIT_FOR_NPC');
       const nextTurn = meeting.turn + 1;
       const playerMessage = newMessage('player', 'visit', request.text);
-      if (FAREWELL_PATTERN.test(request.text)) {
+      if (meeting.awaitingFinalReplyFrom === 'player') {
         meeting.turn = nextTurn;
         addMessage(state, npcId, playerMessage);
-        resolveMeetingEnd(meeting, true);
+        endMeeting(meeting, 'npc_farewell');
         const appointment = completeAppointment(state, npcId);
         return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state), ...(appointment ? { appointment } : {}) });
       }
       const remaining = npc.allowedTasks.filter((task) => !meeting.completedTasks.includes(task));
-      const purpose = '这是实际拜访第 ' + nextTurn + ' 轮。自然回复，并仅在本轮确实完成任务时填写 completedTask。剩余允许任务：' + (remaining.join('、') || '无') + '。输出 {content,completedTask:null|任务名}。';
+      const purpose = '这是实际拜访第 ' + nextTurn + ' 轮。自然回复，并仅在本轮确实完成任务时填写 completedTask。剩余允许任务：' + (remaining.join('、') || '无') + '。'
+        + '同时识别双方本轮是否结束交流：playerDialogueSignal 只在玩家明确表达告辞、今天到此、再见等结束意图时填 farewell；npcDialogueSignal 根据你实际生成的 NPC 台词填写 continue、farewell 或 forced_exit。NPC 只要表示自己今天/现在很忙、马上或随后还有会、需要去开会等无法继续的时间约束，就必须填 forced_exit；明确告辞填 farewell。引用、假设、询问对方是否忙或是否告辞不算说话者自己的结束意图。玩家明确告辞时，只回复一句简短告别，不开启新话题。'
+        + '输出 {content,completedTask:null|任务名,playerDialogueSignal:"continue"|"farewell",npcDialogueSignal:"continue"|"farewell"|"forced_exit"}。';
       let output: z.infer<typeof visitTurnAiOutputSchema>;
       try {
         output = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', purpose, promptConfig),
@@ -689,7 +716,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
         throw error;
       }
       if (isHardBlockerText(request.text)) {
-        output = { content: COMPLIANCE_REFUSAL, completedTask: null };
+        output = { content: COMPLIANCE_REFUSAL, completedTask: null, playerDialogueSignal: 'continue', npcDialogueSignal: 'continue' };
       }
       const npcMessage = newMessage('npc', 'visit', output.content);
       await evaluateNpcTurn(invoker, state, npcId, 'visit', playerMessage, npcMessage, 'reply', promptConfig);
@@ -697,7 +724,13 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
       addMessage(state, npcId, playerMessage);
       addMessage(state, npcId, npcMessage);
       if (output.completedTask) meeting.completedTasks.push(output.completedTask);
-      resolveMeetingEnd(meeting, false);
+      const playerFarewell = output.playerDialogueSignal === 'farewell' || FAREWELL_PATTERN.test(request.text);
+      const npcForcedExit = npcHasImmediateTimeConstraint(output.content, output.npcDialogueSignal);
+      const npcFarewell = output.npcDialogueSignal === 'farewell' || FAREWELL_PATTERN.test(output.content);
+      if (playerFarewell) endMeeting(meeting, 'player_farewell');
+      else if (npcForcedExit) endMeeting(meeting, 'npc_time_constraint');
+      else if (npcFarewell) meeting.awaitingFinalReplyFrom = 'player';
+      else resolveMeetingEnd(meeting);
       const appointment = meeting.ended ? completeAppointment(state, npcId) : undefined;
       return previewAiResponseSchema.parse({ ...base, content: output.content, meeting: meetingResponse(state), ...(appointment ? { appointment } : {}) });
     }

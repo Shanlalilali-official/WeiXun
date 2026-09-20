@@ -12,6 +12,10 @@ const migration = readFileSync(
   resolve(process.cwd(), 'supabase/migrations/20260920000100_replace_project_one_npc_role_prompts.sql'),
   'utf8',
 );
+const zhaoMigration = readFileSync(
+  resolve(process.cwd(), 'supabase/migrations/20260920000200_update_zhao_project_executor_prompt.sql'),
+  'utf8',
+);
 
 for (const [index, npcId] of PROJECT_ONE_FIVE_PERSON_IDS.entries()) {
   const prompt = PROJECT_ONE_NPC_ROLE_PROMPTS[npcId];
@@ -27,9 +31,15 @@ for (const [index, npcId] of PROJECT_ONE_FIVE_PERSON_IDS.entries()) {
   assert.doesNotMatch(prompt, /读完这条配置消息后，只回复/);
   assert.equal(DEFAULT_PROJECT_ONE_PROMPT_CONFIG.npcRolePrompts[npcId], prompt);
 
-  const tag = `prompt_${index + 1}`;
+  const overrideTag = npcId === 'P1-002' ? 'li_prompt'
+    : npcId === 'P1-003' ? 'wang_prompt'
+      : npcId === 'P1-004' ? 'zhao_prompt'
+        : undefined;
+  const tag = overrideTag ?? `prompt_${index + 1}`;
   const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = migration.match(new RegExp(`'${npcId}', \\$${escapedTag}\\$([\\s\\S]*?)\\$${escapedTag}\\$`));
+  const migrationSource = overrideTag ? zhaoMigration : migration;
+  const pattern = `'${npcId}', \\$${escapedTag}\\$([\\s\\S]*?)\\$${escapedTag}\\$`;
+  const match = migrationSource.match(new RegExp(pattern));
   assert.ok(match, `${npc.name} prompt is missing from migration`);
   assert.equal(match[1], prompt, `${npc.name} migration prompt differs from application default`);
 }

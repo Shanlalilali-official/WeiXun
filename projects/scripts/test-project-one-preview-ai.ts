@@ -30,6 +30,11 @@ async function main() {
   assert.equal(PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS['P1-001']?.direct_visit?.includes('不展开细节'), true);
   assert.equal(PREVIEW_NPCS['P1-002'].personality.length > 0, true);
   assert.equal(PREVIEW_NPCS['P1-003'].taboos.includes('现金回扣'), true);
+  assert.equal(PREVIEW_NPCS['P1-004'].parentId, 'P1-002', '赵晓晨直属项目经理李明辉');
+  assert.equal(PREVIEW_NPCS['P1-004'].title, '项目执行人员');
+  assert.equal(PREVIEW_NPCS['P1-004'].category, '项目执行');
+  assert.match(PREVIEW_NPCS['P1-004'].organization, /直属下属.*具体执行/);
+  assert.equal(PREVIEW_NPCS['P1-004'].facts.some((item) => item.includes('材料') && item.includes('进度')), true, '赵晓晨主档覆盖材料与进度执行职责');
   assert.equal(previewAiRequestSchema.safeParse(withMeta({ action: 'message', npcId: 'P1-001', text: '您好', channel: 'email', profile: { hidden: true } }, 0)).success, false);
   assert.equal(previewAiRequestSchema.safeParse(withMeta({ action: 'test_adjust_npcs', adjustments: [{ npcId: 'P1-001', support: 101, pleasantness: 50, effectiveContactCount: 0 }] }, 0)).success, false, 'NPC test values enforce server bounds');
   assert.equal(previewAiRequestSchema.safeParse(withMeta({ action: 'test_adjust_npcs', adjustments: [{ npcId: 'P1-001', support: 10, pleasantness: 50, effectiveContactCount: 1 }, { npcId: 'P1-001', support: 20, pleasantness: 60, effectiveContactCount: 2 }] }, 0)).success, false, 'NPC test adjustments reject duplicate people');
@@ -206,6 +211,7 @@ async function main() {
   const appointmentService = createPreviewAiService({ invoker: async (messages) => {
     const prompt = messages.map((message) => message.content).join('\n');
     if (prompt.includes('独立评估刚刚完成的 NPC 正文')) return json(emptyEvaluation);
+    if (prompt.includes('这是实际拜访第')) return json({ content: '好，那今天先到这里。', completedTask: null, playerDialogueSignal: 'farewell', npcDialogueSignal: 'farewell' });
     return json({ responseAction: 'reply', content: '明天可以在办公室见面。', invitationStatus: 'accepted', appointment: { timeWindow: '明天 10:00', location: '客户办公室', agenda: '确认验收口径' } });
   } });
   const appointmentCreated = await appointmentService.execute('user-appointment', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '明天方便在办公室确认验收口径吗？' }, 0));
@@ -223,6 +229,7 @@ async function main() {
   const visitStarted = await appointmentService.execute('user-appointment', withMeta({ action: 'start_visit', npcId: 'P1-001' }, appointmentUpdated.version, appointmentCreated.previewSessionId));
   const farewell = await appointmentService.execute('user-appointment', withMeta({ action: 'visit_turn', npcId: 'P1-001', text: '感谢您的时间，今天先这样，改天再聊。' }, visitStarted.version, appointmentCreated.previewSessionId));
   assert.equal(farewell.meeting?.meetingEnded, true, 'farewell visit turn ends the active meeting');
+  assert.equal(farewell.content, '好，那今天先到这里。', 'player farewell allows exactly one final NPC reply');
   assert.deepEqual(farewell.appointment, { ...appointmentUpdated.appointments[0], status: 'completed' }, 'farewell visit turn completes the authoritative appointment');
   assert.equal(appointmentState.appointments['P1-001']?.status, 'completed');
   const appointmentVersion = appointmentState.version;
@@ -246,6 +253,57 @@ async function main() {
   const skippedVisit = await skipService.execute('user-skip-preparation', withMeta({ action: 'start_visit', npcId: 'P1-002', skipPreparation: true }, skipAppointment.version, skipAppointment.previewSessionId));
   assert.equal(skippedVisit.meeting?.meetingEnded, false, 'skip preparation enters the actual visit');
   assert.equal(skipService.store.get('user-skip-preparation', skipAppointment.previewSessionId)?.approvedVisitPreparations['P1-002'], undefined, 'skipping does not create a fake preparation');
+
+  let forcedExitCalls = 0;
+  const forcedExitService = createPreviewAiService({ invoker: async (messages) => {
+    forcedExitCalls += 1;
+    const prompt = messages.map((message) => message.content).join('\n');
+    if (prompt.includes('独立评估刚刚完成的 NPC 正文')) return json(emptyEvaluation);
+    return json({ content: '我今天有些忙，后面还有个会。', completedTask: null });
+  } });
+  const forcedExitStarted = await forcedExitService.execute('user-forced-exit', withMeta({ action: 'start_visit', npcId: 'P1-001', skipPreparation: true }, 0));
+  const forcedExit = await forcedExitService.execute('user-forced-exit', withMeta({ action: 'visit_turn', npcId: 'P1-001', text: '我想介绍一下项目方案。' }, forcedExitStarted.version, forcedExitStarted.previewSessionId));
+  assert.equal(forcedExit.meeting?.meetingEnded, true, 'NPC time constraint immediately ends the visit');
+  assert.equal(forcedExit.meeting?.endReason, 'npc_time_constraint');
+  assert.equal(forcedExitCalls, 2, 'forced exit still evaluates the completed turn before ending');
+
+  let npcFarewellCalls = 0;
+  const npcFarewellService = createPreviewAiService({ invoker: async (messages) => {
+    npcFarewellCalls += 1;
+    const prompt = messages.map((message) => message.content).join('\n');
+    if (prompt.includes('独立评估刚刚完成的 NPC 正文')) return json(emptyEvaluation);
+    return json({ content: '今天就到这吧，再见。', completedTask: null });
+  } });
+  const npcFarewellStarted = await npcFarewellService.execute('user-npc-farewell', withMeta({ action: 'start_visit', npcId: 'P1-001', skipPreparation: true }, 0));
+  const npcFarewell = await npcFarewellService.execute('user-npc-farewell', withMeta({ action: 'visit_turn', npcId: 'P1-001', text: '这是本轮新增的项目信息。' }, npcFarewellStarted.version, npcFarewellStarted.previewSessionId));
+  assert.equal(npcFarewell.meeting?.meetingEnded, false, 'NPC farewell leaves room for one final player reply');
+  assert.equal(npcFarewell.meeting?.awaitingFinalReplyFrom, 'player');
+  await assert.rejects(
+    npcFarewellService.execute('user-npc-farewell', withMeta({ action: 'end_visit', npcId: 'P1-001' }, npcFarewell.version, npcFarewellStarted.previewSessionId)),
+    (error: unknown) => error instanceof PreviewAiError && error.kind === 'protocol' && error.message === 'FINAL_PLAYER_REPLY_REQUIRED',
+    'manual end cannot skip the required final player reply',
+  );
+  assert.equal(npcFarewellService.store.get('user-npc-farewell', npcFarewellStarted.previewSessionId)?.version, npcFarewell.version, 'rejected end_visit does not commit a version');
+  const finalPlayerReply = await npcFarewellService.execute('user-npc-farewell', withMeta({ action: 'visit_turn', npcId: 'P1-001', text: '好的，谢谢，您先忙。' }, npcFarewell.version, npcFarewellStarted.previewSessionId));
+  assert.equal(finalPlayerReply.content, undefined, 'final player reply does not trigger another NPC reply');
+  assert.equal(finalPlayerReply.meeting?.meetingEnded, true);
+  assert.equal(finalPlayerReply.meeting?.endReason, 'npc_farewell');
+  assert.equal(npcFarewellCalls, 2, 'final player reply closes without another model call');
+  await assert.rejects(
+    npcFarewellService.execute('user-npc-farewell', withMeta({ action: 'visit_turn', npcId: 'P1-001', text: '第三句话不应被接受。' }, finalPlayerReply.version, npcFarewellStarted.previewSessionId)),
+    (error: unknown) => error instanceof PreviewAiError && error.kind === 'protocol' && error.message === 'NO_ACTIVE_VISIT_FOR_NPC',
+    'the meeting rejects any utterance after the single final reply',
+  );
+
+  const negatedTimeConstraintService = createPreviewAiService({ invoker: async (messages) => {
+    const prompt = messages.map((message) => message.content).join('\n');
+    if (prompt.includes('独立评估刚刚完成的 NPC 正文')) return json(emptyEvaluation);
+    return json({ content: '我今天不忙，也没有会，可以继续。', completedTask: null });
+  } });
+  const negatedStarted = await negatedTimeConstraintService.execute('user-negated-time', withMeta({ action: 'start_visit', npcId: 'P1-001', skipPreparation: true }, 0));
+  const negatedReply = await negatedTimeConstraintService.execute('user-negated-time', withMeta({ action: 'visit_turn', npcId: 'P1-001', text: '那我们继续聊方案。' }, negatedStarted.version, negatedStarted.previewSessionId));
+  assert.equal(negatedReply.meeting?.meetingEnded, false, 'negated busy and meeting phrases do not force an exit');
+  assert.equal(negatedReply.meeting?.awaitingFinalReplyFrom, undefined);
 
   const second = await service.execute('user-a', withMeta({ action: 'message', npcId: 'P1-002', channel: 'email', text: '这里是已经验证的改进证据。' }, adjusted.version, sessionId));
   state.npcStates['P1-002'].support = 50;

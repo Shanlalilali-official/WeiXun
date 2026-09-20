@@ -8,7 +8,13 @@ export const previewVisitTaskSchema = z.enum(['提问', '质疑', '挖坑']);
 export const previewInvitationStatusSchema = z.enum(['none', 'accepted', 'rejected', 'later']);
 export const previewAppointmentStatusSchema = z.enum(['pending', 'accepted', 'rejected', 'later', 'completed', 'cancelled']);
 export const previewTestAppointmentStatusSchema = z.enum(['none', 'pending', 'accepted', 'rejected', 'later', 'completed', 'cancelled']);
-export const previewEndReasonSchema = z.enum(['npc_task_completed', 'turn_limit', 'player_farewell']);
+export const previewEndReasonSchema = z.enum([
+  'npc_task_completed',
+  'turn_limit',
+  'player_farewell',
+  'npc_farewell',
+  'npc_time_constraint',
+]);
 export const previewNodeSchema = z.enum(['N1', 'N2', 'N3', 'N4', 'BLOCKED']);
 export const previewMessageResponseActionSchema = z.enum(['reply', 'read_no_reply']);
 export const previewReadNoReplyReasonCodeSchema = z.enum([
@@ -101,6 +107,7 @@ const attachmentResultSchema = z.object({
 const meetingStatusSchema = z.object({
   meetingEnded: z.boolean(),
   endReason: previewEndReasonSchema.optional(),
+  awaitingFinalReplyFrom: z.literal('player').optional(),
   turn: z.number().int().min(0),
   completedTasks: z.array(previewVisitTaskSchema),
 });
@@ -209,6 +216,8 @@ export const visitPreparationAiOutputSchema = z.object({
 export const visitTurnAiOutputSchema = z.object({
   content: z.string().min(1).max(2_000),
   completedTask: previewVisitTaskSchema.nullable(),
+  playerDialogueSignal: z.enum(['continue', 'farewell']).optional(),
+  npcDialogueSignal: z.enum(['continue', 'farewell', 'forced_exit']).optional(),
 });
 
 export const previewWorkingMemoryTypeSchema = z.enum([

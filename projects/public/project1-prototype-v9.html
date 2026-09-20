@@ -421,9 +421,9 @@ const MockData = {
     },
     {
       id:'P1-004',stableId:'P1-004',parentId:'P1-002',displayLevel:2,displayOrder:1,
-      name:'赵晓晨',title:'项目员工1',category:'一线使用者',
-      public:{facts:['项目员工1，是系统的一线使用者，参与实际业务操作和反馈。','公开工作信息显示其更接近日常流程、材料处理和真实使用痛点。','一线体验反馈会帮助项目团队判断方案是否真的减负。'],clues:[],source:'项目角色信息与一线使用场景整理'},
-      keywords:['赵晓晨','项目员工1','一线','使用者','实际操作','材料处理','重复录入','减负','使用体验','流程'],
+      name:'赵晓晨',title:'项目执行人员',category:'项目执行',
+      public:{facts:['项目执行人员，是项目经理李明辉的直属下属，负责把项目需求和任务落实到具体执行。','工作内容包括材料整理、进度跟踪、跨环节沟通、问题反馈和实际操作验证。','执行反馈会帮助李明辉判断方案能否落地，但不代表项目决策、验收或采购结论。'],clues:[],source:'项目角色信息与项目执行职责整理'},
+      keywords:['赵晓晨','项目执行人员','李明辉','直属下属','具体执行','需求落实','材料整理','进度跟踪','跨环节沟通','问题反馈','操作验证','方案落地'],
     },
     {
       id:'P1-005',stableId:'P1-005',parentId:'P1-001',displayLevel:2,displayOrder:2,
@@ -928,10 +928,11 @@ function renderBriefResult(){
 function renderMeeting(){
  const m=state.meeting,n=npc(m.npcId),arr=state.conversations[n.id].meeting,lastNpc=[...arr].reverse().find(x=>x.role==='npc'),lastPlayer=[...arr].reverse().find(x=>x.role==='player');
  const completed=(m.completedTasks||[]).map(task=>typeof task==='string'?task:task.type||task.name).filter(Boolean);
+ const finalReply=m.awaitingFinalReplyFrom==='player';
  const location=m.location||'',sceneKey=/电梯/.test(location)?'elevator':/酒馆|酒吧|酒/.test(location)?'bar':/饭店|餐厅|餐馆|餐/.test(location)?'restaurant':/办公室|会议室|公司|单位/.test(location)?'office':'';
  const sceneUrl=sceneKey?uploadedImageUrls[`visit_scene:${sceneKey}`]:'';
  const sceneStyle=sceneUrl?` style="background-image:linear-gradient(180deg,rgba(8,16,30,.28),rgba(3,9,18,.82)),url(${esc(JSON.stringify(sceneUrl))});background-size:cover;background-position:center"`:'';
- return `<div class="meeting-scene"${sceneStyle}><div class="meeting-top"><div><div class="eyebrow">线下拜访现场</div><h2>${esc(m.location||'客户单位')}</h2><div class="tiny" style="color:#617593">第 ${Number(m.turn||0)+1} 轮 · 已完成任务 ${completed.length?esc(completed.join(' / ')):'暂未返回'} · 超过20轮自动结束</div></div><div class="meeting-pill">真实AI会面 · ${esc(n.name)}</div></div><div class="meeting-chat">${lastNpc?`<div class="npc-stage">${renderAvatar(n,'portrait')}<div class="speech" data-stream-id="${esc(lastNpc.messageId||'')}"><strong>${esc(n.name)}</strong><span data-stream-text>${esc(lastNpc.text||'')}</span>${lastNpc.pending&&!lastNpc.text?streamDots('正在思考'):''}</div></div>`:'<div class="notice" style="background:rgba(255,255,255,.92)">拜访开始。结束条件和任务完成状态由服务端预览会话判定：NPC任务完成、对话超过20轮或你主动告辞。</div>'}${lastPlayer?`<div class="player-last"><strong>你刚刚说：</strong>${esc(lastPlayer.text)}</div>`:''}<div class="meeting-composer"><textarea id="meeting-input" placeholder="输入现场发言；也可以直接表达告辞…" ${requestBusy?'disabled':''}></textarea><button class="btn btn-primary" data-action="meeting-send" ${requestBusy?'disabled aria-busy="true"':''}>${requestBusy?'等待回应…':'发送'}</button><button class="btn" data-action="end-visit" ${requestBusy?'disabled':''}>主动告辞</button></div></div></div>`
+ return `<div class="meeting-scene"${sceneStyle}><div class="meeting-top"><div><div class="eyebrow">线下拜访现场</div><h2>${esc(m.location||'客户单位')}</h2><div class="tiny" style="color:#617593">第 ${Number(m.turn||0)+1} 轮 · 已完成任务 ${completed.length?esc(completed.join(' / ')):'暂未返回'} · 超过20轮自动结束</div></div><div class="meeting-pill">真实AI会面 · ${esc(n.name)}</div></div><div class="meeting-chat">${lastNpc?`<div class="npc-stage">${renderAvatar(n,'portrait')}<div class="speech" data-stream-id="${esc(lastNpc.messageId||'')}"><strong>${esc(n.name)}</strong><span data-stream-text>${esc(lastNpc.text||'')}</span>${lastNpc.pending&&!lastNpc.text?streamDots('正在思考'):''}</div></div>`:'<div class="notice" style="background:rgba(255,255,255,.92)">拜访开始。结束条件和任务完成状态由服务端预览会话判定：NPC任务完成、对话超过20轮或双方明确结束交流。</div>'}${lastPlayer?`<div class="player-last"><strong>你刚刚说：</strong>${esc(lastPlayer.text)}</div>`:''}${finalReply?'<div class="notice amber">NPC 已明确结束交流。你可以最后回应一次，发送后会面自动结束。</div>':''}<div class="meeting-composer"><textarea id="meeting-input" placeholder="${finalReply?'输入最后一句回应…':'输入现场发言；也可以直接表达告辞…'}" ${requestBusy?'disabled':''}></textarea><button class="btn btn-primary" data-action="meeting-send" ${requestBusy?'disabled aria-busy="true"':''}>${requestBusy?'等待回应…':finalReply?'最后回应并结束':'发送'}</button>${finalReply?'':`<button class="btn" data-action="end-visit" ${requestBusy?'disabled':''}>主动告辞</button>`}</div></div></div>`
 }
 function renderResult(){
  const r=state.result||MockData.result;
@@ -1210,7 +1211,7 @@ async function startVisitSimulation({skipPreparation=false}={}){
  if(!remote){state.aiError='服务端未返回会面状态，请重试。';save();render();return}
  if(remote.meetingEnded){return finishVisitFromServer({...res,...remote})}
  spend(3,'实际拜访');
- state.meeting={npcId:n.id,appointmentId:appt?.id||null,location:appt?.location||'客户单位',turn:Number(remote.turn||0),completedTasks:Array.isArray(remote.completedTasks)?remote.completedTasks:[]};
+ state.meeting={npcId:n.id,appointmentId:appt?.id||null,location:appt?.location||'客户单位',turn:Number(remote.turn||0),completedTasks:Array.isArray(remote.completedTasks)?remote.completedTasks:[],awaitingFinalReplyFrom:remote.awaitingFinalReplyFrom||null};
  if(res.content)state.conversations[n.id].meeting.push({role:'npc',channel:'拜访',text:res.content,taskType:res.taskType||null});
  save();refreshWorkspaceBody();toast('已进入真实AI拜访模拟','success')
 }
@@ -1272,13 +1273,13 @@ async function meetingSend(options={}){
  player.pending=false;player.failed=false;reply.pending=false;reply.failed=false;reply.text=res.content||reply.text;reply.taskType=res.taskType||null;state.aiRetry=null;
   const remote=res.meeting;
  if(!remote){state.aiError='服务端未返回会面状态，请重试。';reply.failed=true;save();refreshWorkspaceBody();return}
-  m.turn=Number(remote.turn??m.turn??0);m.completedTasks=Array.isArray(remote.completedTasks)?remote.completedTasks:(m.completedTasks||[]);
+  m.turn=Number(remote.turn??m.turn??0);m.completedTasks=Array.isArray(remote.completedTasks)?remote.completedTasks:(m.completedTasks||[]);m.awaitingFinalReplyFrom=remote.awaitingFinalReplyFrom||null;
  if(!res.content){const index=arr.indexOf(reply);if(index>=0)arr.splice(index,1)}
   if(remote.meetingEnded){save();refreshWorkspaceBody();await new Promise(resolve=>setTimeout(resolve,650));return finishVisitFromServer({...res,...remote})}
  save();refreshWorkspaceBody();
 }
 function endReasonLabel(endReason){
- const labels={npc_task_completed:'NPC已完成本次任务（提问 / 质疑 / 挖坑）',turn_limit:'对话轮次已超过20轮',player_farewell:'玩家主动提出告辞'};
+ const labels={npc_task_completed:'NPC已完成本次任务（提问 / 质疑 / 挖坑）',turn_limit:'对话轮次已超过20轮',player_farewell:'玩家告辞，NPC完成最后回应',npc_farewell:'NPC告辞，玩家完成最后回应',npc_time_constraint:'NPC表示忙碌或另有会议，会面立即结束'};
  return labels[endReason]||'本次拜访已由服务端结束';
 }
 function finishVisitFromServer(result){
@@ -1291,17 +1292,8 @@ function finishVisitFromServer(result){
 }
 async function endVisit(){
  const m=state.meeting;if(!m)return;
- const n=npc(m.npcId),pending=apiCall('end_visit',{npcId:n.id,phase:state.phase},{renderPending:false});
- const sendButton=document.querySelector('[data-action="meeting-send"]'),endButton=document.querySelector('[data-action="end-visit"]');
- if(sendButton)sendButton.disabled=true;if(endButton){endButton.disabled=true;endButton.textContent='正在结束拜访…'}
- const res=await pending;
- if(!res){refreshWorkspaceBody();refreshAiFeedback();return}
- if(res.content)state.conversations[n.id].meeting.push({role:'npc',channel:'拜访',text:res.content,taskType:res.taskType||null});
- const remote=res.meeting;
- if(!remote){state.aiError='服务端未返回会面状态，请重试。';save();refreshWorkspaceBody();refreshAiFeedback();return}
- m.turn=Number(remote.turn??m.turn??0);m.completedTasks=Array.isArray(remote.completedTasks)?remote.completedTasks:(m.completedTasks||[]);
- if(remote.meetingEnded!==false)return finishVisitFromServer({...res,...remote});
- save();refreshWorkspaceBody();toast('服务端尚未结束本次拜访，请继续沟通或稍后重试。','warn')
+ const n=npc(m.npcId);
+ return meetingSend({payload:{npcId:n.id,text:'谢谢您的时间，今天先到这里，再见。',phase:state.phase}})
 }
 function showEndPhase(){
  if(state.phase===5)return showSubmission();

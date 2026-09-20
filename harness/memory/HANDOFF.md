@@ -1,5 +1,12 @@
 # 工作交接
 
+## 2026-09-20 赵晓晨执行定位、拜访自动结束与内心独白计划
+
+- 赵晓晨唯一目标定位为“项目执行人员／项目执行”，直属李明辉。主档在 `project-one-five-person.ts`，完整角色规则在 `npc-role-prompts.ts`，页面资料在 `project1-prototype-v9.html`；审阅稿已同步。
+- 开发库已应用 `20260920000200_update_zhao_project_executor_prompt.sql`，revision 3；该迁移同步李明辉、王德福和赵晓晨三份受定位变化影响的提示词。
+- 五人预览拜访协议新增双方结束信号、`npc_time_constraint`、`npc_farewell` 与 `awaitingFinalReplyFrom:'player'`。NPC 告辞后下一条玩家消息只保存并结束，不再调用 AI；`end_visit` 在此状态返回 `FINAL_PLAYER_REPLY_REQUIRED`。
+- 内心独白未实现。后续从 `harness/plans/NPC_INNER_MONOLOGUE_PLAN.md` 开始，首版建议仅设计师调试和会后教练可见，不参与实时评分。
+
 ## 2026-09-20 五人人物完整提示词
 
 - 完整提示词源位于 `projects/src/lib/designer/npc-role-prompts.ts`，默认配置直接引用该映射；审阅版位于 `outputs/五人人物提示词完整稿-2026-09-20.md`。

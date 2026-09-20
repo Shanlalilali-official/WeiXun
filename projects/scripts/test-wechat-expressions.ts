@@ -46,6 +46,11 @@ assert(html.includes('renderPending:false'), '普通消息发送未启用无刷�
 assert(html.includes('pendingConversation={npcId:n.id,channel:ch,commandId}'), '消息发送前未建立局部 NPC 回复状态');
 assert(html.includes('refreshMessageThread(ch,n);setMessageComposerBusy(true,ch)'), '消息发送前未即时更新对话区并锁定输入');
 assert(html.includes('正在回复'), '缺少 NPC 正在回复的自然等待反馈');
+assert(html.includes('NPC 已明确结束交流。你可以最后回应一次'), 'NPC 告辞后缺少玩家最后一次回应提示');
+assert(html.includes("npc_time_constraint:'NPC表示忙碌或另有会议，会面立即结束'"), '缺少 NPC 忙碌或开会的强制结束文案');
+assert(html.includes("finalReply?'最后回应并结束':'发送'"), 'NPC 告辞后发送按钮未切换为最后回应');
+assert(html.includes("name:'赵晓晨',title:'项目执行人员',category:'项目执行'"), '赵晓晨前端主档未体现项目执行人员定位');
+assert(html.includes('项目经理李明辉的直属下属'), '赵晓晨前端主档未体现与李明辉的直属关系');
 assert(html.includes("accept:'text/event-stream'"), '前端 AI 请求未声明 SSE 流式响应');
 assert(html.includes("retryKind:'phone_message'"), '电话对话未使用独立的流式重试类型');
 assert(html.includes("retryKind:'visit_turn'"), '实际拜访未使用独立的流式重试类型');
