@@ -1,18 +1,23 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type ChangeEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Wand2, Building2, Users, FileText, Save, ArrowLeft, UserCog, BarChart3, Copy, Plus, Trash2, Pencil, X, LogOut, ShieldCheck, FlaskConical, Library, Database, ImageIcon, FileBarChart, TestTube2, PlayCircle, ClipboardList, Upload, Sparkles, FolderOpen } from 'lucide-react';
+import { Wand2, Building2, Users, FileText, Save, ArrowLeft, UserCog, BarChart3, Plus, Trash2, Pencil, X, LogOut, ShieldCheck, FlaskConical, Library, Database, ImageIcon, FileBarChart, TestTube2, PlayCircle, ClipboardList, Upload, Sparkles, FolderOpen } from 'lucide-react';
 import { aMetrics, bMetrics, cMetrics } from '@/lib/metrics-data';
-import {
-  PROJECT_ONE_CHANNEL_MODIFIERS,
-  PROJECT_ONE_FIVE_PERSON_NPCS,
-  PROJECT_ONE_HARD_CONSTRAINTS,
-  PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS,
-  PROJECT_ONE_PROMPT_LAYERS,
-  PROJECT_ONE_PROMPT_NODES,
-} from '@/lib/designer/project-one-five-person';
+import { PROJECT_ONE_FIVE_PERSON_NPCS } from '@/lib/designer/project-one-five-person';
 import { ROLE_COLOR, ROLE_LABEL } from '@/components/app-shell';
+
+type DesignerImageAssetCategory = 'person_intro' | 'person_expression' | 'visit_scene';
+
+interface DesignerImageAsset {
+  slotKey: string;
+  category: DesignerImageAssetCategory;
+  personId: string | null;
+  label: string;
+  imageUrl: string | null;
+  isDefault: boolean;
+  updatedAt: string | null;
+}
 
 type ConfigRecord = Record<string, unknown>;
 
@@ -25,27 +30,6 @@ interface FivePersonNpcConfig extends ConfigRecord {
   displayLevel?: number;
 }
 
-interface PromptNodeConfig extends ConfigRecord {
-  id: string;
-  name?: string;
-  label?: string;
-  supportThreshold?: number;
-  contactThreshold?: number;
-  effectiveContactThreshold?: number;
-  evidenceTags?: readonly string[];
-  blockerPolicy?: string;
-  goal?: string;
-}
-
-interface PromptLayerConfig extends ConfigRecord {
-  id: string;
-  label?: string;
-  name?: string;
-  description?: string;
-  template?: string;
-  content?: string;
-}
-
 function configRecords(value: unknown): ConfigRecord[] {
   if (Array.isArray(value)) return value.filter((item): item is ConfigRecord => Boolean(item && typeof item === 'object'));
   if (!value || typeof value !== 'object') return [];
@@ -53,19 +37,6 @@ function configRecords(value: unknown): ConfigRecord[] {
     id,
     ...(item && typeof item === 'object' ? item : { value: item }),
   }));
-}
-
-function configEntries(value: unknown): Array<[string, ConfigRecord]> {
-  if (Array.isArray(value)) {
-    return value
-      .filter((item): item is ConfigRecord => Boolean(item && typeof item === 'object'))
-      .map((item, index) => [String(item.id ?? item.key ?? item.channel ?? index), item]);
-  }
-  if (!value || typeof value !== 'object') return [];
-  return Object.entries(value as ConfigRecord).map(([key, item]) => [
-    key,
-    item && typeof item === 'object' ? item as ConfigRecord : { value: item },
-  ]);
 }
 
 function configText(record: ConfigRecord | undefined, ...keys: string[]): string {
@@ -78,45 +49,7 @@ function configText(record: ConfigRecord | undefined, ...keys: string[]): string
   return '';
 }
 
-function configNumber(record: ConfigRecord | undefined, ...keys: string[]): number | undefined {
-  if (!record) return undefined;
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-  }
-  return undefined;
-}
-
-function configList(record: ConfigRecord | undefined, ...keys: string[]): string[] {
-  if (!record) return [];
-  for (const key of keys) {
-    const value = record[key];
-    if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
-    if (typeof value === 'string' && value.trim()) return value.split(/[；;,]/).map((item) => item.trim()).filter(Boolean);
-  }
-  return [];
-}
-
 const fivePersonNpcs = configRecords(PROJECT_ONE_FIVE_PERSON_NPCS) as FivePersonNpcConfig[];
-const promptNodes = configRecords(PROJECT_ONE_PROMPT_NODES) as PromptNodeConfig[];
-const promptLayers = (configRecords(PROJECT_ONE_PROMPT_LAYERS) as PromptLayerConfig[])
-  .sort((left, right) => (configNumber(left, 'order') ?? 999) - (configNumber(right, 'order') ?? 999));
-const channelModifierEntries = configEntries(PROJECT_ONE_CHANNEL_MODIFIERS);
-const npcChannelExceptionEntries = configEntries(PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS);
-const PROMPT_LAYER_ORDER = [
-  'hard_constraints',
-  'npc_baseline',
-  'state_node',
-  'runtime_state',
-  'working_memory',
-  'recent_history',
-  'channel_modifier',
-  'npc_channel_exception',
-];
-const orderedPromptLayers = [
-  ...PROMPT_LAYER_ORDER.map((id) => promptLayers.find((layer) => layer.id === id)).filter((layer): layer is PromptLayerConfig => Boolean(layer)),
-  ...promptLayers.filter((layer) => !PROMPT_LAYER_ORDER.includes(layer.id) && layer.id !== 'task'),
-];
 
 interface KeyPerson {
   id: number | string;
@@ -203,9 +136,8 @@ export default function DesignerPage() {
   const [selectedProject, setSelectedProject] = useState<number>(1);
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedModule, setSelectedModule] = useState<'assets' | 'data' | 'scenario' | 'reports' | 'testing'>('assets');
+  const [selectedModule, setSelectedModule] = useState<'assets' | 'data' | 'reports' | 'testing'>('assets');
   const [selectedDataTab, setSelectedDataTab] = useState<'project' | 'competitors' | 'metrics'>('project');
-  const [selectedScenarioTab, setSelectedScenarioTab] = useState<'images' | 'prompts'>('images');
   const [selectedMetricTab, setSelectedMetricTab] = useState('A类基础指标');
   const [a, setA] = useState(aMetrics);
   const [b, setB] = useState(bMetrics);
@@ -219,10 +151,11 @@ export default function DesignerPage() {
   // 公式大弹窗编辑状态
   const [showFormulaModal, setShowFormulaModal] = useState(false);
   const [formulaModalData, setFormulaModalData] = useState({ tag: '', name: '', formula: '' });
-  const [selectedPromptNpcId, setSelectedPromptNpcId] = useState(fivePersonNpcs[0]?.id || 'P1-001');
-  const [selectedPromptNodeId, setSelectedPromptNodeId] = useState(promptNodes[0]?.id || 'N1');
-  const [selectedPromptLayerId, setSelectedPromptLayerId] = useState(orderedPromptLayers[0]?.id || 'hard_constraints');
-  const [promptView, setPromptView] = useState<'edit' | 'preview'>('edit');
+  const [imageAssets, setImageAssets] = useState<DesignerImageAsset[]>([]);
+  const [imageAssetsLoading, setImageAssetsLoading] = useState(true);
+  const [imageAssetNotice, setImageAssetNotice] = useState('');
+  const [uploadingImageSlot, setUploadingImageSlot] = useState<string | null>(null);
+  const [previewImageAsset, setPreviewImageAsset] = useState<DesignerImageAsset | null>(null);
 
   useEffect(() => {
     const importedMetrics = window.localStorage.getItem('weixun_designer_excel_import:metrics');
@@ -297,45 +230,28 @@ export default function DesignerPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    fetch('/api/designer/image-assets')
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || '图片素材读取失败');
+        setImageAssets(Array.isArray(body.assets) ? body.assets : []);
+      })
+      .catch((error) => setImageAssetNotice(error instanceof Error ? error.message : '图片素材读取失败'))
+      .finally(() => setImageAssetsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!previewImageAsset) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPreviewImageAsset(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [previewImageAsset]);
+
   const currentProject = projects.find(p => p.id === selectedProject);
   const currentCompetitors = competitors.filter(c => c.project_id === selectedProject);
-  const selectedPromptNpc = fivePersonNpcs.find((npc) => npc.id === selectedPromptNpcId) ?? fivePersonNpcs[0];
-  const selectedPromptNode = promptNodes.find((node) => node.id === selectedPromptNodeId) ?? promptNodes[0];
-  const selectedPromptLayer = orderedPromptLayers.find((layer) => layer.id === selectedPromptLayerId) ?? orderedPromptLayers[0];
-  const selectedPromptLayerText = selectedPromptLayer
-    ? configText(selectedPromptLayer, 'template', 'content', 'prompt', 'text') || (selectedPromptLayer.id === 'hard_constraints' ? PROJECT_ONE_HARD_CONSTRAINTS.join('\n') : '')
-    : '';
-  const selectedPromptNpcIndex = selectedPromptNpc ? fivePersonNpcs.findIndex((npc) => npc.id === selectedPromptNpc.id) : -1;
-  const selectedPromptParent = selectedPromptNpc?.parentId
-    ? fivePersonNpcs.find((npc) => npc.id === selectedPromptNpc.parentId)
-    : undefined;
-  const selectedNpcFacts = configList(selectedPromptNpc, 'facts', 'summary', 'responsibilities', 'focus');
-  const selectedNpcNeeds = configList(selectedPromptNpc, 'coreNeeds', 'needs', 'priorities', 'goals');
-  const selectedNpcBoundaries = configList(selectedPromptNpc, 'informationBoundary', 'boundaries', 'disclosureRules');
-  const selectedNpcTaboos = configList(selectedPromptNpc, 'taboos', 'redLines', 'risks');
-  const promptChannels = channelModifierEntries.map(([key, value]) => ({
-    key,
-    label: configText(value, 'label', 'name', 'title') || key,
-    text: configText(value, 'description', 'modifier', 'template', 'prompt', 'content', 'value'),
-  }));
-  const selectedNpcExceptions = selectedPromptNpc
-    ? (() => {
-      const entry = npcChannelExceptionEntries.find(([key]) => key === selectedPromptNpc.id);
-      return entry ? configEntries(entry[1]) : [];
-    })()
-    : [];
-  const promptPreview = [
-    ...orderedPromptLayers.map((layer) => ({
-      id: layer.id,
-      label: configText(layer, 'label', 'name') || layer.id,
-      text: configText(layer, 'template', 'content', 'prompt', 'text', 'description') || (layer.id === 'hard_constraints' ? PROJECT_ONE_HARD_CONSTRAINTS.join('\n') : ''),
-    })),
-    {
-      id: 'runtime-selection',
-      label: '当前选择',
-      text: `${configText(selectedPromptNpc, 'name') || '未选择人物'} · ${configText(selectedPromptNode, 'label', 'name') || '未选择节点'} · ${promptChannels[0]?.label || '渠道待选择'}`,
-    },
-  ].filter((section) => section.text.trim());
 
   if (loading) {
     return (
@@ -352,6 +268,30 @@ export default function DesignerPage() {
   const handleEditMetric = (tag: string, name: string, desc: string, value: string) => {
     setEditingMetric(tag);
     setEditForm({ name, desc, value });
+  };
+
+  const handleImageUpload = async (slotKey: string, event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    setUploadingImageSlot(slotKey);
+    setImageAssetNotice('');
+    try {
+      const token = window.localStorage.getItem('weixun_session') || '';
+      const form = new FormData();
+      form.append('slotKey', slotKey);
+      form.append('file', file);
+      const response = await fetch('/api/designer/image-assets', { method: 'POST', headers: { 'x-session': token }, body: form });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || '图片上传失败');
+      const asset = body.asset as DesignerImageAsset;
+      setImageAssets((current) => current.map((item) => item.slotKey === asset.slotKey ? asset : item));
+      setImageAssetNotice(`已更新「${asset.label}」。`);
+    } catch (error) {
+      setImageAssetNotice(error instanceof Error ? error.message : '图片上传失败');
+    } finally {
+      setUploadingImageSlot(null);
+    }
   };
 
   const handleSaveEdit = () => {
@@ -494,11 +434,10 @@ export default function DesignerPage() {
         </div>
 
         {/* 一级工作区 */}
-        <nav aria-label="设计师工作区" className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        <nav aria-label="设计师工作区" className="mb-6 grid grid-cols-2 gap-2 lg:grid-cols-4">
           {[
-            { id: 'assets' as const, label: '素材库', hint: '人物资料与提示词', icon: Library },
+            { id: 'assets' as const, label: '素材库', hint: '人物、图片与拜访场景', icon: Library },
             { id: 'data' as const, label: '数据', hint: '项目、竞品与指标', icon: Database },
-            { id: 'scenario' as const, label: '场景', hint: '场景图片与提示词', icon: ImageIcon },
             { id: 'reports' as const, label: '报告', hint: '玩家生成的报告', icon: FileBarChart },
             { id: 'testing' as const, label: '测试', hint: '实际测试与模型回复', icon: TestTube2 },
           ].map((section) => {
@@ -567,7 +506,7 @@ export default function DesignerPage() {
                 </div>
                 <div>
                   <h2 className="text-base font-semibold text-foreground">素材库</h2>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">集中管理人物资料、人物提示词和后续可复用的视觉素材。</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">集中管理人物资料、人物提示词、人物图片和拜访场景图片。</p>
                 </div>
               </div>
               <span className="rounded-full bg-success/10 px-2.5 py-1 text-[10px] font-medium text-success">当前项目 · {currentProject?.name || '项目一'}</span>
@@ -600,18 +539,68 @@ export default function DesignerPage() {
                 <div className="mt-4 text-xs font-medium text-violet-600">打开人物提示词 →</div>
               </button>
 
-              <div className="rounded-xl border border-dashed border-border bg-muted/40 p-5">
+              <div className="rounded-xl border border-role-designer/30 bg-role-designer/5 p-5">
                 <div className="mb-4 flex items-center justify-between">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-500/10 text-slate-500"><ImageIcon className="h-5 w-5" /></span>
-                  <span className="rounded-full bg-slate-500/10 px-2 py-1 text-[10px] text-slate-500">空状态</span>
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-role-designer/10 text-role-designer"><ImageIcon className="h-5 w-5" /></span>
+                  <span className="rounded-full bg-role-designer/10 px-2 py-1 text-[10px] text-role-designer">已开放</span>
                 </div>
                 <div className="text-sm font-semibold text-foreground">人物图片素材</div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">暂未上传人物肖像或状态图，后续可在此集中维护。</p>
-                <button disabled className="mt-4 flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground/60">
-                  <Upload className="h-3.5 w-3.5" /> 上传图片（待开放）
-                </button>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">人物介绍图已预填；可上传替换介绍图或补充五种表情。</p>
+                <div className="mt-4 text-xs font-medium text-role-designer">在下方按用途上传 →</div>
               </div>
             </div>
+
+            <section className="rounded-xl border border-border bg-card p-5">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">人物形象</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">支持 PNG、JPEG、WebP，单张不超过 5 MB。人物介绍图用于游戏主进程页面。</p>
+                </div>
+                <span className="rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">{imageAssets.filter((asset) => asset.category === 'person_intro').length}/5 介绍图</span>
+              </div>
+              {imageAssetNotice && <p role="status" className="mb-3 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">{imageAssetNotice}</p>}
+              {imageAssetsLoading ? (
+                <div className="py-6 text-center text-xs text-muted-foreground">正在读取图片素材…</div>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                  {imageAssets.filter((asset) => asset.category === 'person_intro').map((asset) => (
+                    <article key={asset.slotKey} className="overflow-hidden rounded-lg border border-border bg-muted/30">
+                      <div className="h-32 bg-muted">
+                        {asset.imageUrl ? <button type="button" onClick={() => setPreviewImageAsset(asset)} className="h-full w-full cursor-zoom-in" aria-label={`查看${asset.label}高清大图`}><img src={asset.imageUrl} alt={asset.label} className="h-full w-full object-cover object-top" /></button> : <div className="flex h-full items-center justify-center text-xs text-muted-foreground">暂未上传</div>}
+                      </div>
+                      <div className="p-3">
+                        <div className="min-h-9 text-xs font-medium text-foreground">{asset.label}</div>
+                        <label className="mt-2 flex cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border bg-card px-2 py-1.5 text-xs text-foreground hover:bg-muted">
+                          <Upload className="h-3.5 w-3.5" /> {uploadingImageSlot === asset.slotKey ? '上传中…' : asset.isDefault ? '替换图片' : '再次替换'}
+                          <input className="sr-only" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploadingImageSlot !== null} onChange={(event) => void handleImageUpload(asset.slotKey, event)} />
+                        </label>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {!imageAssetsLoading && (
+              <section className="rounded-xl border border-border bg-card p-5">
+                <div className="mb-4">
+                  <h3 className="text-sm font-semibold text-foreground">人物表情</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">愤怒、严肃、正常淡定、愉快、特别开心五种表情初始为空，可按人物分别上传。</p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                  {imageAssets.filter((asset) => asset.category === 'person_expression').map((asset) => (
+                    <article key={asset.slotKey} className="flex items-center gap-2 rounded-lg border border-dashed border-border bg-muted/25 p-2 hover:border-role-designer/50 hover:bg-role-designer/5">
+                      {asset.imageUrl ? <button type="button" onClick={() => setPreviewImageAsset(asset)} className="h-10 w-10 shrink-0 cursor-zoom-in overflow-hidden rounded" aria-label={`查看${asset.label}高清大图`}><img src={asset.imageUrl} alt={asset.label} className="h-full w-full object-cover" /></button> : <ImageIcon className="h-5 w-5 shrink-0 text-muted-foreground" />}
+                      <span className="min-w-0 flex-1 text-xs text-foreground">{asset.label}</span>
+                      <label className="cursor-pointer rounded p-1 text-role-designer hover:bg-role-designer/10" aria-label={`上传${asset.label}`}>
+                        <Upload className="h-3.5 w-3.5" />
+                        <input className="sr-only" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploadingImageSlot !== null} onChange={(event) => void handleImageUpload(asset.slotKey, event)} />
+                      </label>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
 
             <div className="rounded-xl border border-border bg-card p-5">
               <div className="mb-3 flex items-center gap-2">
@@ -621,65 +610,43 @@ export default function DesignerPage() {
               <div className="grid gap-3 text-xs leading-5 text-muted-foreground md:grid-cols-3">
                 <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">人物资料</span><br />用于维护人物主档和游戏中的可披露信息。</div>
                 <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">人物提示词</span><br />按人物和交流渠道维护角色表达，规则性约束不开放编辑。</div>
-                <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">图片素材</span><br />当前保留空状态，不影响文字和模型测试流程。</div>
+                <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">图片素材</span><br />人物介绍图已预填，表情与拜访场景可在对应槽位上传。</div>
               </div>
             </div>
           </div>
         )}
 
-        {selectedModule === 'scenario' && (
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-5 py-3">
-            <div className="flex items-center gap-2">
-              <ImageIcon className="h-4 w-4 text-primary" />
-              <span className="text-sm font-semibold text-foreground">场景资源</span>
-              <span className="text-xs text-muted-foreground">图片素材为主，提示词独立维护</span>
-            </div>
-            <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
-              <button
-                onClick={() => setSelectedScenarioTab('images')}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${selectedScenarioTab === 'images' ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                场景图片
-              </button>
-              <button
-                onClick={() => setSelectedScenarioTab('prompts')}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${selectedScenarioTab === 'prompts' ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-              >
-                场景提示词
-              </button>
-            </div>
-          </div>
-        )}
-
-        {selectedModule === 'scenario' && selectedScenarioTab === 'images' && (
+        {selectedModule === 'assets' && (
           <div className="space-y-4 animate-fade-up">
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {[
-                { title: '项目地图', description: '项目一的整体场景与流程背景。', image: '/game-map.webp' },
-                { title: '会面环境', description: '拜访流程使用的空场景背景。', image: '/images/game/visit-meeting-room-empty-v1.png' },
-                { title: '对话场景', description: '人物对话时使用的场景素材。', image: '/images/game/visit-dialogue-scene-v1.png' },
-              ].map((scene) => (
-                <article key={scene.title} className="overflow-hidden rounded-xl border border-border bg-card">
-                  <div className="h-40 bg-muted bg-cover bg-center" style={{ backgroundImage: `url('${scene.image}')` }} role="img" aria-label={scene.title} />
-                  <div className="p-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-sm font-semibold text-foreground">{scene.title}</h3>
-                      <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] text-success">已就绪</span>
-                    </div>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{scene.description}</p>
-                  </div>
-                </article>
-              ))}
-            </div>
-            <div className="flex items-center justify-between rounded-xl border border-dashed border-border bg-muted/40 px-5 py-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-500/10 text-slate-500"><ImageIcon className="h-4 w-4" /></div>
+            <div className="rounded-xl border border-border bg-card p-5">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-medium text-foreground">更多场景图片</div>
-                  <div className="text-xs text-muted-foreground">上传入口暂未开放，当前先使用项目内置素材。</div>
+                  <h2 className="text-base font-semibold text-foreground">拜访场景图片</h2>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">办公室、饭店、电梯和酒馆均从空素材位开始，可在此上传并替换。</p>
                 </div>
+                <span className="rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">PNG、JPEG、WebP · 5 MB 以内</span>
               </div>
-              <button disabled className="flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs text-muted-foreground/60"><Upload className="h-3.5 w-3.5" /> 上传图片（待开放）</button>
+              {imageAssetNotice && <p role="status" className="mb-3 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">{imageAssetNotice}</p>}
+              {imageAssetsLoading ? (
+                <div className="py-8 text-center text-xs text-muted-foreground">正在读取场景素材…</div>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  {imageAssets.filter((asset) => asset.category === 'visit_scene').map((asset) => (
+                    <article key={asset.slotKey} className="overflow-hidden rounded-xl border border-dashed border-border bg-muted/25">
+                      <div className="h-40 bg-muted">
+                        {asset.imageUrl ? <button type="button" onClick={() => setPreviewImageAsset(asset)} className="h-full w-full cursor-zoom-in" aria-label={`查看${asset.label}高清大图`}><img src={asset.imageUrl} alt={asset.label} className="h-full w-full object-cover" /></button> : <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground"><ImageIcon className="h-7 w-7" /><span className="text-xs">暂未上传</span></div>}
+                      </div>
+                      <div className="p-3">
+                        <h3 className="text-sm font-semibold text-foreground">{asset.label}</h3>
+                        <label className="mt-3 flex cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-muted">
+                          <Upload className="h-3.5 w-3.5" /> {uploadingImageSlot === asset.slotKey ? '上传中…' : asset.imageUrl ? '替换图片' : '上传图片'}
+                          <input className="sr-only" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploadingImageSlot !== null} onChange={(event) => void handleImageUpload(asset.slotKey, event)} />
+                        </label>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -817,354 +784,6 @@ export default function DesignerPage() {
             <button className="mt-4 w-full px-4 py-2 rounded-lg bg-primary/10 text-primary text-sm font-semibold hover:bg-primary/20">
               添加竞品
             </button>
-          </div>
-        )}
-
-        {selectedModule === 'scenario' && selectedScenarioTab === 'prompts' && (
-          <div className="space-y-4 animate-fade-up">
-            <section className="rounded-xl border border-border bg-card p-5">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                    <FileText className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-base font-semibold text-foreground">项目一 · 五人版分层提示词</h2>
-                      <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-medium text-primary">共享配置源</span>
-                    </div>
-                    <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
-                      硬约束、状态节点、运行时状态、记忆和渠道通用规则由系统统一管理；设计师只维护人物及人物渠道提示词。
-                    </p>
-                  </div>
-                </div>
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-900">
-                  <div className="font-semibold">Evaluator 独立运行</div>
-                  <div>最终状态由代码 Resolver 结算，不由 NPC 提示词直接写入。</div>
-                </div>
-              </div>
-
-              <div className="mt-5 flex flex-wrap items-center gap-2">
-                <div className="mr-1 flex items-center gap-1.5 text-xs font-semibold text-foreground">
-                  <Users className="h-3.5 w-3.5 text-primary" /> 选择人物
-                </div>
-                {fivePersonNpcs.map((person) => {
-                  const active = selectedPromptNpc?.id === person.id;
-                  return (
-                    <button
-                      key={person.id}
-                      onClick={() => setSelectedPromptNpcId(person.id)}
-                      className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-all ${
-                        active
-                          ? 'border-primary bg-primary text-primary-foreground shadow-sm'
-                          : 'border-border bg-muted/50 text-muted-foreground hover:border-primary/40 hover:bg-muted hover:text-foreground'
-                      }`}
-                    >
-                      <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold ${active ? 'bg-primary-foreground/20' : 'bg-card'}`}>
-                        {person.name.slice(0, 1)}
-                      </span>
-                      <span>
-                        <span className="block text-xs font-semibold">{person.name}</span>
-                        <span className={`block text-[10px] ${active ? 'text-primary-foreground/70' : 'text-muted-foreground/70'}`}>{person.title || '职位待配置'}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-                <span className="ml-auto text-[10px] text-muted-foreground">{fivePersonNpcs.length} 位受控人物 · 稳定 ID</span>
-              </div>
-            </section>
-
-            {fivePersonNpcs.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
-                五人版共享人物配置尚未提供，提示词编辑器暂不可用。
-              </div>
-            ) : (
-              <>
-                <section className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
-                  <div className="rounded-xl border border-border bg-card p-5">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                        <Users className="h-4 w-4 text-primary" /> 组织与人物摘要
-                      </div>
-                      <span className="rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">{selectedPromptNpcIndex >= 0 ? `第 ${selectedPromptNpcIndex + 1} 位` : '未选择'}</span>
-                    </div>
-                    <div className="mt-3 space-y-1.5">
-                      {fivePersonNpcs.map((person) => {
-                        const active = selectedPromptNpc?.id === person.id;
-                        const level = configNumber(person, 'displayLevel', 'level') ?? 0;
-                        return (
-                          <button
-                            key={person.id}
-                            onClick={() => setSelectedPromptNpcId(person.id)}
-                            className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition-colors ${active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-                            style={{ paddingLeft: `${12 + Math.min(level, 3) * 14}px` }}
-                          >
-                            <span className={`h-2 w-2 rounded-full ${active ? 'bg-primary' : 'bg-border'}`} />
-                            <span className="font-medium">{person.name}</span>
-                            <span className="ml-auto text-[10px] text-muted-foreground">{person.title || '职位待配置'}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <div className="mt-4 border-t border-border pt-4 text-xs leading-5 text-muted-foreground">
-                      <div className="mb-1 font-semibold text-foreground">组织路径</div>
-                      <div>{selectedPromptParent?.name ? `${selectedPromptParent.name} → ` : '组织根节点 → '}{selectedPromptNpc?.name || '未选择'}</div>
-                      <div className="mt-1 text-[10px]">parentId / displayLevel / displayOrder 来自五人版共享主档。</div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-border bg-card p-5">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="text-base font-semibold text-foreground">{selectedPromptNpc?.name || '未选择人物'}</div>
-                        <div className="mt-1 text-xs text-muted-foreground">{selectedPromptNpc?.title || '职位待配置'} · 人物主档摘要</div>
-                      </div>
-                      <span className="rounded-full bg-success/10 px-2.5 py-1 text-[10px] font-medium text-success">受控人物</span>
-                    </div>
-                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                      {[
-                        ['职责 / 关注', selectedNpcFacts],
-                        ['核心诉求', selectedNpcNeeds],
-                        ['可披露边界', selectedNpcBoundaries],
-                        ['绝对禁忌 / 风险', selectedNpcTaboos],
-                      ].map(([label, values]) => (
-                        <div key={label as string} className="rounded-lg bg-muted/60 p-3">
-                          <div className="text-[10px] font-semibold text-foreground">{label as string}</div>
-                          <div className="mt-1 text-xs leading-5 text-muted-foreground">
-                            {(values as string[]).length > 0 ? (values as string[]).join('；') : '共享主档暂未填写'}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </section>
-
-                <section className="rounded-xl border border-border bg-card p-5">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                        <ShieldCheck className="h-4 w-4 text-primary" /> 状态节点 · 阻断优先
-                      </div>
-                      <p className="mt-1 text-[11px] leading-5 text-muted-foreground">节点升级必须同时满足支持度、有效接触和证据条件；存在活动阻断时始终停留在 BLOCKED。</p>
-                    </div>
-                    <span className="rounded-full bg-rose-500/10 px-2.5 py-1 text-[10px] font-medium text-rose-600">N1 → N4 / BLOCKED</span>
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {promptNodes.map((node) => {
-                      const active = selectedPromptNode?.id === node.id;
-                      const isBlocked = node.id === 'BLOCKED';
-                      return (
-                        <button
-                          key={node.id}
-                          onClick={() => setSelectedPromptNodeId(node.id)}
-                          className={`rounded-lg border px-3 py-2 text-left transition-colors ${
-                            active
-                              ? isBlocked ? 'border-rose-500 bg-rose-500 text-white' : 'border-primary bg-primary text-primary-foreground'
-                              : isBlocked ? 'border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100' : 'border-border bg-muted/50 text-muted-foreground hover:border-primary/40 hover:bg-muted hover:text-foreground'
-                          }`}
-                        >
-                          <span className="block text-xs font-bold">{node.id}</span>
-                          <span className="mt-0.5 block text-[10px]">{configText(node, 'label', 'name') || node.id}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {selectedPromptNode && (
-                    <div className="mt-4 grid gap-3 md:grid-cols-4">
-                      <div className="rounded-lg border border-border bg-muted/40 p-3">
-                        <div className="text-[10px] text-muted-foreground">支持度门槛</div>
-                        <div className="mt-1 text-sm font-semibold text-foreground">{configNumber(selectedPromptNode, 'supportThreshold', 'support') ?? '—'}</div>
-                        <div className="mt-1 text-[10px] text-muted-foreground">当前节点要求</div>
-                      </div>
-                      <div className="rounded-lg border border-border bg-muted/40 p-3">
-                        <div className="text-[10px] text-muted-foreground">有效接触次数</div>
-                        <div className="mt-1 text-sm font-semibold text-foreground">{configNumber(selectedPromptNode, 'contactThreshold', 'effectiveContactThreshold', 'contacts') ?? '—'}</div>
-                        <div className="mt-1 text-[10px] text-muted-foreground">仅计入有效接触</div>
-                      </div>
-                      <div className="rounded-lg border border-border bg-muted/40 p-3">
-                        <div className="text-[10px] text-muted-foreground">证据标签</div>
-                        <div className="mt-1 text-xs leading-5 text-foreground">{configList(selectedPromptNode, 'evidenceTags', 'evidence', 'requiredEvidence').join('、') || '无额外标签'}</div>
-                      </div>
-                      <div className="rounded-lg border border-rose-200 bg-rose-50/70 p-3">
-                        <div className="text-[10px] text-rose-700">阻断条件</div>
-                        <div className="mt-1 text-xs leading-5 text-rose-900">{configText(selectedPromptNode, 'blockerPolicy', 'blockers', 'blockingRule') || '活动阻断优先，阻断未解除前不升级。'}</div>
-                      </div>
-                    </div>
-                  )}
-                </section>
-
-                <section className="grid gap-4 lg:grid-cols-2">
-                  <div className="rounded-xl border border-border bg-card p-5">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-sm font-semibold text-foreground">运行时双轴状态</div>
-                      <span className="rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">预览初始值</span>
-                    </div>
-                    <div className="mt-4 space-y-4">
-                      {[
-                        ['support', '支持度', '支持意愿的运行时轴', 'bg-primary', '48%'],
-                        ['pleasantness', '愉悦度', '互动感受的运行时轴', 'bg-amber-500', '56%'],
-                      ].map((axis) => (
-                        <div key={axis[0]}>
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-medium text-foreground">{axis[1]}</span>
-                            <span className="font-mono text-muted-foreground">{axis[4]}</span>
-                          </div>
-                          <div className="mt-2 h-2 rounded-full bg-muted">
-                            <div className={`h-2 rounded-full ${axis[3]}`} style={{ width: axis[4] }} />
-                          </div>
-                          <div className="mt-1 text-[10px] text-muted-foreground">{axis[2]}</div>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                      <div className="rounded-lg bg-muted/60 p-3"><span className="text-muted-foreground">有效接触</span><span className="float-right font-semibold text-foreground">1 次</span></div>
-                      <div className="rounded-lg bg-muted/60 p-3"><span className="text-muted-foreground">活动阻断</span><span className="float-right font-semibold text-success">无</span></div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-border bg-card p-5">
-                    <div className="text-sm font-semibold text-foreground">高价值记忆 · 近期历史</div>
-                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                      <div className="rounded-lg border border-border bg-muted/40 p-3">
-                        <div className="text-[10px] font-semibold text-foreground">高价值记忆</div>
-                        <div className="mt-2 space-y-1.5 text-xs leading-5 text-muted-foreground">
-                          {configList(selectedPromptNpc, 'highValueMemory', 'memoryFocus', 'memories').length > 0
-                            ? configList(selectedPromptNpc, 'highValueMemory', 'memoryFocus', 'memories').map((memory) => <div key={memory}>• {memory}</div>)
-                            : <div>仅保留带来源的事实、承诺、证据和阻断。</div>}
-                        </div>
-                      </div>
-                      <div className="rounded-lg border border-border bg-muted/40 p-3">
-                        <div className="text-[10px] font-semibold text-foreground">近期历史</div>
-                        <div className="mt-2 text-xs leading-5 text-muted-foreground">
-                          {configText(selectedPromptNpc, 'recentHistory', 'historyPolicy') || '只注入该人物最近有限对话；原始流水保留在日志，不全量进入提示词。'}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 p-3 text-[11px] leading-5 text-blue-900">
-                      记忆先结构化索引，再筛选必须提及或可引用摘要；跨人物信息不得因历史文本自动共享。
-                    </div>
-                  </div>
-                </section>
-
-                <section className="rounded-xl border border-border bg-card p-5">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-foreground">渠道修饰器 · 人物×渠道例外</div>
-                      <p className="mt-1 text-[11px] leading-5 text-muted-foreground">每次接触是独立动作；渠道只修饰表达方式，不能覆盖人物规则、状态门槛或阻断。</p>
-                    </div>
-                    <span className="rounded-full bg-muted px-2.5 py-1 text-[10px] text-muted-foreground">{promptChannels.length} 个渠道修饰器</span>
-                  </div>
-                  <div className="mt-4 grid gap-3 md:grid-cols-2">
-                    {promptChannels.map((channel) => (
-                      <div key={channel.key} className="rounded-lg border border-border bg-muted/40 p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-foreground">{channel.label}</span>
-                          <code className="text-[10px] text-muted-foreground">{channel.key}</code>
-                        </div>
-                        <div className="mt-1 text-xs leading-5 text-muted-foreground">{channel.text || '共享配置中暂无描述。'}</div>
-                      </div>
-                    ))}
-                    {promptChannels.length === 0 && <div className="rounded-lg border border-dashed border-border p-4 text-xs text-muted-foreground">共享配置中暂无渠道修饰器。</div>}
-                  </div>
-                  <div className="mt-4 rounded-lg border border-primary/20 bg-primary/5 p-3">
-                    <div className="text-[10px] font-semibold text-primary">当前人物专属例外 · {selectedPromptNpc?.name}</div>
-                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                      {selectedNpcExceptions.map(([channel, exception]) => (
-                        <div key={channel} className="rounded-md bg-card px-3 py-2 text-xs leading-5 text-muted-foreground">
-                          <span className="font-medium text-foreground">{channel}</span> · {configText(exception, 'description', 'exception', 'modifier', 'prompt', 'value') || '已配置人物专属表达边界。'}
-                        </div>
-                      ))}
-                      {selectedNpcExceptions.length === 0 && <div className="text-xs text-muted-foreground">无专属例外，使用渠道通用修饰器。</div>}
-                    </div>
-                  </div>
-                </section>
-
-                <section className="rounded-xl border border-border bg-card">
-                  <div className="flex flex-wrap items-center gap-3 border-b border-border px-5 py-4">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><Pencil className="h-4 w-4 text-primary" /> 系统提示词结构预览</div>
-                    <span className="text-[10px] text-muted-foreground">{selectedPromptNpc?.name || '未选择'} · {configText(selectedPromptNode, 'label', 'name') || selectedPromptNode?.id || '未选择节点'}</span>
-                    <div className="ml-auto flex items-center gap-1 rounded-lg bg-muted p-1">
-                      <button onClick={() => setPromptView('edit')} className={`rounded-md px-3 py-1.5 text-xs font-medium ${promptView === 'edit' ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>单层查看</button>
-                      <button onClick={() => setPromptView('preview')} className={`rounded-md px-3 py-1.5 text-xs font-medium ${promptView === 'preview' ? 'bg-card text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>预览</button>
-                    </div>
-                  </div>
-                  <div className="grid min-h-[500px] lg:grid-cols-[210px_1fr]">
-                    <div className="border-b border-border p-3 lg:border-b-0 lg:border-r">
-                      <div className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">组合顺序</div>
-                      <div className="space-y-1">
-                        {orderedPromptLayers.map((layer, index) => {
-                          const active = selectedPromptLayer?.id === layer.id;
-                          return (
-                            <button
-                              key={layer.id}
-                              onClick={() => { setSelectedPromptLayerId(layer.id); setPromptView('edit'); }}
-                              className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs transition-colors ${active ? 'bg-primary text-primary-foreground font-semibold' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-                            >
-                              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted/80 text-[10px] font-bold">{index + 1}</span>
-                              <span className="truncate">{configText(layer, 'label', 'name') || layer.id}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <div className="mt-4 rounded-lg bg-muted/60 p-3 text-[10px] leading-5 text-muted-foreground">
-                        顺序固定为：硬约束 → 人物规则 → 状态节点 → 运行时双轴状态 → 高价值记忆 → 近期历史 → 渠道修饰器 → 人物×渠道例外。
-                      </div>
-                    </div>
-                    <div className="p-4">
-                      {selectedPromptLayer ? (
-                        <>
-                          <div className="flex flex-wrap items-start justify-between gap-3">
-                            <div>
-                              <div className="text-sm font-semibold text-foreground">{configText(selectedPromptLayer, 'label', 'name') || selectedPromptLayer.id}</div>
-                              <div className="mt-1 text-[11px] leading-5 text-muted-foreground">{configText(selectedPromptLayer, 'description') || '该层由共享配置定义，可针对当前人物与状态调整表达。'}</div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => router.push('/designer/prompt-library')}
-                                className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[11px] font-semibold text-primary-foreground hover:bg-primary/90"
-                              >
-                                <Library className="h-3.5 w-3.5" /> 编辑人物提示词
-                              </button>
-                              <button
-                                onClick={() => { if (selectedPromptLayerText) void navigator.clipboard.writeText(selectedPromptLayerText); }}
-                                className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                              >
-                                <Copy className="h-3.5 w-3.5" /> 复制
-                              </button>
-                            </div>
-                          </div>
-                          {promptView === 'edit' ? (
-                            <textarea
-                              value={selectedPromptLayerText}
-                              readOnly
-                              placeholder="共享配置中暂无模板。"
-                              className="mt-4 h-[350px] w-full resize-none rounded-lg border border-border bg-muted px-4 py-3 text-sm leading-6 text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30"
-                            />
-                          ) : (
-                            <div className="mt-4 h-[350px] overflow-auto rounded-lg border border-border bg-slate-950 p-4 text-xs leading-6 text-slate-100">
-                              {promptPreview.length > 0 ? promptPreview.map((section) => (
-                                <div key={section.id} className="mb-4 last:mb-0">
-                                  <div className="mb-1 font-semibold text-blue-300">## {section.label}</div>
-                                  <div className="whitespace-pre-wrap break-words text-slate-200">{section.text}</div>
-                                </div>
-                              )) : <div className="text-slate-400">共享配置中暂无可预览内容。</div>}
-                            </div>
-                          )}
-                          <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-muted-foreground">
-                            <span className="rounded-full bg-muted px-2 py-1">人物：{selectedPromptNpc?.id || '—'}</span>
-                            <span className="rounded-full bg-muted px-2 py-1">节点：{selectedPromptNode?.id || '—'}</span>
-                            <span className="rounded-full bg-muted px-2 py-1">Evaluator：独立上下文</span>
-                            <span className="rounded-full bg-muted px-2 py-1">Resolver：代码结算</span>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">共享分层配置尚未提供。</div>
-                      )}
-                    </div>
-                  </div>
-                </section>
-              </>
-            )}
           </div>
         )}
 
@@ -1353,6 +972,28 @@ export default function DesignerPage() {
                 {selectedMetricTab} 指标配置区域
               </div>
             )}
+          </div>
+        )}
+
+        {previewImageAsset?.imageUrl && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${previewImageAsset.label}高清大图`}
+            onClick={() => setPreviewImageAsset(null)}
+          >
+            <div className="relative flex max-h-[92vh] max-w-[94vw] flex-col overflow-hidden rounded-2xl bg-card shadow-2xl" onClick={(event) => event.stopPropagation()}>
+              <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-3">
+                <div className="min-w-0 truncate text-sm font-semibold text-foreground">{previewImageAsset.label}</div>
+                <button type="button" onClick={() => setPreviewImageAsset(null)} className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="关闭高清大图">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="flex min-h-0 items-center justify-center overflow-auto bg-black/90 p-3">
+                <img src={previewImageAsset.imageUrl} alt={previewImageAsset.label} className="max-h-[82vh] max-w-full object-contain" />
+              </div>
+            </div>
           </div>
         )}
 

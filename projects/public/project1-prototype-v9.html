@@ -198,6 +198,11 @@ linear-gradient(180deg,#f6f9fd,#f2f6fa);padding:14px}.workspace-body>*{animation
 .message.player{margin-left:auto;background:linear-gradient(180deg,#3d76f0,#2757cd);color:#eef4ff;border-bottom-right-radius:4px;box-shadow:0 5px 14px rgba(39,87,205,.3),inset 0 1px 0 rgba(255,255,255,.25)}
 .message.npc{background:linear-gradient(180deg,#f6f8fb,#eff3f8);color:#3d4c64;border:1px solid #e4eaf3;border-bottom-left-radius:4px;box-shadow:0 3px 8px rgba(24,44,84,.06)}
 .message .meta{font-size:7px;color:#8c99ad;margin-bottom:3px}
+.message.pending{opacity:.82}
+.message.failed{border:1px solid #f3b8c2;background:#fff4f6;color:#8c3042;box-shadow:none}
+.typing-dots{display:inline-flex;align-items:center;gap:3px;height:12px;margin-left:3px;vertical-align:middle}
+.typing-dots i{width:4px;height:4px;border-radius:50%;background:#8190a7;animation:pulseDot 1.15s ease-in-out infinite}
+.typing-dots i:nth-child(2){animation-delay:.16s}.typing-dots i:nth-child(3){animation-delay:.32s}
 .message .read-status{display:inline-flex;align-items:center;margin-left:6px;color:#d9e6ff;font-weight:800;letter-spacing:.02em}
 .message.npc .read-status{color:#6c7d96}
 .message-attachment{margin-top:6px;padding:5px 7px;border-radius:6px;background:rgba(255,255,255,.75);border:1px solid rgba(47,107,255,.18);font-size:8px;color:#33589c}
@@ -236,6 +241,7 @@ linear-gradient(150deg,#101b31,#16263f 55%,#0c1526);color:#fff;display:flex;alig
 .phone-inner p{font-size:10px;color:#a9b9d4}
 .call-avatar{width:82px;height:82px;border-radius:50%;background:linear-gradient(145deg,#b18cff,#6f3fe4);display:grid;place-items:center;margin:18px auto 10px;font-size:32px;font-weight:900;box-shadow:0 0 0 12px rgba(139,92,246,.09),0 0 0 26px rgba(139,92,246,.04),0 16px 34px rgba(80,42,160,.45),inset 0 2px 0 rgba(255,255,255,.3);animation:pulseDot 3.2s ease-in-out infinite}
 .phone-log{margin:12px 0;background:rgba(255,255,255,.07);border:1px solid rgba(170,198,245,.12);border-radius:10px;padding:9px;text-align:left;font-size:9px;line-height:1.55;color:#d5e0f0}
+.phone-line+.phone-line{margin-top:5px}.phone-line.pending{color:#aebdd3}.phone-line.failed{color:#ffb8c3}
 .wechat-request{padding:22px}
 .wechat-request h3{font-size:15px;margin:0 0 5px}.wechat-request p{font-size:9px;color:var(--muted);line-height:1.6}.wechat-request textarea{min-height:100px}
 .postal-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;padding:14px}
@@ -321,6 +327,7 @@ linear-gradient(135deg,#33465c,#1b2836 55%,#0d141d);color:#fff;padding:17px;disp
 .test-npc-state-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:9px}.test-npc-state-head strong{color:#40516b}.test-npc-state-actions{display:flex;align-items:center;gap:8px}.test-npc-enable{display:flex;align-items:center;gap:4px;color:#60718b;font-weight:800;cursor:pointer}.test-npc-enable input{accent-color:#2f6bff}.test-node{border-radius:999px;background:#eef4ff;color:#315fb7;padding:3px 7px;font-weight:900}
 .test-npc-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}.test-npc-metric label{display:block;font-size:8px;font-weight:800;color:#6b7a91;margin-bottom:4px}
 .test-npc-metric input:disabled{background:#f1f4f8;color:#8b98aa;cursor:not-allowed}
+.test-appointment-list{display:flex;flex-direction:column;gap:8px;margin-top:10px}.test-appointment-row{border:1px solid #e2eaf4;border-radius:10px;background:#fff;padding:9px}.test-appointment-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}.test-appointment-grid select{width:100%;border:1px solid #d5e0ee;border-radius:8px;background:#fff;color:var(--text);padding:7px 8px;font-size:10px;outline:none}.test-appointment-grid input:disabled,.test-appointment-grid select:disabled{background:#f1f4f8;color:#8b98aa;cursor:not-allowed}.test-appointment-grid select:focus,.test-appointment-grid input:focus{border-color:#7fa4f5;box-shadow:0 0 0 3px rgba(47,107,255,.1)}.test-appointment-agenda{grid-column:1/3}
 .ok{color:#12996b;font-weight:800;text-shadow:0 0 10px rgba(18,153,107,.3)}.warn{color:#b97a10;font-weight:800;text-shadow:0 0 10px rgba(223,148,22,.28)}
 .toast-root{position:fixed;right:20px;bottom:20px;z-index:200;display:flex;flex-direction:column;gap:7px}
 .toast{position:relative;background:rgba(20,31,54,.94);backdrop-filter:blur(12px);border:1px solid rgba(110,146,208,.32);color:#e5edfa;padding:11px 13px 11px 17px;border-radius:10px;box-shadow:0 16px 38px rgba(1,4,12,.55);font-size:9px;max-width:340px;animation:toastIn .3s var(--spring) both;overflow:hidden}
@@ -329,6 +336,54 @@ linear-gradient(135deg,#33465c,#1b2836 55%,#0d141d);color:#fff;padding:17px;disp
 .toast.warn{border-color:rgba(246,189,79,.42)}.toast.warn:before{background:#f6bd4f}
 .toast.error{border-color:rgba(251,113,133,.45)}.toast.error:before{background:#fb7185}
 @media(max-width:1180px){.workspace{grid-template-columns:245px 330px minmax(580px,1fr);overflow-x:auto}.brand{min-width:280px}.top-actions{min-width:260px}}
+/* Project-one visual refresh: neutral contact network, airy blue workbench. */
+:root{--bg:#edf5ff;--text:#10264c;--muted:#607592;--line:#d7e5f7;--blue:#1763e9;--blue-deep:#134bc3;--shadow:0 12px 30px rgba(43,88,157,.08);--r:15px}
+html,body{background:#edf5ff}
+body:before{background:radial-gradient(900px 420px at 12% 0%,#dcecff 0,transparent 70%),radial-gradient(720px 420px at 92% 2%,#dcecff 0,transparent 70%),linear-gradient(180deg,#f5faff,#eaf3ff)}
+.shell{max-width:1920px}
+.topbar{height:auto;min-height:104px;padding:12px 22px;gap:16px;background:linear-gradient(105deg,rgba(220,235,255,.97),rgba(245,250,255,.97) 55%,rgba(214,232,255,.97));border-bottom:1px solid #d3e4fa;box-shadow:0 6px 25px rgba(39,89,155,.07)}
+.brand{min-width:0;flex:1 1 310px}.brand-icon{width:54px;height:54px;border-radius:11px;font-size:29px;background:linear-gradient(150deg,#4c92ff,#1c5bd5);box-shadow:0 8px 18px rgba(28,89,204,.25)}
+.brand h1{font-size:22px;line-height:1.3;letter-spacing:.02em}.brand p{font-size:12px;margin-top:5px;color:#52729e}
+.stage-pill{margin:0;flex:0 1 360px;display:grid;grid-template-columns:1fr auto;gap:8px 14px;padding:11px 20px;border-radius:13px;font-size:12px;box-shadow:0 8px 22px rgba(38,85,158,.08)}
+.stage-copy{display:flex;align-items:baseline;gap:7px}.stage-copy span{font-size:10px;color:#7489aa;font-weight:700}.stage-copy strong{font-size:14px;color:#102a59}.stage-index{grid-column:2;grid-row:1/3;color:#4272bd;font-size:12px;font-weight:900;align-self:center}
+.phase-track{grid-column:1;position:relative;height:4px;margin:7px 9px 8px;background:#cbdaf0;border-radius:99px}.phase-fill{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,#165bd8,#3a8aff);border-radius:99px}.phase-mark{position:absolute;top:50%;width:14px;height:14px;border:3px solid #fff;border-radius:50%;background:#b6c9e4;transform:translate(-50%,-50%);box-shadow:0 1px 5px rgba(40,71,127,.18)}.phase-mark.cur,.phase-mark.done{background:#1763e9}
+.top-ap{display:flex;align-items:center;gap:7px;padding:10px 13px;border-radius:11px;border:1px solid #efd8aa;background:linear-gradient(180deg,#fffdf5,#fff3db);color:#8b5b10;font-size:11px;font-weight:800;white-space:nowrap}.top-ap .ap-symbol{font-size:25px;color:#e5a122}.top-ap strong{font-size:25px;color:#89530b}.top-ap em{font-size:11px;font-style:normal;color:#af8a52}
+.top-actions{min-width:0;flex:1 1 340px;justify-content:flex-end;flex-wrap:wrap}.top-actions .btn{padding:10px 12px;font-size:11px;white-space:nowrap}.btn-primary{background:linear-gradient(180deg,#2675f2,#164fce);border-color:#1e5bd7}
+.view{padding:16px 20px 20px}.workspace{height:calc(100vh - 140px);min-height:700px;grid-template-columns:minmax(265px,25fr) minmax(410px,36fr) minmax(450px,39fr);gap:14px;overflow:visible}
+.card,.people-col,.comm-col{background:linear-gradient(180deg,#fff,#fcfdff);border:1px solid #d8e5f7;border-radius:15px;box-shadow:0 10px 28px rgba(38,85,155,.075)}.context-col{gap:11px}.context-card{padding:18px}.context-card h3,.people-head h3{font-size:19px;color:#102751}.context-card p{font-size:12px;line-height:1.75;color:#405676;margin:13px 0 0}
+.card-heading{display:flex;align-items:center;gap:10px}.section-icon{display:grid;place-items:center;flex:none;width:32px;height:32px;border-radius:8px;background:#e7f0ff;color:#2065e2;font-size:19px;font-weight:900}.gold-icon{background:#fff1d5;color:#df9c1c}.violet-icon{background:#edf0ff;color:#5d6eb9}.section-kicker{display:block;color:#7a8da9;font-size:10px;margin-top:2px}
+.budget-box{display:flex;align-items:center;justify-content:space-between;gap:10px;background:linear-gradient(115deg,#fff9e9,#fff4df);border-color:#f5e1b8;padding:17px;margin:18px 0 13px}.budget-box label{display:block;color:#937347;font-size:11px}.budget-caption{display:block;margin-top:5px;color:#ae9978;font-size:10px}.budget-box strong{font-size:30px;white-space:nowrap}.budget-box strong small{font-size:14px}.context-facts{display:flex;gap:6px;flex-wrap:wrap}.context-facts span{padding:7px 8px;border:1px solid #dfeafa;border-radius:8px;background:#f5f9ff;font-size:10px;color:#607594}.context-facts b{color:#245fca}
+.info-update{padding:15px}.info-update-head{margin-bottom:12px}.info-update-head strong{font-size:15px}.update-list{max-height:210px;gap:7px}.update-item{border-left:3px solid #69a0ff;background:#f4f8ff;padding:9px 10px}.update-item b{font-size:10px}.update-item span{font-size:10px;color:#526885}
+.nav-card{padding:14px 15px;min-height:76px}.nav-card strong{font-size:14px}.nav-card span{font-size:10px}.nav-card .tag{font-size:11px}.nav-arrow{font-size:24px!important;color:#6286c4!important}.pressure-card p{font-size:11px}
+.people-head{padding:17px 19px 15px;background:#fff}.people-head p{font-size:11px;line-height:1.5;margin:9px 0 0}.org-wrap{padding:15px 18px;background:radial-gradient(550px 280px at 50% 8%,#f2f7ff,transparent 80%),#fff}.org-caption{font-size:10px;margin-bottom:14px;color:#8396b2}
+.network-canvas{min-width:0;width:100%;height:490px;padding:0;position:relative}.network-lines{position:absolute;inset:0;width:100%;height:100%;fill:none;stroke:#bbd0ec;stroke-width:2;pointer-events:none}.network-lines circle{fill:#8aace2;stroke:none}.network-grid{position:relative;z-index:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(3,140px);gap:18px 16px;align-items:center;width:100%;height:100%}.network-grid .person-node:first-child{grid-column:1/3;justify-self:center}.network-grid .person-node:nth-child(4){grid-column:1}.network-grid .person-node:nth-child(5){grid-column:2}
+.person-node{width:min(100%,235px);min-height:126px;padding:13px;border-color:#cfdef4;border-radius:13px;box-shadow:0 8px 18px rgba(40,87,149,.09)}.person-node:first-child{width:min(75%,260px)}.person-head{grid-template-columns:55px 1fr;gap:11px}.person-avatar,.call-avatar,.portrait{overflow:hidden;position:relative;flex:none}.person-avatar{width:55px;height:55px;border:2px solid #e6effc;box-shadow:0 3px 9px rgba(32,75,140,.13)}.person-avatar img,.call-avatar img,.portrait img{width:100%;height:100%;display:block;object-fit:cover;object-position:center 27%;border-radius:inherit}.avatar-fallback{position:absolute;inset:0;display:grid;place-items:center}.person-avatar img{position:relative}.person-node.active .person-avatar{background:#e7f0ff;color:#1b5dd2}.person-name{font-size:15px}.person-role{font-size:10px;color:#8596ad}.person-status{font-size:10px;color:#526b8d;margin-top:10px;display:flex;align-items:center;gap:5px}.status-dot{width:6px;height:6px;background:#7ca2db;border-radius:50%}.person-meta{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;color:#4774bb;font-size:9px}.mini-state{color:#17936e}.intel-chip{font-size:9px}.org-actions{padding:13px 17px}.org-actions span{font-size:10px}
+.comm-col{min-width:0}.workspace-body{padding:18px;background:radial-gradient(700px 350px at 50% 0%,#f3f8ff,transparent 80%),#fff}.empty-main{min-height:100%;place-items:center}.empty-main-inner{max-width:630px}.empty-main .eyebrow{font-size:11px;letter-spacing:.22em}.empty-main h2{font-size:27px;color:#112b58;margin:12px 0 10px}.empty-main p{font-size:12px;line-height:1.75;max-width:540px}.global-plan{padding:18px;border-color:#d2e2f9;background:#f5f9ff;box-shadow:none}.global-plan:before{height:0}.global-plan label{font-size:13px}.global-plan textarea{min-height:155px;font-size:12px;background:#fff}.global-plan-foot{gap:12px}.global-plan-foot span{font-size:10px;line-height:1.5}.global-plan-foot .btn{white-space:nowrap}.contact-detail{height:auto;min-height:86px;padding:14px 17px}.contact-detail .person-avatar{width:54px;height:54px;background:#e7f0ff;box-shadow:0 3px 10px rgba(40,90,165,.2)}.contact-detail h3{font-size:17px}.contact-detail p{font-size:11px}.action-strip{gap:8px;padding:13px}.action-btn{font-size:10px;padding:11px 5px}.plan-panel{padding:14px}.plan-title strong{font-size:12px}.plan-row textarea{font-size:11px}.workspace-card{box-shadow:0 8px 22px rgba(30,75,135,.07)}
+.call-avatar{border-radius:50%;margin:18px auto 10px}.call-avatar img{object-position:center 25%}.npc-stage .portrait img{object-position:center 25%}
+/* Keep portraits truly circular and reserve initials for missing images only. */
+.person-avatar img,.call-avatar img,.portrait img{position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:cover;border-radius:50%;z-index:1}
+.avatar-fallback[hidden]{display:none!important}
+.section-icon svg{width:20px;height:20px;display:block;stroke:currentColor;fill:none;stroke-width:2.1;stroke-linecap:round;stroke-linejoin:round}
+.pressure-card .eyebrow::before{content:"预览样例 · "}
+.network-canvas{height:auto;min-height:350px}.network-grid{display:flex;flex-wrap:wrap;align-content:center;justify-content:center;gap:14px;min-height:350px;height:auto}.network-grid .person-node,.network-grid .person-node:first-child{width:auto;flex:0 1 calc(33.333% - 14px);min-width:145px}
+@media(max-width:1250px){.topbar{flex-wrap:wrap}.brand{flex:1 1 250px}.stage-pill{flex:1 1 330px}.top-ap{order:3}.top-actions{order:4;flex:1 1 auto}.workspace{grid-template-columns:minmax(230px,34fr) minmax(390px,66fr);height:auto;min-height:0;overflow:visible}.context-col{grid-column:1}.people-col{grid-column:2}.comm-col{grid-column:1/3;min-height:550px}.org-wrap{min-height:560px}.view{padding:15px}}
+@media(max-width:780px){.topbar{position:static;gap:10px;padding:12px}.brand{flex-basis:100%}.brand h1{font-size:18px}.brand p{font-size:10px}.brand-icon{width:43px;height:43px}.stage-pill{flex:1 1 100%;order:2;padding:10px 14px}.top-ap{order:3;padding:8px 10px}.top-actions{order:4;flex:1 1 100%;justify-content:flex-start;gap:5px}.top-actions .btn{font-size:10px;padding:8px 9px}.view{padding:10px}.workspace{display:flex;flex-direction:column;gap:10px}.context-col,.people-col,.comm-col{width:100%;min-height:0}.context-col{display:grid;grid-template-columns:1fr 1fr}.context-card,.info-update{grid-column:1/3}.nav-card{min-height:66px}.network-canvas{height:auto}.network-lines{display:none}.network-grid{height:auto;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:none;gap:9px}.network-grid .person-node:first-child{grid-column:1/3;width:min(100%,250px)}.network-grid .person-node{width:100%;min-height:120px}.person-head{grid-template-columns:42px 1fr;gap:7px}.person-avatar{width:42px;height:42px}.person-name{font-size:13px}.person-status{font-size:9px}.org-wrap{min-height:0}.comm-col{min-height:450px}.empty-main{min-height:400px}.empty-main h2{font-size:22px}.global-plan-foot{align-items:stretch;flex-direction:column}.global-plan-foot .btn{align-self:flex-end}.action-strip{grid-template-columns:repeat(5,1fr);gap:3px;padding:7px}.action-btn{font-size:9px;padding:8px 2px}.contact-detail{flex-wrap:wrap}.detail-meta{margin-left:0;width:100%;justify-content:flex-start}.project-grid{grid-template-columns:repeat(2,1fr)}.project-detail{grid-template-columns:1fr}}
+@media(max-width:480px){.context-col{display:flex}.network-grid{grid-template-columns:1fr 1fr}.network-grid .person-node:not(:first-child) .person-head{display:flex;flex-direction:column;align-items:flex-start}.network-grid .person-node:not(:first-child){min-height:145px}.person-meta{font-size:8px}.context-card p{font-size:11px}.project-grid{grid-template-columns:1fr}.split-list{grid-template-columns:1fr}}
+@media(max-width:780px){.network-grid{display:flex;min-height:0;gap:9px}.network-grid .person-node,.network-grid .person-node:first-child{width:calc(50% - 5px);flex:0 0 calc(50% - 5px);min-width:0;min-height:120px}.network-grid .person-node:first-child{justify-self:auto}}
+/* Three visual tiers: one lead, two middle contacts, two frontline contacts. */
+.network-canvas{height:490px;min-height:490px}
+.network-lines{display:block;stroke:#b8cdec;stroke-width:2.5}
+.network-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(3,140px);gap:18px 16px;align-content:start;min-height:0;height:100%}
+.network-grid .person-node{width:min(100%,235px);min-width:0;min-height:126px;flex:none;justify-self:center}
+.network-grid .person-node:first-child{grid-column:1/3;justify-self:center;width:min(76%,260px);flex:none}
+.network-grid .person-node:nth-child(4){grid-column:1}.network-grid .person-node:nth-child(5){grid-column:2}
+.person-node .person-head{grid-template-columns:48px 1fr}
+.person-node .person-avatar{width:48px;height:48px;background:#8cc5fb}
+.person-avatar img,.call-avatar img,.portrait img{object-position:center top}
+.person-node .person-avatar img{transform:scale(.94)}
+.contact-detail .person-avatar{width:50px;height:50px}
+@media(max-width:780px){.network-canvas{height:490px;min-height:490px}.network-lines{display:block}.network-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(3,140px);gap:18px 12px;height:100%;min-height:0}.network-grid .person-node,.network-grid .person-node:first-child{flex:none;min-height:120px}.network-grid .person-node:first-child{width:min(76%,250px);justify-self:center}.person-node .person-head{grid-template-columns:42px 1fr}.person-node .person-avatar{width:42px;height:42px}}
+@media(max-width:480px){.network-canvas{height:540px;min-height:540px}.network-grid{grid-template-rows:repeat(3,160px)}.network-grid .person-node{width:100%;min-height:145px}.network-grid .person-node:first-child{min-height:126px}.person-node .person-head{grid-template-columns:42px 1fr}}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}
 </style>
 </head>
@@ -336,14 +391,14 @@ linear-gradient(135deg,#33465c,#1b2836 55%,#0d141d);color:#fff;padding:17px;disp
 <div id="app"></div><div id="modal-root"></div><div id="toast-root" class="toast-root"></div>
 <script>
 const MockData = {
-  project:{name:'项目一 · 单单位内部竞标',description:'围绕客户的真实组织需求建立联系，摸清关键人物与内部流程，并用可量化承诺推动项目。关键人物的私人关注点和内部态度不直接展示，需要通过沟通与合理调研逐步判断。',needs:['减少跨部门重复录入','明确交付与验收边界','形成部门级可量化成效','控制实施与合规风险'],challenges:['五名关键人物初始可见','公开信息需主动获得','竞品进度不透明','五阶段推进'],advice:'先形成工作计划，再围绕计划选择人物、沟通方式和需要补足的信息。'},
-  projects:[{id:1,name:'单单位内部竞标',difficulty:'难度 ★',budget:100,status:'可开始'},{id:2,name:'跨区域协同项目',difficulty:'难度 ★★',budget:260,status:'暂未开放'},{id:3,name:'复杂决策链项目',difficulty:'难度 ★★★',budget:500,status:'暂未开放'},{id:4,name:'战略型大客户项目',difficulty:'难度 ★★★★',budget:900,status:'暂未开放'}],
+  project:{name:'项目一 · 单单位内部竞标',description:'围绕客户的真实组织需求建立联系、摸清决策链，并用可靠方案推动项目。',needs:['减少跨部门重复录入','明确交付与验收边界','形成部门级可量化成效','控制实施与合规风险'],challenges:['五位联系人可见','公开信息可逐步了解','竞品进度不透明','五阶段推进'],advice:'可按自己的判断安排工作计划与沟通方式。'},
+  projects:[{id:1,name:'单单位内部竞标',difficulty:'难度 ★',budget:100,status:'可开始'},{id:2,name:'国产化改造项目',difficulty:'难度 ★★',budget:300,status:'暂未开放'},{id:3,name:'大型央企升级项目',difficulty:'难度 ★★★',budget:1000,status:'暂未开放'},{id:4,name:'一体化总包解决方案',difficulty:'难度 ★★★★',budget:200,status:'暂未开放'}],
   phases:[
     {name:'初识建联',goal:'形成初步策略与触点',hint:'先想清楚要解决什么，再决定找谁、怎么联系。'},
-    {name:'需求澄清',goal:'确认问题与决策链',hint:'把零散信息转成可以验证的问题和下一步。'},
-    {name:'方案推进',goal:'用证据推动关键人',hint:'围绕人物顾虑准备材料与拜访方案。'},
-    {name:'竞争博弈',goal:'识别异议与竞争压力',hint:'重点关注实施风险、验收与组织价值。'},
-    {name:'提交决策',goal:'检查证据并提交项目',hint:'确认关键人物、价值证据和风险处理是否闭环。'}
+    {name:'信息摸底',goal:'确认问题与决策链',hint:'把零散信息转成可以验证的问题和下一步。'},
+    {name:'关系深化',goal:'用证据推动关键人',hint:'围绕人物顾虑准备材料与拜访方案。'},
+    {name:'方案推动',goal:'识别异议与竞争压力',hint:'重点关注实施风险、验收与组织价值。'},
+    {name:'决策冲刺',goal:'检查证据并提交项目',hint:'确认关键人物、价值证据和风险处理是否闭环。'}
   ],
   npcs:[
     {
@@ -409,14 +464,15 @@ const DemoOnlyApi = {
 const normalizeNpcMap=(value,fallback={})=>Object.fromEntries(MockData.npcs.map(n=>[n.id,value&&Object.prototype.hasOwnProperty.call(value,n.id)?value[n.id]:fallback[n.id]]));
 const blankNpcTestStates=()=>Object.fromEntries(MockData.npcs.map(n=>[n.id,{support:0,pleasantness:50,effectiveContactCount:0,node:''}]));
 const normalizeNpcTestStates=value=>Object.fromEntries(MockData.npcs.map(n=>{const item=value?.[n.id]||{},node=['N1','N2','N3','N4','BLOCKED'].includes(item.node)?item.node:'';return [n.id,{support:clampTestInteger(item.support,0,100,0),pleasantness:clampTestInteger(item.pleasantness,0,100,50),effectiveContactCount:clampTestInteger(item.effectiveContactCount,0,100,0),node}]}));
- const PREVIEW_RETRY_ACTIONS=new Set(['plan','message','wechat_request','phone_connect','visit_preparation','brief_visit','start_visit','visit_turn','end_visit','test_adjust_npcs','reset']);
+ const TEST_APPOINTMENT_STATUSES=['none','pending','accepted','rejected','later','completed','cancelled'];
+ const PREVIEW_RETRY_ACTIONS=new Set(['plan','message','wechat_request','phone_connect','visit_preparation','brief_visit','start_visit','visit_turn','end_visit','test_adjust_npcs','test_adjust_appointments','reset']);
  function normalizeRetryRequest(value){
   if(!value||typeof value!=='object'||!PREVIEW_RETRY_ACTIONS.has(value.action)||typeof value.commandId!=='string'||!value.payload||typeof value.payload!=='object')return null;
   return {action:value.action,commandId:value.commandId,payload:value.payload,kind:typeof value.kind==='string'?value.kind:value.action,meta:value.meta&&typeof value.meta==='object'?value.meta:null};
  }
  function retryHasCommittedMessage(retry,conversations){
   if(!retry?.commandId||!conversations||typeof conversations!=='object')return false;
-  return Object.values(conversations).some(channels=>channels&&typeof channels==='object'&&Object.values(channels).some(messages=>Array.isArray(messages)&&messages.some(message=>message?.commandId===retry.commandId)));
+  return Object.values(conversations).some(channels=>channels&&typeof channels==='object'&&Object.values(channels).some(messages=>Array.isArray(messages)&&messages.some(message=>message?.commandId===retry.commandId&&!message.pending&&!message.failed)));
  }
 const initialState=()=>({
   screen:'projects',playMode:'solo',phase:1,actionPoints:28,totalSpent:0,
@@ -424,7 +480,7 @@ const initialState=()=>({
   wechat:{},conversations:blankConversations(),
   appointments:[],meeting:null,visitPreparations:{},visitPreparationFeedback:{},directVisitIntent:{},completedVisits:[],postal:[],
   workPlans:{global:'',byNpc:{}},planAnalysis:{global:null,byNpc:{}},submittedPlans:{global:null,byNpc:{}},publicIntel:{},
-  infoUpdates:[{created:'项目开始',body:'项目已进入第 1 阶段。你可以先描述整体工作计划，也可以从人物结构图选择对象。'}],
+  infoUpdates:[{created:'项目开始',body:'项目已进入第 1 阶段。联系人网络与整体工作计划现已开放。'}],
   notifications:[],competitorEventsSeen:[],result:null,
   coachForceSimulation:false,lastBriefResult:null,npcTestStates:blankNpcTestStates(),previewSessionId:null,previewVersion:0,aiStatus:'',aiError:'',aiErrorCanRefresh:false,aiRetry:null
 });
@@ -434,13 +490,25 @@ function normalizeConversations(value){
  const result=blankConversations();
  MockData.npcs.forEach(n=>{
   const saved=raw[n.id]&&typeof raw[n.id]==='object'?raw[n.id]:{};
-  Object.keys(result[n.id]).forEach(channel=>{result[n.id][channel]=Array.isArray(saved[channel])?saved[channel].filter(message=>message&&typeof message==='object').map(message=>{const next={...message};if(next.readStatus!=='read')delete next.readStatus;if(!['reply','read_no_reply'].includes(next.responseAction))delete next.responseAction;return next}):[]});
+   Object.keys(result[n.id]).forEach(channel=>{result[n.id][channel]=Array.isArray(saved[channel])?saved[channel].filter(message=>message&&typeof message==='object').map(message=>{const next={...message};if(next.readStatus!=='read')delete next.readStatus;if(!['reply','read_no_reply'].includes(next.responseAction))delete next.responseAction;if(next.pending){next.pending=false;next.failed=true}return next}):[]});
  });
  return result;
 }
 function normalizeNpcArrays(value){
  const result={};
  MockData.npcs.forEach(n=>{result[n.id]=Array.isArray(value?.[n.id])?value[n.id]:[]});
+ return result;
+}
+ function normalizeAppointments(value){
+ const result=[];
+ if(!Array.isArray(value))return result;
+ value.forEach(item=>{
+  if(!item||typeof item!=='object'||!npcIds.has(item.npcId))return;
+  const status=TEST_APPOINTMENT_STATUSES.includes(item.status)?item.status:'accepted';
+  if(status==='none')return;
+  const phase=clampTestInteger(item.phase,1,5,1),timeWindow=typeof item.timeWindow==='string'&&item.timeWindow.trim()?item.timeWindow.trim():'待设置时间',location=typeof item.location==='string'&&item.location.trim()?item.location.trim():'待设置地点',agenda=typeof item.agenda==='string'&&item.agenda.trim()?item.agenda.trim():'待设置议题';
+  result.push({...(typeof item.id==='string'&&item.id?{id:item.id}:{}),npcId:item.npcId,status,phase,timeWindow,location,agenda});
+ });
  return result;
 }
 function normalizeState(saved){
@@ -454,7 +522,8 @@ function normalizeState(saved){
   if(retryHasCommittedMessage(next.aiRetry,next.conversations))next.aiRetry=null;
   else {next.aiError='上次发送尚未确认，请重试。';next.aiErrorCanRefresh=false}
  }
- next.wechat=normalizeNpcMap(raw.wechat,base.wechat);
+  next.wechat=normalizeNpcMap(raw.wechat,base.wechat);
+  next.appointments=normalizeAppointments(raw.appointments);
  next.npcTestStates=normalizeNpcTestStates(raw.npcTestStates);
  next.phoneAttempts=normalizeNpcMap(raw.phoneAttempts,base.phoneAttempts);
  next.visitPreparations=normalizeNpcMap(raw.visitPreparations,base.visitPreparations);
@@ -502,6 +571,7 @@ restorePreviewSession();
 function save(){sessionStorage.setItem(STORAGE_KEY,JSON.stringify(state));savePreviewSession()}
 function patch(x,renderNow=true){state={...state,...x};save();if(renderNow)render()}
 let requestBusy=false;
+let pendingConversation=null;
 function getSessionToken(){
  const raw=localStorage.getItem('weixun_session');
  if(!raw)return '';
@@ -539,28 +609,54 @@ function normalizeMessageResponse(data,channel){
  if(invitationStatus!=='accepted'&&data.appointment!==undefined)return null;
  return {...data,responseAction:'reply',invitationStatus,readStatus:data.readStatus==='read'?'read':undefined};
 }
+async function readPreviewStream(response,onDelta){
+ if(!response.body)throw {status:502,message:'浏览器未收到流式响应。'};
+ const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='',result=null;
+ const consume=block=>{
+  const raw=block.split(/\r?\n/).filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trim()).join('');
+  if(!raw)return;
+  const event=JSON.parse(raw);
+  if(event.type==='delta'&&typeof event.content==='string'){onDelta?.(event.content);return}
+  if(event.type==='result'&&event.data){result=event.data;return}
+  if(event.type==='error')throw {status:Number(event.status)||503,message:event.error||'流式响应失败'};
+ };
+ while(true){
+  const {done,value}=await reader.read();
+  if(done)break;
+  buffer+=decoder.decode(value,{stream:true});
+  const blocks=buffer.split(/\r?\n\r?\n/);buffer=blocks.pop()||'';
+  for(const block of blocks)consume(block);
+ }
+ buffer+=decoder.decode();if(buffer.trim())consume(buffer);
+ if(!result)throw {status:502,message:'流式响应未返回最终状态。'};
+ return result;
+}
 async function apiCall(action,payload={},options={}){
  if(requestBusy){toast('AI 正在处理中，请稍候。','warn');return null}
  const commandId=options.commandId||newPreviewCommandId();
  state.aiRetry={action,commandId,payload,kind:options.retryKind||action,meta:options.retryMeta||null};
  requestBusy=true;
- state.aiStatus='AI 思考中…';state.aiError='';state.aiErrorCanRefresh=false;save();render();
+ state.aiStatus='AI 思考中…';state.aiError='';state.aiErrorCanRefresh=false;save();
+ if(options.renderPending!==false)render();
  try{
   const token=getSessionToken();
   if(!token)throw {status:401};
   const request={action,commandId,...payload};
   if(state.previewSessionId)request.previewSessionId=state.previewSessionId;
   if(Number.isFinite(state.previewVersion))request.expectedVersion=state.previewVersion;
-  const response=await fetch('/api/project-one-preview/ai',{
-   method:'POST',credentials:'same-origin',
-   headers:{'content-type':'application/json','x-session':token},
-   body:JSON.stringify(request)
-  });
-  let body={};try{body=await response.json()}catch{}
+   const response=await fetch('/api/project-one-preview/ai',{
+    method:'POST',credentials:'same-origin',
+    headers:{'content-type':'application/json','x-session':token,...(options.stream?{accept:'text/event-stream'}:{})},
+    body:JSON.stringify(request)
+   });
+   if(!response.ok){let failed={};try{failed=await response.json()}catch{}throw {status:response.status,message:failed?.error||failed?.message}}
+   let body;
+   if(options.stream){const data=await readPreviewStream(response,options.onDelta);body={success:true,previewSessionId:data?.previewSessionId,version:data?.version,data}}
+   else{body={};try{body=await response.json()}catch{}}
   if(body?.previewSessionId)state.previewSessionId=body.previewSessionId;
   if(Number.isFinite(body?.version))state.previewVersion=body.version;
   if(Number.isFinite(body?.data?.version))state.previewVersion=body.data.version;
-  if(!response.ok||body?.success===false)throw {status:response.status,message:body?.error||body?.message};
+   if(body?.success===false)throw {status:response.status,message:body?.error||body?.message};
   if(body?.previewSessionId)state.previewSessionId=body.previewSessionId;
   const data=body?.data||{};
   if(action==='message'){
@@ -594,8 +690,38 @@ async function apiCall(action,payload={},options={}){
   const attachment=message?.attachment?`<div class="message-attachment">附件：${esc(message.attachment)}</div>`:'';
   const readLabel=message?.readStatus==='read'?(channel==='email'?'已阅读':'已读'):'';
   const readStatus=readLabel?`<span class="read-status" aria-label="${readLabel}">${readLabel}</span>`:'';
-  return `<div class="message ${role}${sticker?' sticker-message':''}"><div class="meta">${role==='player'?'你':esc(n.name)} · ${esc(message?.channel||channelLabel(channel))}${readStatus}</div>${content}${attachment}</div>`;
+  const deliveryLabel=message?.pending?' · 发送中…':message?.failed?' · 发送失败，可重试':'';
+  return `<div class="message ${role}${sticker?' sticker-message':''}${message?.pending?' pending':''}${message?.failed?' failed':''}"><div class="meta">${role==='player'?'你':esc(n.name)} · ${esc(message?.channel||channelLabel(channel))}${readStatus}${deliveryLabel}</div>${content}${attachment}</div>`;
  }
+ function renderPendingNpcMessage(channel,n){return `<div class="message npc pending" data-pending-npc><div class="meta">${esc(n.name)} · ${esc(channelLabel(channel))}</div><span>正在回复</span><span class="typing-dots" aria-label="NPC 正在回复"><i></i><i></i><i></i></span></div>`}
+ function refreshMessageThread(channel,n){
+  if(state.selectedNpcId!==n.id||state.workspaceMode!==channel)return;
+  const thread=document.querySelector('.workspace-card .thread');
+  if(!thread)return;
+  const arr=state.conversations[n.id][channel];
+  thread.innerHTML=arr.length?arr.map(message=>renderConversationMessage(message,channel,n)).join(''):'<div class="notice">还没有沟通记录。</div>';
+  if(pendingConversation?.npcId===n.id&&pendingConversation?.channel===channel)thread.insertAdjacentHTML('beforeend',renderPendingNpcMessage(channel,n));
+  thread.scrollTop=thread.scrollHeight;
+ }
+ function setMessageComposerBusy(busy,channel){
+  const button=document.querySelector('[data-action="send-message"]');
+  if(button){button.disabled=busy;button.setAttribute('aria-busy',busy?'true':'false');if(busy)button.textContent='等待 NPC 回复…';else updateMessageCost()}
+  document.getElementById('message-text')?.toggleAttribute('disabled',busy);
+  document.getElementById('attachment-text')?.toggleAttribute('disabled',busy);
+  document.querySelectorAll('[data-expression-toggle],[data-sticker-id]').forEach(element=>element.toggleAttribute('disabled',busy));
+ }
+ function refreshActionPoints(){const value=document.querySelector('#ap-badge strong');if(value)value.textContent=String(state.actionPoints)}
+ function refreshAiFeedback(){const feedback=document.getElementById('ai-feedback');if(feedback)feedback.innerHTML=renderAiFeedback()}
+ function clearAiFeedback(){const feedback=document.getElementById('ai-feedback');if(feedback)feedback.innerHTML=''}
+ function bindWorkspaceActions(root){root?.querySelectorAll('[data-action]').forEach(element=>element.addEventListener('click',handleAction))}
+ function refreshWorkspaceBody(){const root=document.querySelector('.workspace-body');if(!root)return;root.innerHTML=renderWorkspaceBody();bindWorkspaceActions(root)}
+ function appendStreamDelta(message,content){
+  message.text=(message.text||'')+content;
+  const node=document.querySelector(`[data-stream-id="${message.messageId}"]`),textNode=node?.querySelector('[data-stream-text]');
+  if(textNode)textNode.textContent=message.text;
+  node?.querySelector('[data-stream-dots]')?.remove();
+ }
+ function streamDots(label='正在回复'){return `<span data-stream-dots>${esc(label)} <span class="typing-dots" aria-label="${esc(label)}"><i></i><i></i><i></i></span></span>`}
  function renderExpressionTools(){
   return `<div class="expression-tools" aria-label="微信表情工具"><button type="button" class="expression-tool" data-expression-toggle="emoji" aria-expanded="false">😊 Emoji</button><button type="button" class="expression-tool" data-expression-toggle="sticker" aria-expanded="false">🎴 表情包</button></div><div class="expression-panels"><div class="expression-panel hidden" data-expression-panel="emoji" role="region" aria-label="Emoji 面板"><div class="expression-panel-head"><span>常用 Emoji</span><span>点击插入当前光标位置</span></div><div class="emoji-grid">${COMMON_WECHAT_EMOJIS.map(emoji=>`<button type="button" class="emoji-btn" data-expression-emoji="${esc(emoji)}" aria-label="插入 ${esc(emoji)}">${esc(emoji)}</button>`).join('')}</div></div><div class="expression-panel hidden" data-expression-panel="sticker" role="region" aria-label="表情包面板"><div class="expression-panel-head"><span>工作表情包</span><span>点击即可发送 · 1 行动点</span></div><div class="sticker-grid">${WECHAT_STICKERS.map(sticker=>`<button type="button" class="sticker-option" data-sticker-id="${esc(sticker.id)}" ${requestBusy?'disabled':''} aria-label="发送表情包：${esc(sticker.name)}"><span class="sticker-symbol" aria-hidden="true">${esc(sticker.symbol)}</span><strong>${esc(sticker.name)}</strong><small>${esc(sticker.hint)}</small></button>`).join('')}</div></div></div>`;
  }
@@ -650,7 +776,7 @@ function canAfford(points,reason){if(state.actionPoints<points){toast(`行动点
 function upsertAppointment(appointment,npcId){
  if(!appointment)return;
  const normalized={...appointment,npcId:appointment.npcId||npcId};
- const index=state.appointments.findIndex(item=>item.id&&item.id===normalized.id);
+ const index=state.appointments.findIndex(item=>normalized.id&&item.id===normalized.id||item.npcId===normalized.npcId);
  if(index>=0)state.appointments[index]=normalized;else state.appointments.push(normalized);
 }
 function renderAiFeedback(){
@@ -669,48 +795,71 @@ function contactStatus(id){
   const c=state.conversations[id];if(c&&Object.values(c).some(a=>a.length))return '已有沟通记录';
   return '尚未有效接触';
 }
+const AVATAR_SOURCES=Object.freeze({
+  'P1-001':'assets/people/zhang-jianguo.png',
+  'P1-002':'assets/people/li-minghui.png',
+  'P1-003':'assets/people/wang-defu.png',
+  'P1-004':'assets/people/zhao-xiaochen.png',
+  'P1-005':'assets/people/liu-siqi.png'
+});
+const uploadedImageUrls={};
+async function loadImageAssets(){
+ try{
+  const response=await fetch('/api/designer/image-assets',{cache:'no-store'});
+  if(!response.ok)return;
+  const data=await response.json();
+  if(!Array.isArray(data.assets))return;
+  for(const asset of data.assets){
+   if(typeof asset.slotKey==='string'&&typeof asset.imageUrl==='string'&&asset.imageUrl)uploadedImageUrls[asset.slotKey]=asset.imageUrl;
+  }
+  render();
+ }catch{/* Existing introduction images remain available if the asset service is temporarily unavailable. */}
+}
+function renderAvatar(person,className='person-avatar'){
+ const name=person?.name||'联系人',src=uploadedImageUrls[`person_intro:${person?.id}`]||AVATAR_SOURCES[person?.id]||'';
+ return `<div class="${className}" data-avatar="${esc(person?.id||'')}" aria-label="${esc(name)}"><span class="avatar-fallback" ${src?'hidden':''}>${esc(name[0])}</span>${src?`<img src="${src}" alt="${esc(name)}" loading="lazy" decoding="async" onerror="this.previousElementSibling.hidden=false;this.remove()">`:''}</div>`;
+}
 function topbar(){
   if(state.screen==='projects')return '';
-  return `<header class="topbar"><div class="brand"><div class="brand-icon">▣</div><div><h1>项目一 · 单单位内部竞标</h1><p>销售作战台 · 真实AI预览会话（暂不写入正式存档）</p></div></div><div class="stage-pill"><span class="phase-dots">${[1,2,3,4,5].map(i=>`<i class="pdot ${i<state.phase?'done':i===state.phase?'cur':''}"></i>`).join('')}</span><span>第 ${state.phase} 阶段 · ${phaseMeta().name}</span><span class="sep"></span><span class="ap" id="ap-badge">✦ 行动点 <strong>${state.actionPoints}</strong></span></div><div class="top-actions"><button class="btn" data-action="test-controls">测试调节</button><button class="btn" data-action="reset">重置预览</button>${state.screen==='game'?`<button class="btn" data-action="end-phase">${state.phase===5?'进入提交检查':'结束本阶段'}</button><button class="btn btn-primary" data-action="submit">提交项目</button>`:''}</div></header>${renderAiFeedback()}`
+ const progress=Math.min(100,Math.max(20,Math.round((state.phase/5)*100)));
+ return `<header class="topbar"><div class="brand"><div class="brand-icon">▦</div><div><h1>项目一 · 单单位内部竞标</h1><p>销售作战台 · AI 预览会话</p></div></div><div class="stage-pill" aria-label="当前阶段进度"><div class="stage-copy"><span>当前阶段</span><strong>第 ${state.phase} 阶段 · ${phaseMeta().name}</strong></div><div class="phase-track" aria-hidden="true"><span class="phase-fill" style="width:${progress}%"></span>${[1,2,3,4,5].map(i=>`<i class="phase-mark ${i<state.phase?'done':i===state.phase?'cur':''}" style="left:${((i-1)/4)*100}%"></i>`).join('')}</div><span class="stage-index">${state.phase} / 5</span></div><div class="top-ap" id="ap-badge"><span class="ap-symbol">✦</span><span>行动点</span><strong>${state.actionPoints}</strong><em>/ 28</em></div><div class="top-actions"><button class="btn" data-action="test-controls">测试调节</button><button class="btn" data-action="reset">重置预览</button>${state.screen==='game'?`<button class="btn" data-action="end-phase">${state.phase===5?'进入提交检查':'结束本阶段'}</button><button class="btn btn-primary" data-action="submit">提交项目</button>`:''}</div></header><div id="ai-feedback">${renderAiFeedback()}</div>`
 }
 function render(){
  app.innerHTML=`<div class="app"><div class="shell">${topbar()}${state.screen==='projects'?renderProjects():state.screen==='result'?renderResult():renderGame()}</div></div>`;
  bind();
 }
 function renderProjects(){
- return `<main class="view project-select"><div class="hero"><div><div class="eyebrow">Interactive Frontend Prototype</div><h2>销售攻关实训 · 项目入口</h2><p>项目一预览：工作计划、NPC 沟通、邀约、拜访准备与实战模拟使用真实 AI。公开信息搜索、邮寄和最终结算仍为前端结果样例；预览会话暂不写入正式存档。</p></div><div class="prototype-badge"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#3ecf8e;margin-right:6px;animation:pulseDot 2s ease-in-out infinite;box-shadow:0 0 8px rgba(62,207,142,.7)"></span>v10 · Real AI Preview</div></div><section class="project-grid">${MockData.projects.map(p=>`<article class="card project-card ${p.id===1?'':'disabled'}"><span class="tiny muted">PROJECT 0${p.id}</span><span class="tag ${p.id===1?'green':''}">${p.status}</span><h3>${p.name}</h3><div class="small muted">${p.difficulty}</div><div class="budget">${p.budget}<span class="small muted"> 万预算</span></div>${p.id===1?'<button class="btn btn-primary" data-action="select-project" style="margin-top:15px;width:100%">查看项目一</button>':'<button class="btn" disabled style="margin-top:15px;width:100%">暂未开放</button>'}</article>`).join('')}</section><section class="project-detail"><article class="card project-main"><div class="eyebrow">PROJECT 01</div><h3>${MockData.project.name}</h3><p class="small muted" style="line-height:1.8">${MockData.project.description}</p><div class="split-list"><div class="info-block"><strong>客户需求</strong><div class="chips">${MockData.project.needs.map(x=>`<span class="chip">${x}</span>`).join('')}</div></div><div class="info-block"><strong>项目特点</strong><div class="chips">${MockData.project.challenges.map(x=>`<span class="chip">${x}</span>`).join('')}</div></div></div><div class="notice" style="margin-top:11px"><strong>策略提示：</strong>${MockData.project.advice}</div></article><article class="card project-side"><div class="eyebrow">START MODE</div><h3 style="font-size:15px;margin:7px 0">选择演示模式</h3><div class="mode-tabs"><button class="mode ${state.playMode==='solo'?'active':''}" data-action="mode" data-mode="solo"><strong>单机演示</strong><span>完整验证项目一玩家流程</span></button><button class="mode ${state.playMode==='multiplayer'?'active':''}" data-action="mode" data-mode="multiplayer"><strong>多人占位</strong><span>暂不接实时同步</span></button></div><div class="info-block"><strong>本轮重点</strong><div class="small muted" style="line-height:1.7">人物区采用树形关系结构；右侧统一放置邮件、电话、微信、邮寄、拜访，并加入工作计划与信息披露入口。</div></div><button class="btn btn-primary" data-action="start" style="width:100%;margin-top:13px;padding:11px">开始项目一</button></article></section></main>`
+ return `<main class="view project-select"><div class="hero"><div><div class="eyebrow">Interactive Frontend Prototype</div><h2>销售攻关实训 · 项目入口</h2><p>项目一预览：工作计划、联系人沟通、拜访准备与实战模拟使用真实 AI。公开信息搜索、邮寄和最终结算仍为前端结果样例；预览会话暂不写入正式存档。</p></div><div class="prototype-badge"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#3ecf8e;margin-right:6px;animation:pulseDot 2s ease-in-out infinite;box-shadow:0 0 8px rgba(62,207,142,.7)"></span>v10 · Real AI Preview</div></div><section class="project-grid">${MockData.projects.map(p=>`<article class="card project-card ${p.id===1?'':'disabled'}"><span class="tiny muted">PROJECT 0${p.id}</span><span class="tag ${p.id===1?'green':''}">${p.status}</span><h3>${p.name}</h3><div class="small muted">${p.difficulty}</div><div class="budget">${p.budget}<span class="small muted"> 万预算</span></div>${p.id===1?'<button class="btn btn-primary" data-action="select-project" style="margin-top:15px;width:100%">查看项目一</button>':'<button class="btn" disabled style="margin-top:15px;width:100%">暂未开放</button>'}</article>`).join('')}</section><section class="project-detail"><article class="card project-main"><div class="eyebrow">PROJECT 01</div><h3>${MockData.project.name}</h3><p class="small muted" style="line-height:1.8">${MockData.project.description}</p><div class="split-list"><div class="info-block"><strong>客户需求</strong><div class="chips">${MockData.project.needs.map(x=>`<span class="chip">${x}</span>`).join('')}</div></div><div class="info-block"><strong>项目特点</strong><div class="chips">${MockData.project.challenges.map(x=>`<span class="chip">${x}</span>`).join('')}</div></div></div><div class="notice" style="margin-top:11px">页面会随着你的选择逐步记录信息，具体结果以当前预览会话为准。</div></article><article class="card project-side"><div class="eyebrow">START MODE</div><h3 style="font-size:15px;margin:7px 0">选择演示模式</h3><div class="mode-tabs"><button class="mode ${state.playMode==='solo'?'active':''}" data-action="mode" data-mode="solo"><strong>单机演示</strong><span>完整验证项目一玩家流程</span></button><button class="mode ${state.playMode==='multiplayer'?'active':''}" data-action="mode" data-mode="multiplayer"><strong>多人占位</strong><span>暂不接实时同步</span></button></div><div class="info-block"><strong>本轮内容</strong><div class="small muted" style="line-height:1.7">联系人网络、工作计划与邮件、电话、微信、邮寄、拜访等工作区会在项目中持续可用。</div></div><button class="btn btn-primary" data-action="start" style="width:100%;margin-top:13px;padding:11px">开始项目一</button></article></section></main>`
 }
 function renderGame(){return `<main class="view"><div class="workspace">${renderContext()}${renderPeople()}${renderComm()}</div></main>`}
 function renderContext(){
- const p=phaseMeta();const updates=[...state.infoUpdates].reverse();
- return `<aside class="context-col"><section class="card context-card"><h3>项目背景</h3><p>${MockData.project.description}</p><div class="budget-box"><label>公开预算</label><strong>100 万</strong></div><div class="goal-box"><span>本阶段建议目标</span><strong>${p.goal}</strong><div class="tiny muted">${p.hint}</div></div></section><section class="card info-update"><div class="info-update-head"><strong>信息更新</strong><span class="tag blue">${updates.length}</span></div><div class="update-list">${updates.map(x=>`<div class="update-item"><b>${esc(x.created)}</b><span>${esc(x.body)}</span></div>`).join('')}</div></section><section class="card nav-card"><div><strong>行动点</strong><span>累计消耗 ${state.totalSpent} · 当前剩余 ${state.actionPoints}</span></div><span class="tag blue">${state.actionPoints>28?`${state.actionPoints} · 测试值`:`${state.actionPoints}/28`}</span></section><section class="card nav-card"><div><strong>竞品情报</strong><span>竞品推进状态不可直接查看，只能在沟通中判断。</span></div><span>›</span></section>${state.competitorEventsSeen.length?`<section class="card context-card"><div class="eyebrow" style="color:#c35e37">近期压力</div><p>${esc(state.competitorEventsSeen.at(-1))}</p></section>`:''}</aside>`
+ const updates=[...state.infoUpdates].reverse();
+ const actionIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 5 13h6l-1 9 9-12h-6l1-8Z"/></svg>';
+ const competitorIcon='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V11m6 9V5m6 15v-7m4 7V8"/></svg>';
+ return `<aside class="context-col"><section class="card context-card"><div class="card-heading"><span class="section-icon">▤</span><div><h3>项目背景</h3><span class="section-kicker">项目一 · 当前预览</span></div></div><p>${MockData.project.description}</p><div class="budget-box"><div><label>公开预算</label><span class="budget-caption">项目规模参考</span></div><strong>100 <small>万</small></strong></div><div class="context-facts"><span><b>5</b> 位联系人</span><span><b>5</b> 个阶段</span><span><b>AI</b> 预览会话</span></div></section><section class="card info-update"><div class="info-update-head"><div class="card-heading"><span class="section-icon blue-icon">▤</span><strong>信息更新</strong></div><span class="tag blue">${updates.length}</span></div><div class="update-list">${updates.map(x=>`<div class="update-item"><b>${esc(x.created)}</b><span>${esc(x.body)}</span></div>`).join('')}</div></section><section class="card nav-card action-points-card"><div class="card-heading"><span class="section-icon gold-icon">${actionIcon}</span><div><strong>行动点</strong><span>累计消耗 ${state.totalSpent} · 当前剩余 ${state.actionPoints}</span></div></div><span class="tag blue">${state.actionPoints>28?`${state.actionPoints} · 测试值`:`${state.actionPoints}/28`}</span></section><section class="card nav-card competitor-card"><div class="card-heading"><span class="section-icon violet-icon">${competitorIcon}</span><div><strong>竞品情报</strong><span>推进状态不会直接展示，在沟通中逐步判断。</span></div></div><span class="nav-arrow">›</span></section>${state.competitorEventsSeen.length?`<section class="card context-card pressure-card"><div class="eyebrow" style="color:#c35e37">近期动态</div><p>${esc(state.competitorEventsSeen.at(-1))}</p></section>`:''}</aside>`
 }
 function personNode(id){
  const n=npc(id),intel=state.publicIntel[id]||[];
- return `<button class="person-node ${state.selectedNpcId===id?'active':''}" data-select-npc="${id}"><div class="person-head"><div class="person-avatar">${n.name[0]}</div><div><div class="person-name">${n.name}</div><div class="person-role">${n.title}</div></div></div><div class="person-status">${contactStatus(id)}</div>${intel.length?`<div class="intel-list">${intel.slice(0,2).map(f=>`<div class="intel-chip">${esc(f)}</div>`).join('')}${intel.length>2?`<div class="intel-more">另有 ${intel.length-2} 条公开信息</div>`:''}</div>`:''}</button>`
+ return `<button class="person-node ${state.selectedNpcId===id?'active':''}" data-select-npc="${id}" aria-label="查看 ${esc(n.name)} 的联系人详情"><div class="person-head">${renderAvatar(n)}<div><div class="person-name">${esc(n.name)}</div><div class="person-role">联系人</div></div></div><div class="person-status"><i class="status-dot"></i>${contactStatus(id)}</div><div class="person-meta"><span>${intel.length} 条公开信息</span>${hasInvite(id)?'<span class="mini-state">已有预约</span>':''}</div></button>`
 }
 function renderPeople(){
- const levels=[...new Set(MockData.npcs.map(n=>n.displayLevel))].sort((a,b)=>a-b);
- const tree=levels.map((level,index)=>{
-   const people=MockData.npcs.filter(n=>n.displayLevel===level).sort((a,b)=>a.displayOrder-b.displayOrder);
-   return `${index?'<div class="org-connector-v"></div>':''}<div class="org-level" data-level="${level}">${people.map(n=>personNode(n.id)).join('')}</div>`;
- }).join('');
- return `<section class="people-col"><div class="people-head"><h3>项目人物结构</h3><p>五名人物按主档中的层级、顺序与关联展示；公开信息逐步显示在对应人物旁。</p></div><div class="org-wrap"><div class="org-caption">点击人物进入详情；再次点击同一人物可返回总体计划</div><div class="org-tree">${tree}</div></div><div class="org-actions"><span>工作计划按人物关键词匹配，并持续沉淀已披露 facts / clues。</span>${state.selectedNpcId?`<button class="btn btn-sm" data-action="research">搜索公开信息 · 2点</button>`:''}</div></section>`
+ const nodes=MockData.npcs.map(n=>personNode(n.id)).join('');
+ return `<section class="people-col"><div class="people-head"><div class="card-heading"><span class="section-icon network-icon">⌘</span><div><h3>联系人</h3><span class="section-kicker">五位联系人</span></div></div><p>点击联系人查看详情；连线表示人物层级，不展示具体层级名称。</p></div><div class="org-wrap"><div class="org-caption">接触状态与公开信息数量会更新在对应卡片</div><div class="org-tree network-canvas"><svg class="network-lines" viewBox="0 0 600 490" preserveAspectRatio="none" aria-hidden="true"><path d="M300 130V151H150V168 M300 151H450V168 M150 287V307H450 M450 287V307 M150 307V326 M450 307V326"/></svg><div class="network-grid">${nodes}</div></div></div><div class="org-actions"><span>公开信息将在互动中逐步获取。</span>${state.selectedNpcId?`<button class="btn btn-sm" data-action="research">搜索公开信息 · 2点</button>`:''}</div></section>`
 }
 function renderComm(){
  if(!state.selectedNpcId)return `<section class="comm-col"><div class="workspace-body">${renderGlobalPlan()}</div></section>`;
  const n=npc(),intel=(state.publicIntel[n.id]||[]).length;
- return `<section class="comm-col"><div class="contact-detail"><div class="person-avatar">${n.name[0]}</div><div><h3>${n.name}</h3><p>${n.title} · ${contactStatus(n.id)}</p></div><div class="detail-meta"><button class="back-global-btn" data-action="back-global" title="返回总体工作计划（Esc）"><span class="arrow">←</span><span>总体计划</span></button><span class="tag ${intel?'blue':''}">公开信息 ${intel}</span>${hasInvite(n.id)?'<span class="tag green">已邀约</span>':''}</div></div><div class="action-strip">${actionBtn('email','✉ 邮件')}${actionBtn('work_phone','☎ 电话')}${actionBtn('wechat','◎ 微信')}${actionBtn('postal','▤ 邮寄')}${actionBtn('visit','↗ 拜访')}</div>${renderNpcPlan()}<div class="workspace-body">${renderWorkspaceBody()}</div></section>`
+ return `<section class="comm-col"><div class="contact-detail">${renderAvatar(n)}<div><h3>${esc(n.name)}</h3><p>${contactStatus(n.id)}</p></div><div class="detail-meta"><button class="back-global-btn" data-action="back-global" title="返回总体工作计划（Esc）"><span class="arrow">←</span><span>总体计划</span></button><span class="tag ${intel?'blue':''}">公开信息 ${intel}</span>${hasInvite(n.id)?'<span class="tag green">已有预约</span>':''}</div></div><div class="action-strip">${actionBtn('email','✉ 邮件')}${actionBtn('work_phone','☎ 电话')}${actionBtn('wechat','◎ 微信')}${actionBtn('postal','▤ 邮寄')}${actionBtn('visit','↗ 拜访')}</div>${renderNpcPlan()}<div class="workspace-body">${renderWorkspaceBody()}</div></section>`
 }
 function actionBtn(mode,label){return `<button class="action-btn ${state.workspaceMode===mode?'active':''}" data-workspace="${mode}">${label}</button>`}
 function renderGlobalPlan(){
  const a=state.planAnalysis.global;
- return `<div class="empty-main"><div class="empty-main-inner"><div class="eyebrow">PROJECT STRATEGY</div><h2>请描述您的工作计划</h2><p>你可以先不选择任何联系人，直接说明这一阶段想怎么推进。真实 AI 会判断计划是否足够具体，并返回可披露信息；公开信息搜索仍是前端演示。</p><div class="global-plan"><label>整体工作计划（可选）</label><textarea id="global-plan" placeholder="例如：我想先确认项目真正的业务痛点，再了解采购与业务部门分别关心什么，之后选择一位合适的联系人建立第一触点……">${esc(state.workPlans.global||'')}</textarea><div class="global-plan-foot"><span>草稿不扣点；服务端接受的有效计划提交消耗 1 点。相同内容重复查看不重复扣点。</span><button class="btn btn-primary" data-action="analyze-global-plan">提交计划 · 1点</button></div>${a?renderPlanAnalysis(a):''}</div></div></div>`
+ return `<div class="empty-main"><div class="empty-main-inner"><div class="eyebrow">WORKSPACE NOTE</div><h2>整体工作计划</h2><p>这里可以记录当前阶段的工作安排与已知事项。计划为可选记录，提交后会同步到本次预览会话。</p><div class="global-plan"><label>整体工作计划（可选）</label><textarea id="global-plan" placeholder="记录你希望推进的事项、需要确认的信息或下一步安排……">${esc(state.workPlans.global||'')}</textarea><div class="global-plan-foot"><span>草稿不扣点；有效计划提交消耗 1 点。相同内容重复查看不重复扣点。</span><button class="btn btn-primary" data-action="analyze-global-plan">提交计划 · 1点</button></div>${a?renderPlanAnalysis(a):''}</div></div></div>`
 }
 function renderNpcPlan(){
  const id=state.selectedNpcId,a=state.planAnalysis.byNpc[id];
- const n=npc(id),keywords=n?.keywords?.slice(0,4).join('、')||'岗位、职责、关注点';
- return `<div class="plan-panel"><div class="plan-title"><strong>针对 ${n.name} 的工作计划（可选）</strong><span>真实AI判断 / 信息披露 · 1点</span></div><div class="plan-row"><textarea id="npc-plan" placeholder="例如：围绕${keywords}，先确认公开背景与岗位关注点，再决定先邮件还是电话建立第一触点……">${esc(state.workPlans.byNpc[id]||'')}</textarea><button class="btn" data-action="analyze-npc-plan">提交计划 · 1点</button></div>${a?renderPlanAnalysis(a):''}</div>`
+ const n=npc(id);
+ return `<div class="plan-panel"><div class="plan-title"><strong>${esc(n.name)} · 联系人补充记录（可选）</strong><span>信息记录 · 1点</span></div><div class="plan-row"><textarea id="npc-plan" placeholder="记录与 ${esc(n.name)} 相关的已知事项、待确认问题或后续安排……">${esc(state.workPlans.byNpc[id]||'')}</textarea><button class="btn" data-action="analyze-npc-plan">提交记录 · 1点</button></div>${a?renderPlanAnalysis(a):''}</div>`
 }
 function renderPlanAnalysis(a){
  if(a.needsDetail)return `<div class="plan-result warn">计划描述过于简单，请进一步细化。</div>`;
@@ -732,13 +881,13 @@ function renderWorkspaceBody(){
 }
 function renderOverview(){
  const n=npc(),intel=state.publicIntel[n.id]||[];
- return `<div class="workspace-card"><div class="workspace-card-head"><h2>${n.name} · 联系人概览</h2><p>选择上方邮件、电话、微信、邮寄或拜访开始行动。搜索公开信息与工作计划提交都可能更新人物结构图。</p></div><div style="padding:14px"><div class="notice">当前状态：${contactStatus(n.id)}</div><div class="split-list" style="margin-top:10px"><div class="info-block"><strong>已获公开信息</strong><div class="small muted">${intel.length?intel.map(x=>`• ${esc(x)}`).join('<br>'):'尚未获得。可点击人物结构下方“搜索公开信息”。'}</div></div><div class="info-block"><strong>拜访状态</strong><div class="small muted">${hasInvite(n.id)?'已获得邀约，可直接进入拜访准备。':'尚无邀约；仍可选择“拜访”并决定是否直接登门。'}</div></div></div></div></div>`
+ return `<div class="workspace-card"><div class="workspace-card-head"><h2>${n.name} · 联系人概览</h2><p>可通过上方渠道联系。获得的公开信息会更新到联系人网络。</p></div><div style="padding:14px"><div class="notice">当前状态：${contactStatus(n.id)}</div><div class="split-list" style="margin-top:10px"><div class="info-block"><strong>已获公开信息</strong><div class="small muted">${intel.length?intel.map(x=>`• ${esc(x)}`).join('<br>'):'暂无公开信息记录。'}</div></div><div class="info-block"><strong>拜访状态</strong><div class="small muted">${hasInvite(n.id)?'已有预约。':'暂无预约。'}</div></div></div></div></div>`
 }
 function channelLabel(ch){return ch==='email'?'邮件':ch==='wechat'?'微信':ch==='work_phone'?'电话':'沟通'}
 function renderMessageWorkspace(channel){
- const n=npc(),arr=state.conversations[n.id][channel],isWechat=channel==='wechat';
+ const n=npc(),arr=state.conversations[n.id][channel],isWechat=channel==='wechat',waiting=pendingConversation?.npcId===n.id&&pendingConversation?.channel===channel;
  const expressions=isWechat?renderExpressionTools():'';
- return `<div class="workspace-card"><div class="workspace-card-head"><h2>${isWechat?'工作微信':'邮件'} · ${esc(n.name)}</h2><p>${isWechat?'可发送文字、Emoji、系统预设表情包或附件；有附件时额外消耗行动点。':'邮件正文与附件均可直接自然语言描述；无需预先建立“准备材料”。'}</p></div><div class="thread">${arr.length?arr.map(m=>renderConversationMessage(m,channel,n)).join(''):'<div class="notice">还没有沟通记录。</div>'}</div><div class="composer"><textarea id="message-text" rows="4" placeholder="${isWechat?'输入工作微信内容…':'输入邮件正文…'}"></textarea>${expressions}<div class="attach-area"><strong>附加材料（可选）</strong><p>直接自然语言描述本次附带的材料或文件内容。填写后，本次发送将额外消耗 1 行动点。</p><textarea id="attachment-text" rows="2" placeholder="例如：附上 1 页流程对比与一份验收边界清单，重点标注重复录入减少的位置……"></textarea></div><div class="composer-foot"><span class="cost-note">本次预计消耗 <strong>1 行动点</strong></span><button class="btn btn-primary" data-action="send-message">发送${isWechat?'微信':'邮件'} · 1点</button></div></div></div>`
+ return `<div class="workspace-card"><div class="workspace-card-head"><h2>${isWechat?'工作微信':'邮件'} · ${esc(n.name)}</h2><p>${isWechat?'可发送文字、Emoji、系统预设表情包或附件；有附件时额外消耗行动点。':'邮件正文与附件均可直接自然语言描述；无需预先建立“准备材料”。'}</p></div><div class="thread">${arr.length?arr.map(m=>renderConversationMessage(m,channel,n)).join(''):'<div class="notice">还没有沟通记录。</div>'}${waiting?renderPendingNpcMessage(channel,n):''}</div><div class="composer"><textarea id="message-text" rows="4" placeholder="${isWechat?'输入工作微信内容…':'输入邮件正文…'}" ${requestBusy?'disabled':''}></textarea>${expressions}<div class="attach-area"><strong>附加材料（可选）</strong><p>直接自然语言描述本次附带的材料或文件内容。填写后，本次发送将额外消耗 1 行动点。</p><textarea id="attachment-text" rows="2" placeholder="例如：附上 1 页流程对比与一份验收边界清单，重点标注重复录入减少的位置……" ${requestBusy?'disabled':''}></textarea></div><div class="composer-foot"><span class="cost-note">本次预计消耗 <strong>1 行动点</strong></span><button class="btn btn-primary" data-action="send-message" ${requestBusy?'disabled aria-busy="true"':''}>${requestBusy?'等待 NPC 回复…':`发送${isWechat?'微信':'邮件'} · 1点`}</button></div></div></div>`
 }
 function renderWechat(){
  const n=npc();
@@ -748,11 +897,11 @@ function renderWechat(){
 }
 function renderPhone(){
  const n=npc(),arr=state.conversations[n.id].work_phone;
- return `<div class="phone-panel"><div class="phone-inner"><h2>与 ${n.name} 的工作电话</h2><p>电话可能无人接听；接通后可以输入自然语言对话。</p><div class="call-avatar">${n.name[0]}</div><strong>${n.name}</strong><div class="tiny" style="color:#c6d1df;margin-top:3px">${n.title}</div>${arr.length?`<div class="phone-log">${arr.slice(-4).map(x=>`${x.role==='player'?'你':n.name}：${esc(x.text)}`).join('<br>')}</div>`:''}${state.phoneActive?`<div class="meeting-composer" style="margin-top:11px"><textarea id="phone-text" placeholder="输入你在电话中要说的话…"></textarea><button class="btn btn-violet" data-action="phone-say">发送</button><button class="btn" data-action="end-call">挂断</button></div>`:`<button class="btn btn-violet" data-action="call" style="margin-top:14px">拨打电话 · 1 行动点</button>`}</div></div>`
+ return `<div class="phone-panel"><div class="phone-inner"><h2>与 ${esc(n.name)} 的工作电话</h2><p>电话可能无人接听；接通后可以输入自然语言对话。</p>${renderAvatar(n,'call-avatar')}<strong>${esc(n.name)}</strong><div class="phone-status">${contactStatus(n.id)}</div>${arr.length?`<div class="phone-log">${arr.slice(-4).map(x=>`<div class="phone-line${x.pending?' pending':''}${x.failed?' failed':''}" data-stream-id="${esc(x.messageId||'')}"><strong>${x.role==='player'?'你':esc(n.name)}：</strong><span data-stream-text>${esc(x.text||'')}</span>${x.pending&&!x.text?streamDots('正在回复'):''}</div>`).join('')}</div>`:''}${state.phoneActive?`<div class="meeting-composer" style="margin-top:11px"><textarea id="phone-text" placeholder="输入你在电话中要说的话…" ${requestBusy?'disabled':''}></textarea><button class="btn btn-violet" data-action="phone-say" ${requestBusy?'disabled aria-busy="true"':''}>${requestBusy?'通话中…':'发送'}</button><button class="btn" data-action="end-call" ${requestBusy?'disabled':''}>挂断</button></div>`:`<button class="btn btn-violet" data-action="call" ${requestBusy?'disabled aria-busy="true"':''} style="margin-top:14px">${requestBusy?'正在接通…':'拨打电话 · 1 行动点'}</button>`}</div></div>`
 }
 function renderPostal(){
  const n=npc();
- return `<div class="workspace-card"><div class="workspace-card-head"><h2>邮寄材料 · ${n.name}</h2><p>适合发送需要留存的纸质材料或正式资料。此项仍是前端结果样例，不接真实物流。</p></div><div class="postal-grid"><div class="postal-box"><strong>收件对象</strong><span>${n.name} · ${n.title}<br>客户单位（前端演示地址）</span></div><div class="postal-box"><strong>预计成本</strong><span>2 行动点<br>包含包装、寄送与记录</span></div></div><div class="composer"><label class="tiny" style="font-weight:800">请自然语言描述邮寄内容</label><textarea id="postal-text" rows="5" placeholder="例如：邮寄一份装订版实施方案，附 2 页验收边界说明和一页项目里程碑摘要……"></textarea><div class="composer-foot"><span class="cost-note">邮寄 · <strong>2 行动点</strong>（前端结果样例）</span><button class="btn btn-primary" data-action="send-postal">确认邮寄</button></div></div></div>`
+ return `<div class="workspace-card"><div class="workspace-card-head"><h2>邮寄材料 · ${esc(n.name)}</h2><p>适合发送需要留存的纸质材料或正式资料。此项仍是前端结果样例，不接真实物流。</p></div><div class="postal-grid"><div class="postal-box"><strong>收件对象</strong><span>${esc(n.name)}<br>客户单位（前端演示地址）</span></div><div class="postal-box"><strong>预计成本</strong><span>2 行动点<br>包含包装、寄送与记录</span></div></div><div class="composer"><label class="tiny" style="font-weight:800">请自然语言描述邮寄内容</label><textarea id="postal-text" rows="5" placeholder="例如：邮寄一份装订版实施方案，附 2 页验收边界说明和一页项目里程碑摘要……"></textarea><div class="composer-foot"><span class="cost-note">邮寄 · <strong>2 行动点</strong>（前端结果样例）</span><button class="btn btn-primary" data-action="send-postal">确认邮寄</button></div></div></div>`
 }
 function renderVisit(){
  const n=npc(),invited=hasInvite(n.id),directIntent=hasDirectVisitIntent(n.id);
@@ -765,7 +914,7 @@ function renderVisitModeChoice(){
 }
 function renderVisitPrep(){
  const n=npc(),existing=state.visitPreparations[n.id]||'';
- return `<div class="workspace-card"><div class="visit-prep"><div class="eyebrow" style="color:#9c6a17">VISIT PREPARATION</div><h3>进入准备 · ${n.name}</h3><p>请简述你准备如何开展这次拜访。准备内容会随实际拜访提交给真实 AI；若是直接登门，是否允许开始由服务端判断。</p><textarea class="form-area" id="visit-prep-text" placeholder="例如：先确认对方最关心的流程问题，再用一页流程对比说明减负点；如果对方追问实施边界，就用验收清单说明我们与客户各自负责的事项……">${esc(existing)}</textarea><div class="composer-foot"><span class="cost-note">准备本身不额外扣点；实际拜访 / 简述方案按界面规则计费。</span><button class="btn btn-primary" data-action="save-visit-prep">保存并选择拜访方式</button></div></div></div>`
+ return `<div class="workspace-card"><div class="visit-prep"><div class="eyebrow" style="color:#9c6a17">VISIT PREPARATION</div><h3>进入准备 · ${n.name}</h3><p>请简述你准备如何开展这次拜访。准备内容会随实际拜访提交给真实 AI；若是直接登门，是否允许开始由服务端判断。</p><textarea class="form-area" id="visit-prep-text" placeholder="例如：先确认对方最关心的流程问题，再用一页流程对比说明减负点；如果对方追问实施边界，就用验收清单说明我们与客户各自负责的事项……">${esc(existing)}</textarea><div class="composer-foot"><span class="cost-note">准备本身不额外扣点；直接拜访按实际拜访计费。</span><div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" data-action="skip-visit-prep">跳过准备，直接拜访</button><button class="btn btn-primary" data-action="save-visit-prep">保存并选择拜访方式</button></div></div></div></div>`
 }
 function renderBriefVisit(){
  const n=npc(),prep=state.visitPreparations[n.id]||'';
@@ -779,11 +928,14 @@ function renderBriefResult(){
 function renderMeeting(){
  const m=state.meeting,n=npc(m.npcId),arr=state.conversations[n.id].meeting,lastNpc=[...arr].reverse().find(x=>x.role==='npc'),lastPlayer=[...arr].reverse().find(x=>x.role==='player');
  const completed=(m.completedTasks||[]).map(task=>typeof task==='string'?task:task.type||task.name).filter(Boolean);
- return `<div class="meeting-scene"><div class="meeting-top"><div><div class="eyebrow">线下拜访现场</div><h2>${esc(m.location||'客户单位')}</h2><div class="tiny" style="color:#c9d3df">第 ${Number(m.turn||0)+1} 轮 · 已完成任务 ${completed.length?esc(completed.join(' / ')):'暂未返回'} · 超过20轮自动结束</div></div><div class="meeting-pill">真实AI会面 · ${n.name}</div></div><div class="meeting-chat">${lastNpc?`<div class="npc-stage"><div class="portrait">${n.name[0]}</div><div class="speech"><strong>${n.name} · ${n.title}</strong>${esc(lastNpc.text)}</div></div>`:'<div class="notice" style="background:rgba(255,255,255,.92)">拜访开始。结束条件和任务完成状态由服务端预览会话判定：NPC任务完成、对话超过20轮或你主动告辞。</div>'}${lastPlayer?`<div class="player-last"><strong>你刚刚说：</strong>${esc(lastPlayer.text)}</div>`:''}<div class="meeting-composer"><textarea id="meeting-input" placeholder="输入现场发言；也可以直接表达告辞…"></textarea><button class="btn btn-primary" data-action="meeting-send">发送</button><button class="btn" data-action="end-visit">主动告辞</button></div></div></div>`
+ const location=m.location||'',sceneKey=/电梯/.test(location)?'elevator':/酒馆|酒吧|酒/.test(location)?'bar':/饭店|餐厅|餐馆|餐/.test(location)?'restaurant':/办公室|会议室|公司|单位/.test(location)?'office':'';
+ const sceneUrl=sceneKey?uploadedImageUrls[`visit_scene:${sceneKey}`]:'';
+ const sceneStyle=sceneUrl?` style="background-image:linear-gradient(180deg,rgba(8,16,30,.28),rgba(3,9,18,.82)),url(${esc(JSON.stringify(sceneUrl))});background-size:cover;background-position:center"`:'';
+ return `<div class="meeting-scene"${sceneStyle}><div class="meeting-top"><div><div class="eyebrow">线下拜访现场</div><h2>${esc(m.location||'客户单位')}</h2><div class="tiny" style="color:#617593">第 ${Number(m.turn||0)+1} 轮 · 已完成任务 ${completed.length?esc(completed.join(' / ')):'暂未返回'} · 超过20轮自动结束</div></div><div class="meeting-pill">真实AI会面 · ${esc(n.name)}</div></div><div class="meeting-chat">${lastNpc?`<div class="npc-stage">${renderAvatar(n,'portrait')}<div class="speech" data-stream-id="${esc(lastNpc.messageId||'')}"><strong>${esc(n.name)}</strong><span data-stream-text>${esc(lastNpc.text||'')}</span>${lastNpc.pending&&!lastNpc.text?streamDots('正在思考'):''}</div></div>`:'<div class="notice" style="background:rgba(255,255,255,.92)">拜访开始。结束条件和任务完成状态由服务端预览会话判定：NPC任务完成、对话超过20轮或你主动告辞。</div>'}${lastPlayer?`<div class="player-last"><strong>你刚刚说：</strong>${esc(lastPlayer.text)}</div>`:''}<div class="meeting-composer"><textarea id="meeting-input" placeholder="输入现场发言；也可以直接表达告辞…" ${requestBusy?'disabled':''}></textarea><button class="btn btn-primary" data-action="meeting-send" ${requestBusy?'disabled aria-busy="true"':''}>${requestBusy?'等待回应…':'发送'}</button><button class="btn" data-action="end-visit" ${requestBusy?'disabled':''}>主动告辞</button></div></div></div>`
 }
 function renderResult(){
  const r=state.result||MockData.result;
- return `<main class="view result-page"><section class="result-hero"><div><div class="eyebrow" style="color:#b9cdfc">PROJECT 01 · 前端结果样例</div><h2>${r.won?'中标':'本场未中标'}</h2><div class="small" style="color:#c7d2df;max-width:690px;line-height:1.7">这里是前端结果样例，用来确认信息结构；不代表真实结算。正式开发时由真实结算 API 和 AI 诊断返回。</div><div class="result-stats">${r.breakdown.map(x=>`<div class="result-stat"><span>${x.label} · ${x.weight}</span><strong>${x.value}</strong></div>`).join('')}</div></div><div class="score-box"><div class="tiny" style="color:#c6d1df">最终得分</div><strong>${r.score}</strong><span style="color:#c6d1df"> / 100</span></div></section><div class="result-grid"><section class="card result-card"><h3>五维销售能力</h3>${r.dimensions.map(x=>scoreRow(x.label,x.value)).join('')}</section><section class="card result-card"><h3>人物态度揭示</h3><div class="attitude-grid">${r.attitudes.map(a=>{const n=npc(a.id);return `<div class="attitude"><div class="attitude-head"><div class="person-avatar">${n.name[0]}</div><div><strong class="small">${n.name}</strong><div class="tiny muted">${n.title}</div></div></div>${scoreRow('愉悦度',a.pleasant,true)}${scoreRow('支持度',a.support,true)}</div>`}).join('')}</div></section></div><section class="card result-card" style="margin-top:12px"><h3>价值证据账本</h3>${r.evidence.map(e=>`<div class="evidence-item">✓ ${esc(e.text)}<small>来源：${esc(e.source)}</small></div>`).join('')}</section><div class="result-actions"><button class="btn" data-action="restart">重新开局</button><button class="btn" data-action="back-projects">回到项目入口</button></div></main>`
+ return `<main class="view result-page"><section class="result-hero"><div><div class="eyebrow" style="color:#b9cdfc">PROJECT 01 · 前端结果样例</div><h2>${r.won?'中标':'本场未中标'}</h2><div class="small" style="color:#c7d2df;max-width:690px;line-height:1.7">这里是前端结果样例，用来确认信息结构；不代表真实结算。正式开发时由真实结算 API 和 AI 诊断返回。</div><div class="result-stats">${r.breakdown.map(x=>`<div class="result-stat"><span>${x.label} · ${x.weight}</span><strong>${x.value}</strong></div>`).join('')}</div></div><div class="score-box"><div class="tiny" style="color:#c6d1df">最终得分</div><strong>${r.score}</strong><span style="color:#c6d1df"> / 100</span></div></section><div class="result-grid"><section class="card result-card"><h3>五维销售能力</h3>${r.dimensions.map(x=>scoreRow(x.label,x.value)).join('')}</section><section class="card result-card"><h3>人物态度揭示</h3><div class="attitude-grid">${r.attitudes.map(a=>{const n=npc(a.id);return `<div class="attitude"><div class="attitude-head">${renderAvatar(n)}<div><strong class="small">${esc(n.name)}</strong><div class="tiny muted">联系人</div></div></div>${scoreRow('愉悦度',a.pleasant,true)}${scoreRow('支持度',a.support,true)}</div>`}).join('')}</div></section></div><section class="card result-card" style="margin-top:12px"><h3>价值证据账本</h3>${r.evidence.map(e=>`<div class="evidence-item">✓ ${esc(e.text)}<small>来源：${esc(e.source)}</small></div>`).join('')}</section><div class="result-actions"><button class="btn" data-action="restart">重新开局</button><button class="btn" data-action="back-projects">回到项目入口</button></div></main>`
 }
 function scoreRow(l,v,c=false){return `<div class="score-row" style="${c?'grid-template-columns:52px 1fr 28px;margin:6px 0':''}"><span>${l}</span><div class="bar"><span style="width:${v}%"></span></div><strong>${v}</strong></div>`}
 
@@ -819,6 +971,7 @@ function updateMessageCost(){
  const btn=document.querySelector('[data-action="send-message"]');
  const note=document.querySelector('.composer-foot .cost-note');
  if(!att||!btn)return;
+ if(requestBusy){btn.disabled=true;btn.setAttribute('aria-busy','true');btn.textContent='等待 NPC 回复…';return}
  const cost=att.value.trim()?2:1;
  const label=state.workspaceMode==='wechat'?'微信':'邮件';
  btn.textContent=`发送${label} · ${cost}点`;
@@ -935,13 +1088,15 @@ function applyInvitationResult(n,data){
   const playerMessageId=typeof outcome.playerMessageId==='string'&&outcome.playerMessageId.trim()?outcome.playerMessageId:localMessageId||newPreviewCommandId();
   const playerMessage={role:'player',channel:channelLabel(channel),text,messageId:playerMessageId,responseAction:outcome.responseAction,...(outcome.playerMessageId?{playerMessageId:outcome.playerMessageId}:{}),...(outcome.readStatus==='read'?{readStatus:'read'}:{}),...(attachmentDescription?{attachment:formatAttachment(attachmentDescription,outcome.attachment)}:{}),...extra};
   const arr=state.conversations[n.id][channel];
-  const existing=arr.find(message=>message.role==='player'&&(message.playerMessageId===playerMessageId||message.messageId===playerMessageId));
-  if(!existing)arr.push(playerMessage);
+  const existing=arr.find(message=>message.role==='player'&&(message.playerMessageId===playerMessageId||message.messageId===playerMessageId||message.messageId===localMessageId||(extra.commandId&&message.commandId===extra.commandId)));
+  const shouldCharge=!existing||existing.charged!==true;
+  if(existing){Object.assign(existing,playerMessage,{pending:false,failed:false,charged:true});delete existing.error}else arr.push({...playerMessage,charged:true});
   if(outcome.responseAction==='reply'&&outcome.content&&!arr.some(message=>message.role==='npc'&&message.responseToMessageId===playerMessageId))arr.push({role:'npc',channel:channelLabel(channel),text:outcome.content,responseToMessageId:playerMessageId});
-  return {outcome,playerMessageId,isNew:!existing};
+  return {outcome,playerMessageId,isNew:!existing,shouldCharge};
  }
  function recordMessageUpdate(n,channel,outcome){addUpdate(`${n.name} ${outcome.responseAction==='read_no_reply'?'已读':'已回复'}你的${channelLabel(channel)}。`)}
  async function sendMessage(options={}){
+  if(requestBusy){toast('AI 正在处理中，请稍候。','warn');return}
   const retryPayload=options.payload&&typeof options.payload==='object'?options.payload:null;
   const ch=retryPayload?.channel||state.workspaceMode,n=npc(retryPayload?.npcId||state.selectedNpcId);if(!n||!['email','wechat'].includes(ch))return;
   const text=retryPayload?.text||document.getElementById('message-text')?.value.trim()||'';
@@ -949,13 +1104,31 @@ function applyInvitationResult(n,data){
   if(!text){toast('先输入要发送的内容','warn');return}
   const cost=1+(att?1:0);if(!canAfford(cost,`${channelLabel(ch)}发送`))return;
   const payload=retryPayload||{npcId:n.id,channel:ch,text,attachment:att?{title:'附件说明',content:att}:undefined,phase:state.phase};
-  const res=await apiCall('message',payload,{commandId:options.commandId,retryKind:'message',retainRetryUntilCommit:true});
-  if(!res){render();return}
-  const commandId=options.commandId||state.aiRetry?.commandId;
+  const commandId=options.commandId||newPreviewCommandId();
+  const localMessageId=`local-${commandId}`;
+  const arr=state.conversations[n.id][ch];
+  let optimistic=arr.find(message=>message.role==='player'&&message.commandId===commandId);
+  if(optimistic){optimistic.pending=true;optimistic.failed=false;delete optimistic.error}
+  else{
+   optimistic={role:'player',channel:channelLabel(ch),text,messageId:localMessageId,commandId,pending:true,charged:false,...(att?{attachment:formatAttachment(att)}:{})};
+   arr.push(optimistic);
+  }
+  pendingConversation={npcId:n.id,channel:ch,commandId};
+  const messageInput=document.getElementById('message-text'),attachmentInput=document.getElementById('attachment-text');
+  if(messageInput)messageInput.value='';if(attachmentInput)attachmentInput.value='';
+  save();refreshMessageThread(ch,n);setMessageComposerBusy(true,ch);
+  const res=await apiCall('message',payload,{commandId,retryKind:'message',retainRetryUntilCommit:true,renderPending:false});
+  if(!res){
+   optimistic.pending=false;optimistic.failed=true;optimistic.error=state.aiError;pendingConversation=null;save();refreshMessageThread(ch,n);setMessageComposerBusy(false,ch);
+   refreshAiFeedback();
+   return
+  }
   const committed=appendMessageResult(n,ch,text,att,res,commandId?{commandId}:{} ,commandId?`local-${commandId}`:undefined);
-  if(!committed){state.aiError='服务端返回的消息结果不符合预览协议，请重试。';save();render();return}
-  if(committed.isNew)spend(cost,`${channelLabel(ch)}发送`,false);
-  applyInvitationResult(n,committed.outcome);recordMessageUpdate(n,ch,committed.outcome);state.aiRetry=null;save();render();toast(`${channelLabel(ch)}已发送，${committed.outcome.responseAction==='read_no_reply'?(ch==='email'?'已阅读':'已读'):'NPC 已回复'}，消耗 ${committed.isNew?cost:0} 行动点`,'success');
+  if(!committed){optimistic.pending=false;optimistic.failed=true;state.aiError='服务端返回的消息结果不符合预览协议，请重试。';pendingConversation=null;save();refreshMessageThread(ch,n);setMessageComposerBusy(false,ch);return}
+  if(committed.shouldCharge)spend(cost,`${channelLabel(ch)}发送`,false);
+  applyInvitationResult(n,committed.outcome);recordMessageUpdate(n,ch,committed.outcome);state.aiRetry=null;pendingConversation=null;save();refreshMessageThread(ch,n);setMessageComposerBusy(false,ch);refreshActionPoints();
+  const feedback=document.getElementById('ai-feedback');if(feedback)feedback.innerHTML='';
+  toast(`${channelLabel(ch)}已发送，${committed.outcome.responseAction==='read_no_reply'?(ch==='email'?'已阅读':'已读'):'NPC 已回复'}，消耗 ${committed.shouldCharge?cost:0} 行动点`,'success');
  }
  async function sendSticker(stickerId,options={}){
   const retryPayload=options.payload&&typeof options.payload==='object'?options.payload:null;
@@ -973,10 +1146,10 @@ function applyInvitationResult(n,data){
   if(committed.isNew)spend(1,'发送微信表情包',false);
  applyInvitationResult(n,committed.outcome);recordMessageUpdate(n,'wechat',committed.outcome);state.aiRetry=null;save();render();toast(`表情包“${sticker.name}”已发送，${committed.outcome.responseAction==='read_no_reply'?'已读':'NPC 已回复'}，消耗 ${committed.isNew?1:0} 行动点`,'success');
  }
- function retryIsMessage(){return ['message','sticker'].includes(state.aiRetry?.kind)}
+ function retryIsMessage(){return ['message','sticker','phone_connect','phone_message','visit_turn'].includes(state.aiRetry?.kind)}
  function hasCommittedRetry(retry){
   if(!retry?.commandId)return false;
-  return Object.values(state.conversations).some(channels=>Object.values(channels).some(messages=>messages.some(message=>message.commandId===retry.commandId)));
+  return Object.values(state.conversations).some(channels=>Object.values(channels).some(messages=>messages.some(message=>message.commandId===retry.commandId&&!message.pending&&!message.failed)));
  }
  async function retryAiRequest(){
   const retry=state.aiRetry;
@@ -984,6 +1157,9 @@ function applyInvitationResult(n,data){
   if(hasCommittedRetry(retry)){state.aiRetry=null;save();render();toast('这条操作已经完成，无需重复发送。','success');return}
   if(retry.kind==='message')return sendMessage({commandId:retry.commandId,payload:retry.payload});
   if(retry.kind==='sticker')return sendSticker(retry.meta?.stickerId,retry.payload?{commandId:retry.commandId,payload:retry.payload}: {commandId:retry.commandId});
+  if(retry.kind==='phone_connect')return callNpc({commandId:retry.commandId,payload:retry.payload});
+  if(retry.kind==='phone_message')return phoneSay({commandId:retry.commandId,payload:retry.payload});
+  if(retry.kind==='visit_turn')return meetingSend({commandId:retry.commandId,payload:retry.payload});
   toast('该操作请回到原入口重新尝试。','warn');
  }
  async function requestWechat(){
@@ -1021,19 +1197,22 @@ async function saveVisitPrep(){
  openModal('拜访准备反馈',`<div class="notice">${esc(summary)}</div>${strengths}${risks}`,`<button class="btn btn-primary" id="continue-prep">继续选择拜访方式</button>`);
  document.getElementById('continue-prep').onclick=()=>{closeModal();state.workspaceMode='visit';save();render()};
 }
-async function startVisitSimulation(){
+async function startVisitSimulation({skipPreparation=false}={}){
  const n=npc(),appt=state.appointments.find(a=>a.npcId===n.id&&a.status==='accepted');
  if(!appt&&!hasDirectVisitIntent(n.id)){toast('当前没有可执行的拜访','warn');return}
  if(!canAfford(3,'实际拜访'))return;
- const res=await apiCall('start_visit',{npcId:n.id,phase:state.phase});
- if(!res){render();return}
+ const pending=apiCall('start_visit',{npcId:n.id,phase:state.phase,...(skipPreparation?{skipPreparation:true}:{})},{renderPending:false});
+ const startButton=document.querySelector('[data-action="visit-sim"], [data-action="skip-visit-prep"]');if(startButton){startButton.disabled=true;startButton.setAttribute('aria-busy','true');startButton.innerHTML='正在进入现场…'}
+ document.querySelector('[data-action="visit-brief"]')?.setAttribute('disabled','');
+ const res=await pending;
+ if(!res){refreshWorkspaceBody();refreshAiFeedback();return}
  const remote=res.meeting;
  if(!remote){state.aiError='服务端未返回会面状态，请重试。';save();render();return}
  if(remote.meetingEnded){return finishVisitFromServer({...res,...remote})}
  spend(3,'实际拜访');
  state.meeting={npcId:n.id,appointmentId:appt?.id||null,location:appt?.location||'客户单位',turn:Number(remote.turn||0),completedTasks:Array.isArray(remote.completedTasks)?remote.completedTasks:[]};
  if(res.content)state.conversations[n.id].meeting.push({role:'npc',channel:'拜访',text:res.content,taskType:res.taskType||null});
- save();render();toast('已进入真实AI拜访模拟','success')
+ save();refreshWorkspaceBody();toast('已进入真实AI拜访模拟','success')
 }
 async function submitBriefVisit(){
  const n=npc(),text=document.getElementById('brief-visit-text')?.value.trim()||'';if(text.length<30){toast('拜访方案过于简单，请再细化一些。','warn');return}
@@ -1047,30 +1226,56 @@ async function sendPostal(){
  if(!spend(2,'邮寄材料'))return;
  const item=await DemoOnlyApi.sendPostal({npcId:n.id,text,phase:state.phase});state.postal.push(item);state.conversations[n.id].postal.push({role:'player',channel:'邮寄',text});addUpdate(`已向 ${n.name} 邮寄材料：${text.slice(0,24)}${text.length>24?'…':''}`);save();render();toast('邮寄前端结果样例已创建（2 行动点）','success')
 }
-async function callNpc(){
- const n=npc();if(!canAfford(1,'拨打电话'))return;
- const res=await apiCall('phone_connect',{npcId:n.id,text:'玩家拨打工作电话，等待接听。',phase:state.phase});
- if(!res){render();return}
- spend(1,'拨打电话');state.phoneAttempts[n.id]=(state.phoneAttempts[n.id]||0)+1;state.phoneActive=res.connected!==false;
- if(res.content)state.conversations[n.id].work_phone.push({role:'npc',channel:'电话',text:res.content});
- applyInvitationResult(n,res);addUpdate(`${n.name} 已处理本次电话连接。`);save();render();toast(state.phoneActive?'电话已接通':'电话未接通',state.phoneActive?'success':'warn')
+async function callNpc(options={}){
+ if(requestBusy){toast('AI 正在处理中，请稍候。','warn');return}
+ const retryPayload=options.payload&&typeof options.payload==='object'?options.payload:null;
+ const n=npc(retryPayload?.npcId||state.selectedNpcId);if(!n||!canAfford(1,'拨打电话'))return;
+ const payload=retryPayload||{npcId:n.id,text:'玩家拨打工作电话，等待接听。',phase:state.phase};
+ const commandId=options.commandId||newPreviewCommandId(),arr=state.conversations[n.id].work_phone;
+ let reply=arr.find(message=>message.role==='npc'&&message.commandId===commandId);
+ if(reply){reply.pending=true;reply.failed=false;reply.text=''}else{reply={role:'npc',channel:'电话',text:'',messageId:`phone-${commandId}`,commandId,pending:true,charged:false};arr.push(reply)}
+ state.phoneActive=true;save();
+ const pending=apiCall('phone_connect',payload,{commandId,retryKind:'phone_connect',retainRetryUntilCommit:true,renderPending:false,stream:true,onDelta:content=>appendStreamDelta(reply,content)});
+ clearAiFeedback();refreshWorkspaceBody();
+ const res=await pending;
+ if(!res){reply.pending=false;reply.failed=true;reply.text=reply.text||'本次连接失败，请重试。';state.phoneActive=false;save();refreshWorkspaceBody();refreshAiFeedback();return}
+ reply.pending=false;reply.failed=false;reply.text=res.content||reply.text;if(!reply.charged){spend(1,'拨打电话',false);reply.charged=true}
+ state.phoneAttempts[n.id]=(state.phoneAttempts[n.id]||0)+1;state.phoneActive=res.connected!==false;state.aiRetry=null;
+ applyInvitationResult(n,res);addUpdate(`${n.name} 已处理本次电话连接。`);save();refreshWorkspaceBody();refreshActionPoints();toast(state.phoneActive?'电话已接通':'电话未接通',state.phoneActive?'success':'warn')
 }
-async function phoneSay(){
- const n=npc(),text=document.getElementById('phone-text')?.value.trim()||'';if(!text)return;
- const res=await apiCall('message',{npcId:n.id,channel:'work_phone',text,phase:state.phase});
- if(!res){render();return}
- const arr=state.conversations[n.id].work_phone;arr.push({role:'player',channel:'电话',text});if(res.content)arr.push({role:'npc',channel:'电话',text:res.content});applyInvitationResult(n,res);save();render()
+async function phoneSay(options={}){
+ if(requestBusy){toast('AI 正在处理中，请稍候。','warn');return}
+ const retryPayload=options.payload&&typeof options.payload==='object'?options.payload:null;
+ const n=npc(retryPayload?.npcId||state.selectedNpcId),text=retryPayload?.text||document.getElementById('phone-text')?.value.trim()||'';if(!n||!text)return;
+ const payload=retryPayload||{npcId:n.id,channel:'work_phone',text,phase:state.phase},commandId=options.commandId||newPreviewCommandId(),arr=state.conversations[n.id].work_phone;
+ let player=arr.find(message=>message.role==='player'&&message.commandId===commandId),reply=arr.find(message=>message.role==='npc'&&message.commandId===commandId);
+ if(player){player.pending=true;player.failed=false}else{player={role:'player',channel:'电话',text,messageId:`phone-player-${commandId}`,commandId,pending:true};arr.push(player)}
+ if(reply){reply.pending=true;reply.failed=false;reply.text=''}else{reply={role:'npc',channel:'电话',text:'',messageId:`phone-reply-${commandId}`,commandId,pending:true};arr.push(reply)}
+ const pending=apiCall('message',payload,{commandId,retryKind:'phone_message',retainRetryUntilCommit:true,renderPending:false,stream:true,onDelta:content=>appendStreamDelta(reply,content)});
+ clearAiFeedback();refreshWorkspaceBody();
+ const res=await pending;
+ if(!res){player.pending=false;player.failed=true;reply.pending=false;reply.failed=true;reply.text=reply.text||'本次通话未完成，请重试。';save();refreshWorkspaceBody();refreshAiFeedback();return}
+ player.pending=false;player.failed=false;reply.pending=false;reply.failed=false;reply.text=res.content||reply.text;state.aiRetry=null;applyInvitationResult(n,res);save();refreshWorkspaceBody()
 }
-async function meetingSend(){
- const m=state.meeting,n=npc(m.npcId),text=document.getElementById('meeting-input')?.value.trim()||'';if(!text)return;
- const res=await apiCall('visit_turn',{npcId:n.id,text,phase:state.phase});
- if(!res){render();return}
- const arr=state.conversations[n.id].meeting;arr.push({role:'player',channel:'拜访',text});if(res.content)arr.push({role:'npc',channel:'拜访',text:res.content,taskType:res.taskType||null});
- const remote=res.meeting;
- if(!remote){state.aiError='服务端未返回会面状态，请重试。';save();render();return}
- m.turn=Number(remote.turn??m.turn??0);m.completedTasks=Array.isArray(remote.completedTasks)?remote.completedTasks:(m.completedTasks||[]);
- if(remote.meetingEnded)return finishVisitFromServer({...res,...remote});
- save();render();
+async function meetingSend(options={}){
+ if(requestBusy){toast('AI 正在处理中，请稍候。','warn');return}
+ const retryPayload=options.payload&&typeof options.payload==='object'?options.payload:null;
+ const m=state.meeting,n=npc(retryPayload?.npcId||m?.npcId),text=retryPayload?.text||document.getElementById('meeting-input')?.value.trim()||'';if(!m||!n||!text)return;
+ const payload=retryPayload||{npcId:n.id,text,phase:state.phase},commandId=options.commandId||newPreviewCommandId(),arr=state.conversations[n.id].meeting;
+ let player=arr.find(message=>message.role==='player'&&message.commandId===commandId),reply=arr.find(message=>message.role==='npc'&&message.commandId===commandId);
+ if(player){player.pending=true;player.failed=false}else{player={role:'player',channel:'拜访',text,messageId:`visit-player-${commandId}`,commandId,pending:true};arr.push(player)}
+ if(reply){reply.pending=true;reply.failed=false;reply.text=''}else{reply={role:'npc',channel:'拜访',text:'',messageId:`visit-reply-${commandId}`,commandId,pending:true};arr.push(reply)}
+ const pending=apiCall('visit_turn',payload,{commandId,retryKind:'visit_turn',retainRetryUntilCommit:true,renderPending:false,stream:true,onDelta:content=>appendStreamDelta(reply,content)});
+ clearAiFeedback();refreshWorkspaceBody();
+ const res=await pending;
+ if(!res){player.pending=false;player.failed=true;reply.pending=false;reply.failed=true;reply.text=reply.text||'本轮回应失败，请重试。';save();refreshWorkspaceBody();refreshAiFeedback();return}
+ player.pending=false;player.failed=false;reply.pending=false;reply.failed=false;reply.text=res.content||reply.text;reply.taskType=res.taskType||null;state.aiRetry=null;
+  const remote=res.meeting;
+ if(!remote){state.aiError='服务端未返回会面状态，请重试。';reply.failed=true;save();refreshWorkspaceBody();return}
+  m.turn=Number(remote.turn??m.turn??0);m.completedTasks=Array.isArray(remote.completedTasks)?remote.completedTasks:(m.completedTasks||[]);
+ if(!res.content){const index=arr.indexOf(reply);if(index>=0)arr.splice(index,1)}
+  if(remote.meetingEnded){save();refreshWorkspaceBody();await new Promise(resolve=>setTimeout(resolve,650));return finishVisitFromServer({...res,...remote})}
+ save();refreshWorkspaceBody();
 }
 function endReasonLabel(endReason){
  const labels={npc_task_completed:'NPC已完成本次任务（提问 / 质疑 / 挖坑）',turn_limit:'对话轮次已超过20轮',player_farewell:'玩家主动提出告辞'};
@@ -1086,14 +1291,17 @@ function finishVisitFromServer(result){
 }
 async function endVisit(){
  const m=state.meeting;if(!m)return;
- const n=npc(m.npcId),res=await apiCall('end_visit',{npcId:n.id,phase:state.phase});
- if(!res){render();return}
+ const n=npc(m.npcId),pending=apiCall('end_visit',{npcId:n.id,phase:state.phase},{renderPending:false});
+ const sendButton=document.querySelector('[data-action="meeting-send"]'),endButton=document.querySelector('[data-action="end-visit"]');
+ if(sendButton)sendButton.disabled=true;if(endButton){endButton.disabled=true;endButton.textContent='正在结束拜访…'}
+ const res=await pending;
+ if(!res){refreshWorkspaceBody();refreshAiFeedback();return}
  if(res.content)state.conversations[n.id].meeting.push({role:'npc',channel:'拜访',text:res.content,taskType:res.taskType||null});
  const remote=res.meeting;
- if(!remote){state.aiError='服务端未返回会面状态，请重试。';save();render();return}
+ if(!remote){state.aiError='服务端未返回会面状态，请重试。';save();refreshWorkspaceBody();refreshAiFeedback();return}
  m.turn=Number(remote.turn??m.turn??0);m.completedTasks=Array.isArray(remote.completedTasks)?remote.completedTasks:(m.completedTasks||[]);
  if(remote.meetingEnded!==false)return finishVisitFromServer({...res,...remote});
- save();render();toast('服务端尚未结束本次拜访，请继续沟通或稍后重试。','warn')
+ save();refreshWorkspaceBody();toast('服务端尚未结束本次拜访，请继续沟通或稍后重试。','warn')
 }
 function showEndPhase(){
  if(state.phase===5)return showSubmission();
@@ -1124,10 +1332,13 @@ function clampTestInteger(value,min,max,fallback){
 }
 function openTestControls(){
  const statusOptions=current=>[['','未添加'],['accepted','已添加'],['pending','待处理'],['rejected','已拒绝']].map(([value,label])=>`<option value="${value}" ${current===value?'selected':''}>${label}</option>`).join('');
+ const appointmentStatusOptions=current=>TEST_APPOINTMENT_STATUSES.map(value=>{const labels={none:'无预约',pending:'待处理',accepted:'已接受',rejected:'已拒绝',later:'待改期',completed:'已完成',cancelled:'已取消'};return `<option value="${value}" ${current===value?'selected':''}>${labels[value]}</option>`}).join('');
  const npcRows=MockData.npcs.map(person=>{const values=state.npcTestStates[person.id]||blankNpcTestStates()[person.id];return `<div class="test-npc-state-row"><div class="test-npc-state-head"><strong>${esc(person.name)} · ${esc(person.title)}</strong><div class="test-npc-state-actions"><label class="test-npc-enable"><input type="checkbox" data-test-npc-enable="${person.id}">覆盖本 NPC</label><span class="test-node">节点 ${esc(values.node||'待应用')}</span></div></div><div class="test-npc-metrics"><div class="test-npc-metric"><label for="test-support-${person.id}">支持度（0–100）</label><input id="test-support-${person.id}" data-test-npc="${person.id}" data-test-field="support" type="number" min="0" max="100" value="${values.support}" disabled></div><div class="test-npc-metric"><label for="test-pleasantness-${person.id}">愉悦度（0–100）</label><input id="test-pleasantness-${person.id}" data-test-npc="${person.id}" data-test-field="pleasantness" type="number" min="0" max="100" value="${values.pleasantness}" disabled></div><div class="test-npc-metric"><label for="test-contact-${person.id}">有效接触次数（0–100）</label><input id="test-contact-${person.id}" data-test-npc="${person.id}" data-test-field="effectiveContactCount" type="number" min="0" max="100" value="${values.effectiveContactCount}" disabled></div></div></div>`}).join('');
- openModal('测试调节',`<div class="notice amber">测试值只作用于当前五人版预览会话，不写入正式存档。NPC 数值会同步到服务端，并影响后续 AI 对话。</div><div class="test-controls-grid" style="margin-top:10px"><div class="test-control"><label for="test-phase">当前阶段（1–5）</label><input id="test-phase" type="number" min="1" max="5" value="${state.phase}"></div><div class="test-control"><label for="test-action-points">行动点（0–999）</label><input id="test-action-points" type="number" min="0" max="999" value="${state.actionPoints}"></div><div class="test-control"><label for="test-total-spent">累计消耗（0–9999）</label><input id="test-total-spent" type="number" min="0" max="9999" value="${state.totalSpent}"></div></div><div class="info-block" style="margin-top:10px"><strong>NPC 状态数值</strong><div class="tiny muted">关系节点由支持度、有效接触和已获得证据共同计算；仅提高数值不一定直接升级节点。</div><div class="test-npc-state-list">${npcRows}</div></div><div class="info-block" style="margin-top:10px"><strong>工作微信状态</strong><div class="tiny muted">设为“已添加”后，可直接进入对应联系人的微信对话并测试 Emoji 和预设表情包。</div><div class="test-wechat-list">${MockData.npcs.map(person=>`<div class="test-wechat-row"><label for="test-wechat-${person.id}">${esc(person.name)}</label><select id="test-wechat-${person.id}" data-test-wechat="${person.id}">${statusOptions(state.wechat[person.id]||'')}</select></div>`).join('')}</div></div>`,`<button class="btn" data-modal-close>取消</button><button class="btn btn-primary" id="apply-test-controls">应用测试值</button>`);
+ const appointmentRows=MockData.npcs.map(person=>{const current=state.appointments.find(item=>item.npcId===person.id),values=current||{id:'',status:'none',phase:state.phase,timeWindow:'待设置时间',location:'待设置地点',agenda:'待设置议题'};return `<div class="test-appointment-row" data-test-appointment="${person.id}"><div class="test-npc-state-head"><strong>${esc(person.name)} · 拜访预约</strong><label class="test-npc-enable"><input type="checkbox" data-test-appointment-enable="${person.id}">覆盖预约</label></div><div class="test-appointment-grid"><div class="test-control"><label for="test-appointment-status-${person.id}">预约状态</label><select id="test-appointment-status-${person.id}" data-test-appointment-field="status" disabled>${appointmentStatusOptions(values.status)}</select></div><div class="test-control"><label for="test-appointment-phase-${person.id}">预约阶段（1–5）</label><input id="test-appointment-phase-${person.id}" data-test-appointment-field="phase" type="number" min="1" max="5" value="${values.phase}" disabled></div><div class="test-control"><label for="test-appointment-time-${person.id}">时间说明</label><input id="test-appointment-time-${person.id}" data-test-appointment-field="timeWindow" type="text" maxlength="120" value="${esc(values.timeWindow)}" disabled></div><div class="test-control"><label for="test-appointment-location-${person.id}">拜访地点</label><input id="test-appointment-location-${person.id}" data-test-appointment-field="location" type="text" maxlength="120" value="${esc(values.location)}" disabled></div><div class="test-control test-appointment-agenda"><label for="test-appointment-agenda-${person.id}">拜访议题</label><input id="test-appointment-agenda-${person.id}" data-test-appointment-field="agenda" type="text" maxlength="300" value="${esc(values.agenda)}" disabled></div></div></div>`}).join('');
+ openModal('测试调节',`<div class="notice amber">测试值只作用于当前五人版预览会话，不写入正式存档。NPC 数值与拜访预约会同步到服务端，后续拜访读取服务端结果。</div><div class="test-controls-grid" style="margin-top:10px"><div class="test-control"><label for="test-phase">当前阶段（1–5）</label><input id="test-phase" type="number" min="1" max="5" value="${state.phase}"></div><div class="test-control"><label for="test-action-points">行动点（0–999）</label><input id="test-action-points" type="number" min="0" max="999" value="${state.actionPoints}"></div><div class="test-control"><label for="test-total-spent">累计消耗（0–9999）</label><input id="test-total-spent" type="number" min="0" max="9999" value="${state.totalSpent}"></div></div><div class="info-block" style="margin-top:10px"><strong>NPC 状态数值</strong><div class="tiny muted">关系节点由支持度、有效接触和已获得证据共同计算；仅提高数值不一定直接升级节点。</div><div class="test-npc-state-list">${npcRows}</div></div><div class="info-block" style="margin-top:10px"><strong>拜访预约</strong><div class="tiny muted">勾选“覆盖预约”后可修改状态、阶段、时间、地点和议题；没有预约的人物也可用“已接受”创建测试预约，选择“无预约”可清除当前预约。</div><div class="test-appointment-list">${appointmentRows}</div></div><div class="info-block" style="margin-top:10px"><strong>工作微信状态</strong><div class="tiny muted">设为“已添加”后，可直接进入对应联系人的微信对话并测试 Emoji 和预设表情包。</div><div class="test-wechat-list">${MockData.npcs.map(person=>`<div class="test-wechat-row"><label for="test-wechat-${person.id}">${esc(person.name)}</label><select id="test-wechat-${person.id}" data-test-wechat="${person.id}">${statusOptions(state.wechat[person.id]||'')}</select></div>`).join('')}</div></div>`,`<button class="btn" data-modal-close>取消</button><button class="btn btn-primary" id="apply-test-controls">应用测试值</button>`);
  document.getElementById('apply-test-controls').onclick=applyTestControls;
  document.querySelectorAll('[data-test-npc-enable]').forEach(toggle=>toggle.addEventListener('change',()=>document.querySelectorAll(`[data-test-npc="${toggle.dataset.testNpcEnable}"]`).forEach(input=>{input.disabled=!toggle.checked})));
+ document.querySelectorAll('[data-test-appointment-enable]').forEach(toggle=>toggle.addEventListener('change',()=>document.querySelectorAll(`[data-test-appointment="${toggle.dataset.testAppointmentEnable}"] [data-test-appointment-field]`).forEach(input=>{input.disabled=!toggle.checked})));
 }
 async function applyTestControls(){
  const phase=clampTestInteger(document.getElementById('test-phase')?.value,1,5,state.phase);
@@ -1140,10 +1351,19 @@ async function applyTestControls(){
   pleasantness:clampTestInteger(document.querySelector(`[data-test-npc="${person.id}"][data-test-field="pleasantness"]`)?.value,0,100,state.npcTestStates[person.id]?.pleasantness??50),
   effectiveContactCount:clampTestInteger(document.querySelector(`[data-test-npc="${person.id}"][data-test-field="effectiveContactCount"]`)?.value,0,100,state.npcTestStates[person.id]?.effectiveContactCount??0)
  }));
- const response=adjustments.length?await apiCall('test_adjust_npcs',{adjustments,phase}):{npcTestStates:[]};
+ const enabledAppointmentIds=new Set([...document.querySelectorAll('[data-test-appointment-enable]:checked')].map(toggle=>toggle.dataset.testAppointmentEnable));
+ const appointmentAdjustments=MockData.npcs.filter(person=>enabledAppointmentIds.has(person.id)).map(person=>{
+  const current=state.appointments.find(item=>item.npcId===person.id),field=name=>document.querySelector(`[data-test-appointment="${person.id}"] [data-test-appointment-field="${name}"]`)?.value;
+  const status=field('status');
+  const appointmentId=current?.id&&/^[0-9a-f-]{36}$/i.test(current.id)?{appointmentId:current.id}:{};
+  return {npcId:person.id,...appointmentId,status:TEST_APPOINTMENT_STATUSES.includes(status)?status:'none',phase:clampTestInteger(field('phase'),1,5,current?.phase??phase),timeWindow:(field('timeWindow')||current?.timeWindow||'待设置时间').trim(),location:(field('location')||current?.location||'待设置地点').trim(),agenda:(field('agenda')||current?.agenda||'待设置议题').trim()};
+ });
+ const action=adjustments.length?'test_adjust_npcs':'test_adjust_appointments';
+ const response=adjustments.length||appointmentAdjustments.length?await apiCall(action,{...(adjustments.length?{adjustments}:{}),...(appointmentAdjustments.length?{appointments:appointmentAdjustments}:{}),phase}):{npcTestStates:[]};
  if(!response)return;
  state.phase=phase;state.actionPoints=actionPoints;state.totalSpent=totalSpent;
  (response.npcTestStates||[]).forEach(item=>{if(npcIds.has(item.npcId))state.npcTestStates[item.npcId]={support:item.support,pleasantness:item.pleasantness,effectiveContactCount:item.effectiveContactCount,node:item.node}});
+ if(Array.isArray(response.appointments))state.appointments=normalizeAppointments(response.appointments);
  const allowedWechatStatuses=new Set(['','accepted','pending','rejected']);
  document.querySelectorAll('[data-test-wechat]').forEach(select=>{
   const id=select.dataset.testWechat,value=allowedWechatStatuses.has(select.value)?select.value:'';
@@ -1174,6 +1394,7 @@ async function handleAction(e){
  if(a==='end-call'){state.phoneActive=false;save();render()}
  if(a==='direct-visit-confirm')return directVisitConfirm();
  if(a==='save-visit-prep')return saveVisitPrep();
+ if(a==='skip-visit-prep')return startVisitSimulation({skipPreparation:true});
  if(a==='visit-sim')return startVisitSimulation();
  if(a==='visit-brief'){state.workspaceMode='briefVisit';save();render()}
  if(a==='submit-brief-visit')return submitBriefVisit();
@@ -1198,6 +1419,7 @@ document.addEventListener('keydown',e=>{
  }
 });
 render();
+void loadImageAssets();
 })();
 </script>
 </body>

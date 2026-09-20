@@ -12,6 +12,63 @@ const RATE_WINDOW_MS = 60_000;
 const MAX_REQUESTS_PER_WINDOW = 60;
 const rateBuckets = new Map<string, { startedAt: number; count: number }>();
 
+function previewErrorResponse(error: unknown): { status: number; message: string } | null {
+  if (!(error instanceof PreviewAiError || (error instanceof Error && ['protocol', 'unavailable', 'conflict', 'not_found', 'limit'].includes(String((error as PreviewAiError).kind))))) return null;
+  const previewError = error as PreviewAiError;
+  const status = previewError.kind === 'unavailable' ? 503 : previewError.kind === 'conflict' ? 409 : previewError.kind === 'not_found' ? 404 : previewError.kind === 'limit' ? 429 : 502;
+  const message = previewError.kind === 'unavailable'
+    ? 'AI 服务暂时不可用，请稍后重试。'
+    : previewError.kind === 'conflict'
+      ? '当前预览会话正在处理上一条操作，请勿重复提交。'
+      : previewError.kind === 'not_found'
+        ? '预览会话不存在或已过期，请重新开始。'
+        : previewError.kind === 'limit'
+          ? '预览会话或 AI 请求过于繁忙，请稍后重试。'
+          : 'AI 返回结果不符合预览协议，请重试。';
+  return { status, message };
+}
+
+function streamPreviewResponse(run: () => ReturnType<typeof previewAiService.execute>): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (value: unknown) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(value)}\n\n`));
+      try {
+        send({ type: 'status', status: 'thinking' });
+        const response = await run();
+        const content = typeof response.content === 'string' ? response.content : '';
+        const characters = Array.from(content);
+        const chunkSize = Math.max(1, Math.ceil(characters.length / 60));
+        for (let index = 0; index < characters.length; index += chunkSize) {
+          send({ type: 'delta', content: characters.slice(index, index + chunkSize).join('') });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        send({ type: 'result', data: response });
+        send({ type: 'done' });
+      } catch (error) {
+        const known = previewErrorResponse(error);
+        if (known) {
+          console.error('Project one preview AI stream failed', { status: known.status });
+          send({ type: 'error', status: known.status, error: known.message });
+        } else {
+          console.error('Project one preview AI stream failed unexpectedly', { code: 'PREVIEW_STREAM_UNEXPECTED_ERROR' });
+          send({ type: 'error', status: 503, error: '五人预览 AI 服务暂时不可用，请稍后重试。' });
+        }
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  });
+}
+
 function consumeRequest(userId: string): boolean {
   const now = Date.now();
   if (rateBuckets.size > 1_000) {
@@ -46,32 +103,28 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) {
       return NextResponse.json({ error: '五人预览 AI 请求字段无效', details: parsed.error.flatten() }, { status: 400 });
     }
-    if (parsed.data.action === 'test_adjust_npcs' && !isFastDebugEnabled()) {
-      return NextResponse.json({ error: 'NPC 测试调节仅在测试环境开放' }, { status: 403 });
+    if (['test_adjust_npcs', 'test_adjust_appointments'].includes(parsed.data.action) && !isFastDebugEnabled()) {
+      return NextResponse.json({ error: '测试调节仅在测试环境开放' }, { status: 403 });
     }
     const promptConfig = await loadProjectOnePromptConfig()
       .then((stored) => stored.config)
       .catch(() => DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
-    const response = await runWithFastTestObservability(
+    const execute = () => runWithFastTestObservability(
       guard.session!.userId,
       () => previewAiService.execute(guard.session!.userId, parsed.data, promptConfig),
     );
+    const acceptsStream = request.headers.get('accept')?.includes('text/event-stream');
+    const streamableAction = parsed.data.action === 'phone_connect'
+      || parsed.data.action === 'visit_turn'
+      || (parsed.data.action === 'message' && parsed.data.channel === 'work_phone');
+    if (acceptsStream && streamableAction) return streamPreviewResponse(execute);
+    const response = await execute();
     return NextResponse.json({ success: true, previewSessionId: response.previewSessionId, version: response.version, data: response });
   } catch (error) {
-    if (error instanceof PreviewAiError || (error instanceof Error && ['protocol', 'unavailable', 'conflict', 'not_found', 'limit'].includes(String((error as PreviewAiError).kind)))) {
-      const previewError = error as PreviewAiError;
-      console.error('Project one preview AI request failed', { kind: previewError.kind });
-      const status = previewError.kind === 'unavailable' ? 503 : previewError.kind === 'conflict' ? 409 : previewError.kind === 'not_found' ? 404 : previewError.kind === 'limit' ? 429 : 502;
-      const message = previewError.kind === 'unavailable'
-        ? 'AI 服务暂时不可用，请稍后重试。'
-        : previewError.kind === 'conflict'
-          ? '当前预览会话正在处理上一条操作，请勿重复提交。'
-          : previewError.kind === 'not_found'
-            ? '预览会话不存在或已过期，请重新开始。'
-            : previewError.kind === 'limit'
-              ? '预览会话或 AI 请求过于繁忙，请稍后重试。'
-          : 'AI 返回结果不符合预览协议，请重试。';
-      return NextResponse.json({ error: message }, { status });
+    const known = previewErrorResponse(error);
+    if (known) {
+      console.error('Project one preview AI request failed', { status: known.status });
+      return NextResponse.json({ error: known.message }, { status: known.status });
     }
     console.error('Project one preview AI request failed unexpectedly', { code: 'PREVIEW_UNEXPECTED_ERROR' });
     return NextResponse.json({ error: '五人预览 AI 服务暂时不可用，请稍后重试。' }, { status: 503 });

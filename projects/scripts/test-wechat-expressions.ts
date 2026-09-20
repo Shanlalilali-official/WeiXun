@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { Script, createContext } from 'node:vm';
 
 const html = readFileSync(resolve(process.cwd(), 'public/project1-prototype-v9.html'), 'utf8');
+const previewRoute = readFileSync(resolve(process.cwd(), 'src/app/api/project-one-preview/ai/route.ts'), 'utf8');
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -40,6 +41,21 @@ assert(html.includes('next.aiRetry=normalizeRetryRequest(raw.aiRetry)'), '刷新
 assert(html.includes("next.aiStatus='';"), '刷新恢复不应保留处理中状态');
 assert(html.includes("next.aiError='上次发送尚未确认，请重试。'"), '未确认消息刷新后缺少可见重试提示');
 assert(html.includes('retryHasCommittedMessage(next.aiRetry,next.conversations)'), '刷新恢复未清理已提交消息的重试状态');
+assert(html.includes('if(options.renderPending!==false)render()'), '消息等待阶段必须能够跳过全局 render');
+assert(html.includes('renderPending:false'), '普通消息发送未启用无刷新等待模式');
+assert(html.includes('pendingConversation={npcId:n.id,channel:ch,commandId}'), '消息发送前未建立局部 NPC 回复状态');
+assert(html.includes('refreshMessageThread(ch,n);setMessageComposerBusy(true,ch)'), '消息发送前未即时更新对话区并锁定输入');
+assert(html.includes('正在回复'), '缺少 NPC 正在回复的自然等待反馈');
+assert(html.includes("accept:'text/event-stream'"), '前端 AI 请求未声明 SSE 流式响应');
+assert(html.includes("retryKind:'phone_message'"), '电话对话未使用独立的流式重试类型');
+assert(html.includes("retryKind:'visit_turn'"), '实际拜访未使用独立的流式重试类型');
+assert(html.includes('onDelta:content=>appendStreamDelta(reply,content)'), '电话或实际拜访未逐块追加 NPC 回复');
+assert(previewRoute.includes('new ReadableStream<Uint8Array>'), '预览 AI 路由未创建流式响应');
+assert(previewRoute.includes("send({ type: 'status', status: 'thinking' })"), '流式响应未立即发送思考状态');
+assert(previewRoute.includes("send({ type: 'delta', content:"), '流式响应未发送文本增量');
+assert(previewRoute.includes("send({ type: 'result', data: response })"), '流式响应未发送最终原子状态');
+assert(previewRoute.includes("parsed.data.action === 'visit_turn'"), '实际拜访未加入服务端流式动作白名单');
+assert(previewRoute.includes("parsed.data.channel === 'work_phone'"), '电话消息未加入服务端流式动作白名单');
 
 const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
 assert(scripts.length > 0, '未找到内联脚本');
@@ -48,6 +64,7 @@ for (const [, source] of scripts) new Function(source);
 function extractFunction(source: string, name: string): string {
   const start = source.indexOf(`function ${name}`);
   assert(start >= 0, `未找到前端函数 ${name}`);
+  const declarationStart = source.slice(Math.max(0, start - 6), start) === 'async ' ? start - 6 : start;
   const signatureEnd = source.indexOf('){', start);
   const open = signatureEnd + 1;
   assert(open >= 0, `${name} 缺少函数体`);
@@ -77,14 +94,14 @@ function extractFunction(source: string, name: string): string {
     if (char === '/' && next === '*') { blockComment = true; index += 1; continue; }
     if (char === '\'' || char === '"' || char === '`') { quote = char; continue; }
     if (char === '{') depth += 1;
-    if (char === '}' && --depth === 0) return source.slice(start, index + 1);
+    if (char === '}' && --depth === 0) return source.slice(declarationStart, index + 1);
   }
   throw new Error(`${name} 函数体未闭合`);
 }
 
 const source = scripts[0][1];
 const vmContext = createContext({
-  Date, Math, Object, Set, String,
+  Date, Math, Object, Set, String, JSON, TextDecoder,
   crypto: { randomUUID: () => '00000000-0000-4000-8000-000000000001' },
   state: { conversations: { P1: { email: [], wechat: [] } } },
   npc: undefined,
@@ -92,12 +109,13 @@ const vmContext = createContext({
 const vmCode = [
   extractFunction(source, 'newPreviewCommandId'),
   extractFunction(source, 'normalizeMessageResponse'),
+  extractFunction(source, 'readPreviewStream'),
   extractFunction(source, 'channelLabel'),
   extractFunction(source, 'formatAttachment'),
   extractFunction(source, 'appendMessageResult'),
   extractFunction(source, 'retryIsMessage'),
   extractFunction(source, 'hasCommittedRetry'),
-  'globalThis.hooks={normalizeMessageResponse,appendMessageResult,retryIsMessage,hasCommittedRetry};',
+  'globalThis.hooks={normalizeMessageResponse,readPreviewStream,appendMessageResult,retryIsMessage,hasCommittedRetry};',
 ].join('\n');
 new Script(vmCode).runInContext(vmContext);
 type MessageOutcome = {
@@ -107,14 +125,30 @@ type MessageOutcome = {
   readStatus?: 'read';
   playerMessageId?: string;
 };
-type AppendResult = { outcome: MessageOutcome; playerMessageId: string; isNew: boolean } | null;
+type AppendResult = { outcome: MessageOutcome; playerMessageId: string; isNew: boolean; shouldCharge: boolean } | null;
 type FrontendHooks = {
   normalizeMessageResponse: (value: unknown, channel: string) => MessageOutcome | null;
+  readPreviewStream: (response: { body: ReadableStream<Uint8Array> }, onDelta: (content: string) => void) => Promise<Record<string, unknown>>;
   appendMessageResult: (...args: unknown[]) => AppendResult;
   retryIsMessage: () => boolean;
   hasCommittedRetry: (value: unknown) => boolean;
 };
 const hooks = (vmContext as { hooks: FrontendHooks }).hooks;
+async function testPreviewStream(): Promise<void> {
+  const encodedStream = new TextEncoder();
+  const streamedChunks: string[] = [];
+  const streamResult = await hooks.readPreviewStream({
+    body: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encodedStream.encode('data: {"type":"status","status":"thinking"}\n\ndata: {"type":"delta","content":"您好"}\n'));
+        controller.enqueue(encodedStream.encode('\ndata: {"type":"delta","content":"，请讲。"}\n\ndata: {"type":"result","data":{"action":"visit_turn","version":2}}\n\n'));
+        controller.close();
+      },
+    }),
+  }, (content) => streamedChunks.push(content));
+  assertEqual(streamedChunks.join(''), '您好，请讲。', 'SSE 文本增量未按顺序交给界面');
+  assertEqual(streamResult.version, 2, 'SSE 最终状态未正确返回');
+}
 const playerId = '00000000-0000-4000-8000-000000000002';
 const silentPlayerId = '00000000-0000-4000-8000-000000000003';
 const replyOutcome = hooks.normalizeMessageResponse({ responseAction: 'reply', content: '收到，我会确认。', invitationStatus: 'none', readStatus: 'read', playerMessageId: playerId }, 'wechat');
@@ -137,7 +171,18 @@ assertEqual(conversationState.conversations.P1.wechat.length, 3, '已读不回�
 assert(conversationState.conversations.P1.wechat[2].readStatus === 'read', '已读不回未在消息历史中保存已读标记');
 assert(hooks.hasCommittedRetry({ commandId: 'cmd-2' }) === true, '已提交消息未被幂等重试检测到');
 assert(hooks.hasCommittedRetry({ commandId: 'cmd-unknown' }) === false, '不存在的命令不应被视为已提交');
+conversationState.conversations.P1.email.push({ role: 'player', text: '先显示的玩家消息', messageId: 'local-cmd-3', commandId: 'cmd-3', pending: true, charged: false });
+assert(hooks.hasCommittedRetry({ commandId: 'cmd-3' }) === false, '乐观消息不能被误判为已提交');
+const optimisticOutcome = hooks.normalizeMessageResponse({ responseAction: 'reply', content: '这是稍后返回的回复。', invitationStatus: 'none', readStatus: 'read', playerMessageId: 'server-message-3' }, 'email');
+const completedOptimistic = hooks.appendMessageResult(person, 'email', '先显示的玩家消息', '', optimisticOutcome, { commandId: 'cmd-3' }, 'local-cmd-3');
+assert(completedOptimistic?.isNew === false, '服务端返回后应就地完成乐观消息，不能重复追加玩家气泡');
+assert(completedOptimistic?.shouldCharge === true, '首次完成乐观消息时应结算行动点');
+assertEqual(conversationState.conversations.P1.email.length, 2, '乐观消息完成后应只有一个玩家气泡和一个 NPC 气泡');
+assert(conversationState.conversations.P1.email[0].pending === false, '服务端返回后应清除玩家消息的等待状态');
+assert(hooks.hasCommittedRetry({ commandId: 'cmd-3' }) === true, '完成后的乐观消息应被幂等重试检测到');
 vmContext.state.aiRetry = { kind: 'message' };
 assert(hooks.retryIsMessage() === true, '消息重试状态未识别');
 
-console.log('微信 Emoji/预设表情包与已读不回前端回归通过');
+testPreviewStream()
+  .then(() => console.log('微信、电话、实际拜访流式交互与已读不回前端回归通过'))
+  .catch((error) => { console.error(error); process.exitCode = 1; });

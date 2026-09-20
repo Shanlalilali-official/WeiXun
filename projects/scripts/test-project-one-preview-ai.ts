@@ -33,6 +33,7 @@ async function main() {
   assert.equal(previewAiRequestSchema.safeParse(withMeta({ action: 'message', npcId: 'P1-001', text: '您好', channel: 'email', profile: { hidden: true } }, 0)).success, false);
   assert.equal(previewAiRequestSchema.safeParse(withMeta({ action: 'test_adjust_npcs', adjustments: [{ npcId: 'P1-001', support: 101, pleasantness: 50, effectiveContactCount: 0 }] }, 0)).success, false, 'NPC test values enforce server bounds');
   assert.equal(previewAiRequestSchema.safeParse(withMeta({ action: 'test_adjust_npcs', adjustments: [{ npcId: 'P1-001', support: 10, pleasantness: 50, effectiveContactCount: 1 }, { npcId: 'P1-001', support: 20, pleasantness: 60, effectiveContactCount: 2 }] }, 0)).success, false, 'NPC test adjustments reject duplicate people');
+  assert.equal(previewAiRequestSchema.safeParse(withMeta({ action: 'start_visit', npcId: 'P1-001', skipPreparation: 'yes' }, 0)).success, false, 'skip preparation must be an explicit boolean');
   assert.equal(previewAiResponseSchema.safeParse({ previewSessionId: 'x'.repeat(20), version: 1, action: 'reset' }).success, true);
   assert.equal(previewNpcEvaluationAiOutputSchema.safeParse({ ...emptyEvaluation, blockerUpdates: [{ action: 'add', value: 'model_invented_blocker' }] }).success, false, 'blocker IDs are a server-controlled enum');
 
@@ -201,6 +202,50 @@ async function main() {
   assert.equal(state.npcStates['P1-001'].pleasantness, 82);
   assert.equal(state.npcStates['P1-001'].effectiveContactCount, 4);
   assert.equal(prompts.length, 3, 'test adjustment does not invoke the model');
+
+  const appointmentService = createPreviewAiService({ invoker: async (messages) => {
+    const prompt = messages.map((message) => message.content).join('\n');
+    if (prompt.includes('独立评估刚刚完成的 NPC 正文')) return json(emptyEvaluation);
+    return json({ responseAction: 'reply', content: '明天可以在办公室见面。', invitationStatus: 'accepted', appointment: { timeWindow: '明天 10:00', location: '客户办公室', agenda: '确认验收口径' } });
+  } });
+  const appointmentCreated = await appointmentService.execute('user-appointment', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '明天方便在办公室确认验收口径吗？' }, 0));
+  assert(appointmentCreated.appointment, 'accepted invitation must create a server appointment');
+  assert.equal(appointmentCreated.appointment.npcId, 'P1-001');
+  assert.equal(appointmentCreated.appointment.phase, 1);
+  const appointmentState = appointmentService.store.get('user-appointment', appointmentCreated.previewSessionId)!;
+  assert.deepEqual(appointmentState.appointments['P1-001'], appointmentCreated.appointment, 'appointment is stored in the server preview session');
+  const appointmentUpdated = await appointmentService.execute('user-appointment', withMeta({ action: 'test_adjust_appointments', appointments: [{
+    npcId: 'P1-001', appointmentId: appointmentCreated.appointment.id, status: 'accepted', phase: 4, timeWindow: '第 4 阶段 14:00', location: '客户办公室 4 楼', agenda: '复核上线与验收计划',
+  }] }, appointmentCreated.version, appointmentCreated.previewSessionId));
+  assert.deepEqual(appointmentUpdated.appointments, [{ ...appointmentCreated.appointment, phase: 4, timeWindow: '第 4 阶段 14:00', location: '客户办公室 4 楼', agenda: '复核上线与验收计划' }], 'appointment test adjustment returns the authoritative server appointment');
+  assert.deepEqual(appointmentState.appointments['P1-001'], appointmentUpdated.appointments[0]);
+  appointmentState.approvedVisitPreparations['P1-001'] = '已准备拜访';
+  const visitStarted = await appointmentService.execute('user-appointment', withMeta({ action: 'start_visit', npcId: 'P1-001' }, appointmentUpdated.version, appointmentCreated.previewSessionId));
+  const farewell = await appointmentService.execute('user-appointment', withMeta({ action: 'visit_turn', npcId: 'P1-001', text: '感谢您的时间，今天先这样，改天再聊。' }, visitStarted.version, appointmentCreated.previewSessionId));
+  assert.equal(farewell.meeting?.meetingEnded, true, 'farewell visit turn ends the active meeting');
+  assert.deepEqual(farewell.appointment, { ...appointmentUpdated.appointments[0], status: 'completed' }, 'farewell visit turn completes the authoritative appointment');
+  assert.equal(appointmentState.appointments['P1-001']?.status, 'completed');
+  const appointmentVersion = appointmentState.version;
+  await assert.rejects(
+    appointmentService.execute('user-appointment', withMeta({ action: 'test_adjust_appointments', appointments: [{ npcId: 'P1-001', appointmentId: '00000000-0000-0000-0000-000000000001', location: '伪造地点' }] }, farewell.version, appointmentCreated.previewSessionId)),
+    (error: unknown) => error instanceof PreviewAiError && error.kind === 'protocol',
+    'appointment IDs cannot be used across server appointments',
+  );
+  assert.equal(appointmentState.version, appointmentVersion, 'rejected appointment adjustment does not commit a version or state');
+  const appointmentCleared = await appointmentService.execute('user-appointment', withMeta({ action: 'test_adjust_appointments', appointments: [{ npcId: 'P1-001', status: 'none' }] }, farewell.version, appointmentCreated.previewSessionId));
+  assert.deepEqual(appointmentCleared.appointments, [], 'status none clears the server appointment');
+  assert.equal(appointmentState.appointments['P1-001'], undefined);
+
+  const skipService = createPreviewAiService({ invoker: async () => { throw new Error('skipping preparation must not call AI before the visit'); } });
+  const skipAppointment = await skipService.execute('user-skip-preparation', withMeta({ action: 'test_adjust_appointments', appointments: [{ npcId: 'P1-002', status: 'accepted', location: '客户办公室' }] }, 0));
+  await assert.rejects(
+    skipService.execute('user-skip-preparation', withMeta({ action: 'start_visit', npcId: 'P1-002' }, skipAppointment.version, skipAppointment.previewSessionId)),
+    (error: unknown) => error instanceof PreviewAiError && error.kind === 'protocol',
+    'ordinary visit start still requires approved preparation',
+  );
+  const skippedVisit = await skipService.execute('user-skip-preparation', withMeta({ action: 'start_visit', npcId: 'P1-002', skipPreparation: true }, skipAppointment.version, skipAppointment.previewSessionId));
+  assert.equal(skippedVisit.meeting?.meetingEnded, false, 'skip preparation enters the actual visit');
+  assert.equal(skipService.store.get('user-skip-preparation', skipAppointment.previewSessionId)?.approvedVisitPreparations['P1-002'], undefined, 'skipping does not create a fake preparation');
 
   const second = await service.execute('user-a', withMeta({ action: 'message', npcId: 'P1-002', channel: 'email', text: '这里是已经验证的改进证据。' }, adjusted.version, sessionId));
   state.npcStates['P1-002'].support = 50;

@@ -101,6 +101,28 @@ export const designerPromptConfigs = pgTable("designer_prompt_configs", {
 	pgPolicy("designer_prompt_configs_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
+export const designerImageAssets = pgTable("designer_image_assets", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	projectCode: varchar("project_code", { length: 32 }).default('project-one').notNull(),
+	slotKey: varchar("slot_key", { length: 96 }).notNull(),
+	category: varchar({ length: 32 }).notNull(),
+	personId: varchar("person_id", { length: 16 }),
+	storagePath: text("storage_path").notNull(),
+	publicUrl: text("public_url").notNull(),
+	originalFilename: varchar("original_filename", { length: 255 }).notNull(),
+	mimeType: varchar("mime_type", { length: 64 }).notNull(),
+	byteSize: integer("byte_size").notNull(),
+	updatedBy: varchar("updated_by", { length: 64 }),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	unique("designer_image_assets_project_slot_unique").on(table.projectCode, table.slotKey),
+	index("designer_image_assets_project_category_idx").on(table.projectCode, table.category),
+	check("designer_image_assets_byte_size_check", sql`${table.byteSize} > 0 and ${table.byteSize} <= 5242880`),
+	check("designer_image_assets_category_check", sql`${table.category} in ('person_intro', 'person_expression', 'visit_scene')`),
+	check("designer_image_assets_mime_type_check", sql`${table.mimeType} in ('image/jpeg', 'image/png', 'image/webp')`),
+	pgPolicy("designer_image_assets_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
+]);
+
 export const affinityScores = pgTable("affinity_scores", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	sessionId: uuid("session_id").notNull(),

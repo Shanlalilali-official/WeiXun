@@ -5,7 +5,7 @@ import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import {
   attachmentDecisionAiOutputSchema, briefVisitAiOutputSchema, messageAiOutputSchema, phoneMessageAiOutputSchema, planAiOutputSchema, previewAiResponseSchema,
-  previewEndReasonSchema, previewVisitTaskSchema, type PreviewAiRequest, type PreviewAiResponse,
+  previewAppointmentSchema, previewAppointmentStatusSchema, previewEndReasonSchema, previewVisitTaskSchema, type PreviewAiRequest, type PreviewAiResponse,
   previewNpcEvaluationAiOutputSchema, previewWorkingMemoryStatusSchema, previewWorkingMemoryTypeSchema,
   type PreviewBlockerId, type PreviewNpcId, visitPreparationAiOutputSchema, visitTurnAiOutputSchema, wechatAiOutputSchema,
 } from '@/lib/contracts/project-one-preview-ai';
@@ -63,6 +63,7 @@ type ConversationMessage = {
   delivery?: MessageDelivery;
 };
 type ActiveMeeting = { npcId: PreviewNpcId; turn: number; completedTasks: VisitTask[]; ended: boolean; endReason?: z.infer<typeof previewEndReasonSchema> };
+export type PreviewAppointment = z.infer<typeof previewAppointmentSchema>;
 type WorkingMemoryType = z.infer<typeof previewWorkingMemoryTypeSchema>;
 type WorkingMemoryStatus = z.infer<typeof previewWorkingMemoryStatusSchema>;
 export type PreviewWorkingMemoryEntry = {
@@ -76,7 +77,8 @@ export type PreviewNpcRuntimeState = {
 };
 export type PreviewServerState = {
   userId: string; previewSessionId: string; conversations: Record<PreviewNpcId, ConversationMessage[]>;
-  wechat: Partial<Record<PreviewNpcId, 'accepted' | 'rejected'>>; activeMeeting: ActiveMeeting | null; lastActiveAt: number;
+  wechat: Partial<Record<PreviewNpcId, 'accepted' | 'rejected'>>; appointments: Partial<Record<PreviewNpcId, PreviewAppointment>>;
+  activeMeeting: ActiveMeeting | null; lastActiveAt: number;
   approvedVisitPreparations: Partial<Record<PreviewNpcId, string>>;
   npcStates: Record<PreviewNpcId, PreviewNpcRuntimeState>;
   version: number; completedCommands: Map<string, PreviewAiResponse>;
@@ -93,7 +95,7 @@ function newNpcStates(): Record<PreviewNpcId, PreviewNpcRuntimeState> {
   }])) as unknown as Record<PreviewNpcId, PreviewNpcRuntimeState>;
 }
 export function createPreviewServerState(userId: string, previewSessionId: string, now = Date.now()): PreviewServerState {
-  return { userId, previewSessionId, conversations: newConversations(), wechat: {}, activeMeeting: null, lastActiveAt: now, approvedVisitPreparations: {}, npcStates: newNpcStates(), version: 0, completedCommands: new Map() };
+  return { userId, previewSessionId, conversations: newConversations(), wechat: {}, appointments: {}, activeMeeting: null, lastActiveAt: now, approvedVisitPreparations: {}, npcStates: newNpcStates(), version: 0, completedCommands: new Map() };
 }
 /** Process-local preview state; this is intentionally not persistent game state. */
 export class PreviewSessionStore {
@@ -163,6 +165,7 @@ export class PreviewSessionStore {
         version: state.version,
         lastActiveAt: state.lastActiveAt,
         wechat: { ...state.wechat },
+        appointments: listAppointments(state),
         activeMeeting: state.activeMeeting ? { ...state.activeMeeting, completedTasks: [...state.activeMeeting.completedTasks] } : null,
         approvedVisitPreparations: Object.fromEntries(Object.entries(state.approvedVisitPreparations).map(([npcId, text]) => [npcId, text.slice(0, 1_000)])),
         conversations: Object.fromEntries(PREVIEW_NPC_IDS.map((npcId) => [npcId, state.conversations[npcId].slice(-12).map((message) => ({
@@ -472,6 +475,45 @@ function meetingResponse(state: PreviewServerState) {
   if (!meeting) return undefined;
   return { meetingEnded: meeting.ended, ...(meeting.endReason ? { endReason: meeting.endReason } : {}), turn: meeting.turn, completedTasks: meeting.completedTasks };
 }
+type PreviewAppointmentStatus = z.infer<typeof previewAppointmentStatusSchema>;
+type PreviewAppointmentAdjustment = Extract<PreviewAiRequest, { action: 'test_adjust_appointments' }>['appointments'][number];
+type AppointmentDraft = { timeWindow: string; location: string; agenda: string };
+function listAppointments(state: PreviewServerState): PreviewAppointment[] {
+  return PREVIEW_NPC_IDS.flatMap((npcId) => {
+    const appointment = state.appointments[npcId];
+    return appointment ? [{ ...appointment }] : [];
+  });
+}
+function saveAppointment(state: PreviewServerState, npcId: PreviewNpcId, draft: AppointmentDraft, phase: number, status: PreviewAppointmentStatus = 'accepted'): PreviewAppointment {
+  const appointment = previewAppointmentSchema.parse({
+    id: state.appointments[npcId]?.id ?? randomUUID(), npcId, status, phase,
+    timeWindow: draft.timeWindow, location: draft.location, agenda: draft.agenda,
+  });
+  state.appointments[npcId] = appointment;
+  return appointment;
+}
+function applyAppointmentAdjustment(state: PreviewServerState, adjustment: PreviewAppointmentAdjustment): PreviewAppointment | undefined {
+  const current = state.appointments[adjustment.npcId];
+  if (adjustment.appointmentId && adjustment.appointmentId !== current?.id) throw new PreviewAiError('protocol', 'APPOINTMENT_NOT_FOUND');
+  if (state.activeMeeting?.npcId === adjustment.npcId && !state.activeMeeting.ended) throw new PreviewAiError('conflict', 'APPOINTMENT_ACTIVE_VISIT');
+  if (adjustment.status === 'none') {
+    delete state.appointments[adjustment.npcId];
+    return undefined;
+  }
+  const status = adjustment.status ?? current?.status ?? 'accepted';
+  const phase = adjustment.phase ?? current?.phase ?? 1;
+  return saveAppointment(state, adjustment.npcId, {
+    timeWindow: adjustment.timeWindow ?? current?.timeWindow ?? '待设置时间',
+    location: adjustment.location ?? current?.location ?? '待设置地点',
+    agenda: adjustment.agenda ?? current?.agenda ?? '待设置议题',
+  }, phase, status);
+}
+function completeAppointment(state: PreviewServerState, npcId: PreviewNpcId): PreviewAppointment | undefined {
+  const appointment = state.appointments[npcId];
+  if (!appointment || appointment.status === 'cancelled' || appointment.status === 'rejected') return undefined;
+  appointment.status = 'completed';
+  return { ...appointment };
+}
 function messagePurpose(channel: string, hasAttachment: boolean, allowReadNoReply: boolean): string {
   const channelName = channel === 'email' ? '邮件' : channel === 'wechat' ? '工作微信' : '电话';
   const replyRule = '请通过' + channelName + '回复。输出 {content,invitationStatus,appointment?}。invitationStatus 只能是 none、accepted、rejected、later。'
@@ -494,6 +536,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
     if (request.action === 'reset') {
       state.conversations = newConversations();
       state.wechat = {};
+      state.appointments = {};
       state.activeMeeting = null;
       state.approvedVisitPreparations = {};
       state.npcStates = newNpcStates();
@@ -508,16 +551,18 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
       const disclosed = output.needsDetail ? [] : disclosedFor([...new Set(output.matchedNpcIds)], request.text);
       return previewAiResponseSchema.parse({ ...base, ...output, disclosureKeys: disclosed.map((item) => item.npcId), disclosed });
     }
-    if (request.action === 'test_adjust_npcs') {
-      for (const adjustment of request.adjustments) {
+    if (request.action === 'test_adjust_npcs' || request.action === 'test_adjust_appointments') {
+      const npcAdjustments = request.action === 'test_adjust_npcs' ? request.adjustments : undefined;
+      for (const adjustment of npcAdjustments ?? []) {
         const npcState = state.npcStates[adjustment.npcId];
         npcState.support = adjustment.support;
         npcState.pleasantness = adjustment.pleasantness;
         npcState.effectiveContactCount = adjustment.effectiveContactCount;
       }
+      const updatedAppointments = request.appointments?.map((adjustment) => applyAppointmentAdjustment(state, adjustment));
       return previewAiResponseSchema.parse({
         ...base,
-        npcTestStates: request.adjustments.map(({ npcId }) => {
+        ...(npcAdjustments ? { npcTestStates: npcAdjustments.map(({ npcId }) => {
           const npcState = state.npcStates[npcId];
           return {
             npcId,
@@ -526,12 +571,13 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
             effectiveContactCount: npcState.effectiveContactCount,
             node: resolvePreviewNode(npcState),
           };
-        }),
+        }) } : {}),
+        ...(updatedAppointments ? { appointments: listAppointments(state) } : {}),
       });
     }
     if (request.action === 'start_visit') {
       if (state.activeMeeting && !state.activeMeeting.ended) throw new PreviewAiError('conflict', 'VISIT_ALREADY_ACTIVE');
-      if (!state.approvedVisitPreparations[request.npcId]) throw new PreviewAiError('protocol', 'VISIT_PREPARATION_REQUIRED');
+      if (!request.skipPreparation && !state.approvedVisitPreparations[request.npcId]) throw new PreviewAiError('protocol', 'VISIT_PREPARATION_REQUIRED');
       state.activeMeeting = { npcId: request.npcId, turn: 0, completedTasks: [], ended: false };
       return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state) });
     }
@@ -539,7 +585,8 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
       const meeting = state.activeMeeting;
       if (!meeting || meeting.npcId !== request.npcId || meeting.ended) throw new PreviewAiError('protocol', 'NO_ACTIVE_VISIT_FOR_NPC');
       meeting.ended = true; meeting.endReason = 'player_farewell';
-      return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state) });
+      const appointment = completeAppointment(state, request.npcId);
+      return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state), ...(appointment ? { appointment } : {}) });
     }
 
     const npcId = request.npcId;
@@ -572,6 +619,9 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
       const safeOutput: MessageOutput = isHardBlockerText(request.text)
         ? { responseAction: 'reply', content: COMPLIANCE_REFUSAL, invitationStatus: 'rejected' }
         : output;
+      const appointment = safeOutput.responseAction === 'reply' && safeOutput.invitationStatus === 'accepted' && safeOutput.appointment
+        ? saveAppointment(state, npcId, safeOutput.appointment, request.phase ?? 1)
+        : undefined;
       const npcMessage = safeOutput.responseAction === 'reply' ? newMessage('npc', channel, safeOutput.content) : null;
       playerMessage.delivery = safeOutput.responseAction === 'read_no_reply'
         ? { responseAction: 'read_no_reply', readStatus: 'read', reasonCode: safeOutput.reasonCode, reasonEvidence: safeOutput.reasonEvidence }
@@ -589,7 +639,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
         } : {}),
         invitationStatus: safeOutput.invitationStatus,
         attachment: attachmentResult ? { viewed: attachmentResult.viewed, impact: attachmentResult.impact } : undefined,
-        ...(safeOutput.responseAction === 'reply' && safeOutput.invitationStatus === 'accepted' ? { appointment: safeOutput.appointment } : {}),
+         ...(appointment ? { appointment } : {}),
       });
     }
     if (request.action === 'wechat_request') {
@@ -625,7 +675,8 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
         meeting.turn = nextTurn;
         addMessage(state, npcId, playerMessage);
         resolveMeetingEnd(meeting, true);
-        return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state) });
+        const appointment = completeAppointment(state, npcId);
+        return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state), ...(appointment ? { appointment } : {}) });
       }
       const remaining = npc.allowedTasks.filter((task) => !meeting.completedTasks.includes(task));
       const purpose = '这是实际拜访第 ' + nextTurn + ' 轮。自然回复，并仅在本轮确实完成任务时填写 completedTask。剩余允许任务：' + (remaining.join('、') || '无') + '。输出 {content,completedTask:null|任务名}。';
@@ -647,7 +698,8 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
       addMessage(state, npcId, npcMessage);
       if (output.completedTask) meeting.completedTasks.push(output.completedTask);
       resolveMeetingEnd(meeting, false);
-      return previewAiResponseSchema.parse({ ...base, content: output.content, meeting: meetingResponse(state) });
+      const appointment = meeting.ended ? completeAppointment(state, npcId) : undefined;
+      return previewAiResponseSchema.parse({ ...base, content: output.content, meeting: meetingResponse(state), ...(appointment ? { appointment } : {}) });
     }
     throw new PreviewAiError('protocol', 'UNSUPPORTED_PREVIEW_ACTION');
   }

@@ -6,6 +6,8 @@ export type PreviewNpcId = z.infer<typeof previewNpcIdSchema>;
 export const previewChannelSchema = z.enum(['email', 'wechat', 'work_phone']);
 export const previewVisitTaskSchema = z.enum(['提问', '质疑', '挖坑']);
 export const previewInvitationStatusSchema = z.enum(['none', 'accepted', 'rejected', 'later']);
+export const previewAppointmentStatusSchema = z.enum(['pending', 'accepted', 'rejected', 'later', 'completed', 'cancelled']);
+export const previewTestAppointmentStatusSchema = z.enum(['none', 'pending', 'accepted', 'rejected', 'later', 'completed', 'cancelled']);
 export const previewEndReasonSchema = z.enum(['npc_task_completed', 'turn_limit', 'player_farewell']);
 export const previewNodeSchema = z.enum(['N1', 'N2', 'N3', 'N4', 'BLOCKED']);
 export const previewMessageResponseActionSchema = z.enum(['reply', 'read_no_reply']);
@@ -40,6 +42,26 @@ const previewNpcTestAdjustmentsSchema = z.array(previewNpcTestAdjustmentSchema).
   });
 });
 
+const previewAppointmentIdSchema = z.string().uuid('预约 ID 格式无效');
+const previewAppointmentAdjustmentSchema = z.object({
+  npcId: previewNpcIdSchema,
+  appointmentId: previewAppointmentIdSchema.optional(),
+  status: previewTestAppointmentStatusSchema.optional(),
+  phase: z.number().int().min(1).max(5).optional(),
+  timeWindow: z.string().trim().min(1).max(120).optional(),
+  location: z.string().trim().min(1).max(120).optional(),
+  agenda: z.string().trim().min(1).max(300).optional(),
+}).strict().superRefine((item, context) => {
+  if (Object.keys(item).length <= 1) context.addIssue({ code: z.ZodIssueCode.custom, message: '预约测试调节至少需要一个可修改字段' });
+});
+const previewAppointmentAdjustmentsSchema = z.array(previewAppointmentAdjustmentSchema).min(1).max(5).superRefine((items, context) => {
+  const seen = new Set<PreviewNpcId>();
+  items.forEach((item, index) => {
+    if (seen.has(item.npcId)) context.addIssue({ code: z.ZodIssueCode.custom, message: '预约测试调节不能包含重复人物', path: [index, 'npcId'] });
+    seen.add(item.npcId);
+  });
+});
+
 export const previewAiRequestSchema = z.discriminatedUnion('action', [
   commonRequestSchema.extend({ action: z.literal('plan'), text: textSchema, npcId: previewNpcIdSchema.optional() }),
   commonRequestSchema.extend({ action: z.literal('message'), npcId: previewNpcIdSchema, text: textSchema, channel: previewChannelSchema, attachment: optionalAttachmentSchema }),
@@ -47,19 +69,31 @@ export const previewAiRequestSchema = z.discriminatedUnion('action', [
   commonRequestSchema.extend({ action: z.literal('phone_connect'), npcId: previewNpcIdSchema, text: textSchema }),
   commonRequestSchema.extend({ action: z.literal('visit_preparation'), npcId: previewNpcIdSchema, text: textSchema }),
   commonRequestSchema.extend({ action: z.literal('brief_visit'), npcId: previewNpcIdSchema, text: textSchema }),
-  commonRequestSchema.extend({ action: z.literal('start_visit'), npcId: previewNpcIdSchema }),
+  commonRequestSchema.extend({ action: z.literal('start_visit'), npcId: previewNpcIdSchema, skipPreparation: z.boolean().optional() }),
   commonRequestSchema.extend({ action: z.literal('visit_turn'), npcId: previewNpcIdSchema, text: textSchema }),
   commonRequestSchema.extend({ action: z.literal('end_visit'), npcId: previewNpcIdSchema }),
-  commonRequestSchema.extend({ action: z.literal('test_adjust_npcs'), adjustments: previewNpcTestAdjustmentsSchema }),
+  commonRequestSchema.extend({ action: z.literal('test_adjust_npcs'), adjustments: previewNpcTestAdjustmentsSchema.optional(), appointments: previewAppointmentAdjustmentsSchema.optional() }).superRefine((value, context) => {
+    if (!value.adjustments && !value.appointments) context.addIssue({ code: z.ZodIssueCode.custom, message: '测试调节至少需要 NPC 或预约调节' });
+  }),
+  commonRequestSchema.extend({ action: z.literal('test_adjust_appointments'), appointments: previewAppointmentAdjustmentsSchema }),
   commonRequestSchema.extend({ action: z.literal('reset') }),
 ]);
 export type PreviewAiRequest = z.infer<typeof previewAiRequestSchema>;
 
-const appointmentSchema = z.object({
+const appointmentDraftSchema = z.object({
   timeWindow: z.string().min(1).max(120),
   location: z.string().min(1).max(120),
   agenda: z.string().min(1).max(300),
-});
+}).strict();
+export const previewAppointmentSchema = z.object({
+  id: previewAppointmentIdSchema,
+  npcId: previewNpcIdSchema,
+  status: previewAppointmentStatusSchema,
+  phase: z.number().int().min(1).max(5),
+  timeWindow: z.string().min(1).max(120),
+  location: z.string().min(1).max(120),
+  agenda: z.string().min(1).max(300),
+}).strict();
 const attachmentResultSchema = z.object({
   viewed: z.boolean(),
   impact: z.string().min(1).max(400),
@@ -81,7 +115,7 @@ const previewNpcTestStateSchema = z.object({
 export const previewAiResponseSchema = z.object({
   previewSessionId: z.string().regex(/^[A-Za-z0-9_-]{20,128}$/),
   version: z.number().int().min(0),
-  action: z.enum(['plan', 'message', 'wechat_request', 'phone_connect', 'visit_preparation', 'brief_visit', 'start_visit', 'visit_turn', 'end_visit', 'test_adjust_npcs', 'reset']),
+  action: z.enum(['plan', 'message', 'wechat_request', 'phone_connect', 'visit_preparation', 'brief_visit', 'start_visit', 'visit_turn', 'end_visit', 'test_adjust_npcs', 'test_adjust_appointments', 'reset']),
   content: z.string().max(2_000).nullable().optional(),
   /** Message delivery state. The internal reason for a read-without-reply is never returned here. */
   responseAction: previewMessageResponseActionSchema.optional(),
@@ -93,7 +127,8 @@ export const previewAiResponseSchema = z.object({
   disclosed: z.array(z.object({ npcId: previewNpcIdSchema, facts: z.array(z.string().max(300)), clues: z.array(z.string().max(300)) })).optional(),
   recommendations: z.array(z.string().max(300)).max(5).optional(),
   invitationStatus: previewInvitationStatusSchema.optional(),
-  appointment: appointmentSchema.optional(),
+  appointment: previewAppointmentSchema.optional(),
+  appointments: z.array(previewAppointmentSchema).max(5).optional(),
   attachment: attachmentResultSchema.optional(),
   wechatAccepted: z.boolean().optional(),
   strengths: z.array(z.string().max(300)).max(4).optional(),
@@ -138,7 +173,7 @@ export const messageAiOutputSchema = z.discriminatedUnion('responseAction', [
     responseAction: z.literal('reply'),
     content: z.string().trim().min(1).max(2_000),
     invitationStatus: previewInvitationStatusSchema,
-    appointment: appointmentSchema.optional(),
+    appointment: appointmentDraftSchema.optional(),
   }).strict(),
   z.object({
     responseAction: z.literal('read_no_reply'),
@@ -153,7 +188,7 @@ export const messageAiOutputSchema = z.discriminatedUnion('responseAction', [
 export const phoneMessageAiOutputSchema = z.object({
   content: z.string().min(1).max(2_000),
   invitationStatus: previewInvitationStatusSchema,
-  appointment: appointmentSchema.optional(),
+  appointment: appointmentDraftSchema.optional(),
 }).strict();
 
 export const attachmentDecisionAiOutputSchema = attachmentResultSchema;
