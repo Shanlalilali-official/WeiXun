@@ -1,5 +1,11 @@
 # 工作交接
 
+## 2026-09-20 五人人物背景已写入系统
+
+- 五份默认提示词的“一、人物定位”与“二、话题判断”之间已加入“人物背景和当前处境”；源文件为 `projects/src/lib/designer/npc-role-prompts.ts`，审阅稿为 `outputs/五人人物提示词完整稿-2026-09-20.md`。
+- 当前开发库已应用 `20260920000300_enrich_five_npc_backgrounds.sql`，revision 4，五项与代码逐字一致。
+- 背景不属于公开人物资料，不新增响应字段或每轮独白。后续修改背景仍应同步默认源、审阅稿和持久化提示词迁移，并运行 `test:npc-role-prompts` 与 `test:prompt-excel`。
+
 ## 2026-09-20 赵晓晨执行定位、拜访自动结束与人物背景计划
 
 - 赵晓晨唯一目标定位为“项目执行人员／项目执行”，直属李明辉。主档在 `project-one-five-person.ts`，完整角色规则在 `npc-role-prompts.ts`，页面资料在 `project1-prototype-v9.html`；审阅稿已同步。
