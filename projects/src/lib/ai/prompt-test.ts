@@ -4,6 +4,11 @@ import { invokeLLM, type ChatMessage } from '@/lib/ai/client';
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import {
+  promptTestSessionRepository,
+  PromptTestRepositoryError,
+  type PromptTestSessionPersistence,
+} from '@/lib/ai/prompt-test-session-repository';
+import {
   PROMPT_TEST_SCENARIO,
   DEFAULT_PROMPT_TEST_NPC_PROMPT_CONFIG,
   promptTestEvaluatorSchema,
@@ -483,7 +488,7 @@ function commitPromptTestCandidate(state: TestState, commandId: string, candidat
   return response;
 }
 
-class PromptTestStore {
+export class PromptTestStore {
   private states = new Map<string, TestState>();
   private key(userId: string, provider: PromptTestProvider, sessionId: string) { return `${userId}\0${provider}\0${sessionId}`; }
   private cleanup() {
@@ -514,150 +519,227 @@ class PromptTestStore {
   }
 }
 
-export function createPromptTestService(deps: { invoker?: PromptTestInvoker; store?: PromptTestStore } = {}) {
+type PromptTestServiceDeps = {
+  invoker?: PromptTestInvoker;
+  /** Supplying a store keeps the deterministic in-memory test harness available. */
+  store?: PromptTestStore;
+  /** Production callers provide durable storage; failure must not fall back to memory. */
+  persistence?: PromptTestSessionPersistence;
+};
+
+function fromPersistentState(userId: string, provider: PromptTestProvider, sessionId: string, version: number, value: {
+  runtime: PromptTestRuntime;
+  history: PromptTestMessage[];
+  records: PromptTestTurnRecord[];
+}): TestState {
+  return {
+    userId,
+    provider,
+    sessionId,
+    version,
+    runtime: cloneRuntime(value.runtime),
+    history: structuredClone(value.history),
+    records: structuredClone(value.records),
+    completed: new Map(),
+    updatedAt: Date.now(),
+  };
+}
+
+function toPersistentState(state: TestState) {
+  return {
+    runtime: cloneRuntime(state.runtime),
+    history: structuredClone(state.history),
+    records: structuredClone(state.records),
+  };
+}
+
+function initialPersistentState() {
+  return { runtime: initialRuntime(), history: [] as PromptTestMessage[], records: [] as PromptTestTurnRecord[] };
+}
+
+function repositoryPromptTestError(error: unknown): PromptTestError {
+  if (error instanceof PromptTestRepositoryError) return new PromptTestError(error.kind, error.message);
+  return new PromptTestError('unavailable', 'PROMPT_TEST_PERSISTENCE_UNAVAILABLE');
+}
+
+export function createPromptTestService(deps: PromptTestServiceDeps = {}) {
   const invoker: PromptTestInvoker = deps.invoker ?? ((messages, options) => invokeLLM(messages, options));
   const store = deps.store ?? new PromptTestStore();
+  const persistence = deps.persistence;
   const inFlight = new Set<string>();
 
-  async function execute(
-    userId: string,
+  async function executeStateCommand(
+    state: TestState,
     request: PromptTestRequest,
     savedPrompt?: { npcPromptConfig?: PromptTestNpcPromptConfig; evaluatorInstructions?: string },
   ): Promise<PromptTestResponse> {
-    const state = request.sessionId ? store.get(userId, request.provider, request.sessionId) : store.create(userId, request.provider);
-    if (!state) throw new PromptTestError('not_found', 'PROMPT_TEST_SESSION_NOT_FOUND');
-    const replay = state.completed.get(request.commandId);
-    if (replay) return structuredClone(replay);
-    if (state.version !== request.expectedVersion) throw new PromptTestError('conflict', 'PROMPT_TEST_VERSION_CONFLICT');
-    const lock = `${userId}\0${request.provider}\0${state.sessionId}`;
-    if (inFlight.has(lock)) throw new PromptTestError('conflict', 'PROMPT_TEST_SESSION_BUSY');
-    inFlight.add(lock);
-    try {
-      const before = cloneRuntime(state.runtime);
-      if (request.action === 'reset') {
-        const runtime = initialRuntime();
-        const version = state.version + 1;
-        return commitPromptTestCandidate(state, request.commandId, {
-          runtime,
-          history: [],
-          records: [],
-          version,
-          response: {
-            success: true, sessionId: state.sessionId, version, provider: request.provider,
-          npcId: 'P1-001', visitMode: 'in_person', action: request.action, stateBefore: before,
-            state: runtime, changes: { supportDelta: 0, pleasantnessDelta: 0, effectiveContact: false, acceptedClueIds: [], blockerChanges: [] }, history: [], records: [],
-          },
-        });
-      }
-      if (request.action === 'end_visit') {
-        const runtime = { ...cloneRuntime(state.runtime), ended: true, endReason: 'manual_end' as const };
-        const version = state.version + 1;
-        return commitPromptTestCandidate(state, request.commandId, {
-          runtime,
-          history: state.history.slice(-MAX_HISTORY_MESSAGES),
-          records: state.records.slice(-MAX_RECORDS),
-          version,
-          response: {
-            success: true, sessionId: state.sessionId, version, provider: request.provider,
-          npcId: 'P1-001', visitMode: 'in_person', action: request.action, stateBefore: before,
-            state: runtime, changes: { supportDelta: 0, pleasantnessDelta: 0, effectiveContact: false, acceptedClueIds: [], blockerChanges: [] }, history: state.history.slice(-MAX_HISTORY_MESSAGES), records: state.records.slice(-MAX_RECORDS),
-          },
-        });
-      }
-      if (state.runtime.ended) throw new PromptTestError('protocol', 'PROMPT_TEST_VISIT_ENDED');
-
-      const conversationStage = resolveConversationStage(before, request.text);
-      const npcOptions = { provider: request.provider, temperature: 0.7, maxTokens: 700, jsonMode: true, thinking: 'disabled' as const };
-      const promptInjection = isPromptInjection(request.text);
-      let npcText: string;
-      if (promptInjection) {
-        // Do not give an adversarial instruction to the NPC generator. The reply is deterministic,
-        // keeps the meeting coherent, and does not reveal that an attack was detected.
-        npcText = PROMPT_INJECTION_REPLY;
-      } else {
-        const feedbackAlreadyRaised = state.records.some((record) => hasStaffFeedbackReply(record.npcText));
-        const npcRaw = await invoker([
-          { role: 'system', content: npcSystemPrompt(before, conversationStage, request.text, feedbackAlreadyRaised, request.npcPromptConfig ?? savedPrompt?.npcPromptConfig) },
-          { role: 'user', content: serializeUntrustedPromptData('prompt_test_npc_input', { runtime: before, recentHistory: state.history.slice(-HISTORY_LIMIT), playerAction: request.text }) },
-        ], npcOptions);
-        const candidate = parseStructured(npcRaw, NPC_OUTPUT_SCHEMA).content;
-        const voiceIssues = inspectNpcVoice(candidate, request.text, feedbackAlreadyRaised);
-        if (voiceIssues.length === 0) {
-          npcText = candidate;
-        } else {
-          // A single, isolated repair keeps ordinary turns at two calls while preventing a bad
-          // generator answer from reaching the player. A second invalid answer falls back locally.
-          try {
-            const repairRaw = await invoker([
-              { role: 'system', content: npcRepairSystemPrompt(before, conversationStage, request.text, feedbackAlreadyRaised, request.npcPromptConfig ?? savedPrompt?.npcPromptConfig) },
-              { role: 'user', content: serializeUntrustedPromptData('prompt_test_npc_repair', { candidate, voiceIssues }) },
-            ], npcOptions);
-            const repaired = parseStructured(repairRaw, NPC_OUTPUT_SCHEMA).content;
-            npcText = inspectNpcVoice(repaired, request.text, feedbackAlreadyRaised).length === 0 ? repaired : safeNpcReply(conversationStage);
-          } catch (error) {
-            if (error instanceof PromptTestError && error.kind !== 'protocol') throw error;
-            npcText = safeNpcReply(conversationStage);
-          }
-        }
-      }
-      if (HARD_REDLINE.test(request.text)) npcText = COMPLIANCE_REPLY;
-
-      const evaluatorInput = { scenarioBriefing: PROMPT_TEST_SCENARIO, runtimeBefore: before, conversationStage, recentHistory: state.history.slice(-HISTORY_LIMIT), playerAction: request.text, npcResponse: npcText };
-      const evaluatorOptions = { provider: request.provider, temperature: 0.1, maxTokens: 1_200, jsonMode: true, thinking: 'disabled' as const };
-      const evaluatorRaw = await invoker([
-        { role: 'system', content: evaluatorSystemPrompt(savedPrompt?.evaluatorInstructions) },
-        { role: 'user', content: serializeUntrustedPromptData('prompt_test_evaluator_input', evaluatorInput) },
-      ], evaluatorOptions);
-      let evaluator: PromptTestEvaluator;
-      try {
-        evaluator = parseEvaluator(evaluatorRaw);
-      } catch (firstError) {
-        const repairRaw = await invoker([
-          { role: 'system', content: `${evaluatorSystemPrompt(savedPrompt?.evaluatorInstructions)}\n上次输出未通过结构校验。只修复 JSON 结构，不改变评估语义。` },
-          { role: 'user', content: serializeUntrustedPromptData('prompt_test_evaluator_repair', { evaluatorInput, invalidOutput: evaluatorRaw, validationError: firstError instanceof Error ? firstError.message : 'INVALID_JSON' }) },
-        ], evaluatorOptions);
-        evaluator = parseEvaluator(repairRaw);
-      }
-      const applied = applyEvaluation(before, evaluator, request.text, npcText, conversationStage);
-      const turn = applied.runtime.turn;
-      const nextHistory: PromptTestMessage[] = [
-        ...state.history,
-        { id: randomUUID(), role: 'player' as const, text: request.text, turn },
-        { id: randomUUID(), role: 'npc' as const, text: npcText, turn },
-      ].slice(-MAX_HISTORY_MESSAGES);
-
-      const nextRecords = [
-        ...state.records,
-        {
-          recordId: randomUUID(),
-          turn,
-          createdAt: new Date().toISOString(),
-          playerText: request.text,
-          npcText,
-          evaluator,
-          stateBefore: before,
-          stateAfter: cloneRuntime(applied.runtime),
-          changes: applied.changes,
-        },
-      ].slice(-MAX_RECORDS);
+    const before = cloneRuntime(state.runtime);
+    if (request.action === 'reset') {
+      const runtime = initialRuntime();
       const version = state.version + 1;
       return commitPromptTestCandidate(state, request.commandId, {
-        runtime: applied.runtime,
-        history: nextHistory,
-        records: nextRecords,
+        runtime,
+        history: [],
+        records: [],
         version,
         response: {
           success: true, sessionId: state.sessionId, version, provider: request.provider,
-          npcId: 'P1-001', visitMode: 'in_person', action: request.action, npcText, evaluator,
-          stateBefore: before, state: applied.runtime, changes: applied.changes, history: nextHistory, records: nextRecords,
+          npcId: 'P1-001', visitMode: 'in_person', action: request.action, stateBefore: before,
+          state: runtime, changes: { supportDelta: 0, pleasantnessDelta: 0, effectiveContact: false, acceptedClueIds: [], blockerChanges: [] }, history: [], records: [],
         },
       });
+    }
+    if (request.action === 'end_visit') {
+      const runtime = { ...cloneRuntime(state.runtime), ended: true, endReason: 'manual_end' as const };
+      const version = state.version + 1;
+      return commitPromptTestCandidate(state, request.commandId, {
+        runtime,
+        history: state.history.slice(-MAX_HISTORY_MESSAGES),
+        records: state.records.slice(-MAX_RECORDS),
+        version,
+        response: {
+          success: true, sessionId: state.sessionId, version, provider: request.provider,
+          npcId: 'P1-001', visitMode: 'in_person', action: request.action, stateBefore: before,
+          state: runtime, changes: { supportDelta: 0, pleasantnessDelta: 0, effectiveContact: false, acceptedClueIds: [], blockerChanges: [] }, history: state.history.slice(-MAX_HISTORY_MESSAGES), records: state.records.slice(-MAX_RECORDS),
+        },
+      });
+    }
+    if (state.runtime.ended) throw new PromptTestError('protocol', 'PROMPT_TEST_VISIT_ENDED');
+
+    const conversationStage = resolveConversationStage(before, request.text);
+    const npcOptions = { provider: request.provider, temperature: 0.7, maxTokens: 700, jsonMode: true, thinking: 'disabled' as const };
+    const promptInjection = isPromptInjection(request.text);
+    let npcText: string;
+    if (promptInjection) {
+      // Do not give an adversarial instruction to the NPC generator. The reply is deterministic,
+      // keeps the meeting coherent, and does not reveal that an attack was detected.
+      npcText = PROMPT_INJECTION_REPLY;
+    } else {
+      const feedbackAlreadyRaised = state.records.some((record) => hasStaffFeedbackReply(record.npcText));
+      const npcRaw = await invoker([
+        { role: 'system', content: npcSystemPrompt(before, conversationStage, request.text, feedbackAlreadyRaised, request.npcPromptConfig ?? savedPrompt?.npcPromptConfig) },
+        { role: 'user', content: serializeUntrustedPromptData('prompt_test_npc_input', { runtime: before, recentHistory: state.history.slice(-HISTORY_LIMIT), playerAction: request.text }) },
+      ], npcOptions);
+      const candidate = parseStructured(npcRaw, NPC_OUTPUT_SCHEMA).content;
+      const voiceIssues = inspectNpcVoice(candidate, request.text, feedbackAlreadyRaised);
+      if (voiceIssues.length === 0) {
+        npcText = candidate;
+      } else {
+        // A single, isolated repair keeps ordinary turns at two calls while preventing a bad
+        // generator answer from reaching the player. A second invalid answer falls back locally.
+        try {
+          const repairRaw = await invoker([
+            { role: 'system', content: npcRepairSystemPrompt(before, conversationStage, request.text, feedbackAlreadyRaised, request.npcPromptConfig ?? savedPrompt?.npcPromptConfig) },
+            { role: 'user', content: serializeUntrustedPromptData('prompt_test_npc_repair', { candidate, voiceIssues }) },
+          ], npcOptions);
+          const repaired = parseStructured(repairRaw, NPC_OUTPUT_SCHEMA).content;
+          npcText = inspectNpcVoice(repaired, request.text, feedbackAlreadyRaised).length === 0 ? repaired : safeNpcReply(conversationStage);
+        } catch (error) {
+          if (error instanceof PromptTestError && error.kind !== 'protocol') throw error;
+          npcText = safeNpcReply(conversationStage);
+        }
+      }
+    }
+    if (HARD_REDLINE.test(request.text)) npcText = COMPLIANCE_REPLY;
+
+    const evaluatorInput = { scenarioBriefing: PROMPT_TEST_SCENARIO, runtimeBefore: before, conversationStage, recentHistory: state.history.slice(-HISTORY_LIMIT), playerAction: request.text, npcResponse: npcText };
+    const evaluatorOptions = { provider: request.provider, temperature: 0.1, maxTokens: 1_200, jsonMode: true, thinking: 'disabled' as const };
+    const evaluatorRaw = await invoker([
+      { role: 'system', content: evaluatorSystemPrompt(savedPrompt?.evaluatorInstructions) },
+      { role: 'user', content: serializeUntrustedPromptData('prompt_test_evaluator_input', evaluatorInput) },
+    ], evaluatorOptions);
+    let evaluator: PromptTestEvaluator;
+    try {
+      evaluator = parseEvaluator(evaluatorRaw);
+    } catch (firstError) {
+      const repairRaw = await invoker([
+        { role: 'system', content: `${evaluatorSystemPrompt(savedPrompt?.evaluatorInstructions)}\n上次输出未通过结构校验。只修复 JSON 结构，不改变评估语义。` },
+        { role: 'user', content: serializeUntrustedPromptData('prompt_test_evaluator_repair', { evaluatorInput, invalidOutput: evaluatorRaw, validationError: firstError instanceof Error ? firstError.message : 'INVALID_JSON' }) },
+      ], evaluatorOptions);
+      evaluator = parseEvaluator(repairRaw);
+    }
+    const applied = applyEvaluation(before, evaluator, request.text, npcText, conversationStage);
+    const turn = applied.runtime.turn;
+    const nextHistory: PromptTestMessage[] = [
+      ...state.history,
+      { id: randomUUID(), role: 'player' as const, text: request.text, turn },
+      { id: randomUUID(), role: 'npc' as const, text: npcText, turn },
+    ].slice(-MAX_HISTORY_MESSAGES);
+    const nextRecords = [...state.records, {
+      recordId: randomUUID(), turn, createdAt: new Date().toISOString(), playerText: request.text, npcText, evaluator,
+      stateBefore: before, stateAfter: cloneRuntime(applied.runtime), changes: applied.changes,
+    }].slice(-MAX_RECORDS);
+    const version = state.version + 1;
+    return commitPromptTestCandidate(state, request.commandId, {
+      runtime: applied.runtime, history: nextHistory, records: nextRecords, version,
+      response: {
+        success: true, sessionId: state.sessionId, version, provider: request.provider,
+        npcId: 'P1-001', visitMode: 'in_person', action: request.action, npcText, evaluator,
+        stateBefore: before, state: applied.runtime, changes: applied.changes, history: nextHistory, records: nextRecords,
+      },
+    });
+  }
+
+  async function execute(userId: string, request: PromptTestRequest, savedPrompt?: { npcPromptConfig?: PromptTestNpcPromptConfig; evaluatorInstructions?: string }): Promise<PromptTestResponse> {
+    if (!persistence) {
+      const state = request.sessionId ? store.get(userId, request.provider, request.sessionId) : store.create(userId, request.provider);
+      if (!state) throw new PromptTestError('not_found', 'PROMPT_TEST_SESSION_NOT_FOUND');
+      const replay = state.completed.get(request.commandId);
+      if (replay) return structuredClone(replay);
+      if (state.version !== request.expectedVersion) throw new PromptTestError('conflict', 'PROMPT_TEST_VERSION_CONFLICT');
+      const lock = `${userId}\0${request.provider}\0${state.sessionId}`;
+      if (inFlight.has(lock)) throw new PromptTestError('conflict', 'PROMPT_TEST_SESSION_BUSY');
+      inFlight.add(lock);
+      try {
+        return await executeStateCommand(state, request, savedPrompt);
+      } catch (error) {
+        if (error instanceof PromptTestError) throw error;
+        const message = error instanceof Error ? error.message : 'PROMPT_TEST_PROVIDER_FAILURE';
+        throw new PromptTestError('unavailable', message.slice(0, 500));
+      } finally {
+        inFlight.delete(lock);
+      }
+    }
+
+    let lease: Extract<Awaited<ReturnType<PromptTestSessionPersistence['acquire']>>, { sessionId: string }> | undefined;
+    let committed = false;
+    let renewalError: unknown;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let renewalPromise: Promise<void> | undefined;
+    try {
+      const acquired = await persistence.acquire({ userId, provider: request.provider, request, initialState: initialPersistentState() });
+      if ('replay' in acquired) return structuredClone(acquired.replay);
+      lease = acquired;
+      const state = fromPersistentState(userId, request.provider, lease.sessionId, lease.version, lease.state);
+      timer = setInterval(() => {
+        if (renewalPromise) return;
+        renewalPromise = persistence.renew({ userId, provider: request.provider, sessionId: lease!.sessionId, commandId: request.commandId, leaseToken: lease!.leaseToken })
+          .catch((error) => { renewalError ??= error; })
+          .finally(() => { renewalPromise = undefined; });
+      }, 30_000);
+      const candidate = await executeStateCommand(state, request, savedPrompt);
+      clearInterval(timer);
+      timer = undefined;
+      if (renewalPromise) await renewalPromise;
+      if (renewalError) throw renewalError;
+      const response = await persistence.commit({
+        userId, provider: request.provider, sessionId: lease.sessionId, commandId: request.commandId,
+        expectedVersion: lease.version, leaseToken: lease.leaseToken, state: toPersistentState(state), response: candidate,
+      });
+      committed = true;
+      return response;
     } catch (error) {
       if (error instanceof PromptTestError) throw error;
-      const message = error instanceof Error ? error.message : 'PROMPT_TEST_PROVIDER_FAILURE';
-      throw new PromptTestError('unavailable', message.slice(0, 500));
+      throw repositoryPromptTestError(error);
     } finally {
-      inFlight.delete(lock);
+      if (timer) clearInterval(timer);
+      if (lease && !committed) {
+        try {
+          await persistence.abandon({ userId, provider: request.provider, sessionId: lease.sessionId, commandId: request.commandId, leaseToken: lease.leaseToken });
+        } catch {
+          // The lease expiry is the final safety net; never hide the original failure.
+        }
+      }
     }
   }
 
@@ -666,4 +748,4 @@ export function createPromptTestService(deps: { invoker?: PromptTestInvoker; sto
 
 const runtime = globalThis as typeof globalThis & { __weixunPromptTestService?: ReturnType<typeof createPromptTestService> };
 export const promptTestService = runtime.__weixunPromptTestService
-  ?? (runtime.__weixunPromptTestService = createPromptTestService());
+  ?? (runtime.__weixunPromptTestService = createPromptTestService({ persistence: promptTestSessionRepository }));

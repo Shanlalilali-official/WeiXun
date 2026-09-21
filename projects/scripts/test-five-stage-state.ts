@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { gameCommandSchema } from '../src/lib/contracts/game';
 import {
+  applyNpcEvaluation,
   applyPreparationAttachments,
   advanceRound,
   connectNpc,
@@ -45,29 +46,29 @@ const command = (type: Parameters<typeof executeGameCommand>[1]['type'], payload
   return result;
 };
 
-const firstResearch = command('research_public_info', { npcId: 'p1-frontline-wang-hao' }, 'research-1');
+const firstResearch = command('research_public_info', { npcId: 'P1-004' }, 'research-1');
 assert.equal(firstResearch.result.publicResearch && typeof firstResearch.result.publicResearch, 'object');
 assert.equal(state.actionPoints, 26);
 assert.equal(Object.keys(state.publicResearch).length, 0, 'public search must not remain on the player card');
 assert.equal('timeMinutes' in firstResearch.eventPayload, false, 'public search events use action points, not time metrics');
 assert.equal(firstResearch.eventPayload.costPoints, 2);
-command('research_public_info', { npcId: 'p1-frontline-wang-hao' }, 'research-2');
+command('research_public_info', { npcId: 'P1-004' }, 'research-2');
 assert.equal(state.actionPoints, 24, 'repeat search charges action points again');
 
-const phone = command('contact', { npcId: 'p1-frontline-wang-hao', channel: 'work_phone', content: '您好，想沟通项目。' }, 'phone-1');
+const phone = command('contact', { npcId: 'P1-004', channel: 'work_phone', content: '您好，想沟通项目。' }, 'phone-1');
 assert.ok(['connected', 'unanswered', 'declined', 'call_later'].includes(String(phone.result.outcome)));
 assert.equal(state.actionPoints, 23, 'failed or successful phone attempt has the same point cost');
 
 command('prepare', {
-  npcId: 'p1-frontline-wang-hao',
+  npcId: 'P1-004',
   preparationType: 'visit_preparation',
   title: '拜访前准备',
-  content: '目标人物：王浩；客户问题：一线重复录入与跨部门确认成本；方案维度：流程和交付；证据：同类案例和可验证的交付记录；下一步：确认技术交流和责任人。',
+  content: '目标人物：赵晓晨；客户问题：一线重复录入与跨部门确认成本；方案维度：流程和交付；证据：同类案例和可验证的交付记录；下一步：确认技术交流和责任人。',
 }, 'prepare-1');
 assert.equal(state.preparations.at(-1)?.type, 'visit_preparation');
 assert.equal(state.preparations.at(-1)?.timeMinutes, 0);
 assert.ok(state.preparations.at(-1)?.brief);
-assert.equal(state.preparations.at(-1)?.brief?.audience.includes('王浩'), true);
+assert.equal(state.preparations.at(-1)?.brief?.audience.includes('赵晓晨'), true);
 assert.equal(state.preparations.at(-1)?.brief?.problem.includes('重复录入'), true);
 assert.equal(state.preparations.at(-1)?.brief?.dimensions.includes('流程'), true);
 assert.equal(state.preparations.at(-1)?.brief?.evidence.includes('案例'), true);
@@ -79,10 +80,10 @@ assert.deepEqual(new Set(state.preparations.at(-1)?.brief?.semanticTags), new Se
   'evidence',
   'next_step',
 ]));
-assert.equal(hasReliablePreparationSemantics(state.preparations.at(-1)?.brief ?? extractPreparationBrief('', 'p1-frontline-wang-hao')), true);
+assert.equal(hasReliablePreparationSemantics(state.preparations.at(-1)?.brief ?? extractPreparationBrief('', 'P1-004')), true);
 assert.throws(
   () => command('prepare', {
-    npcId: 'p1-frontline-wang-hao',
+    npcId: 'P1-004',
     preparationType: 'visit_preparation',
     content: '随便写一点拜访内容，没有具体标签。',
   }, 'prepare-invalid'),
@@ -91,17 +92,17 @@ assert.throws(
 );
 const preparationId = state.preparations.at(-1)?.id;
 assert.ok(preparationId);
-const attached = applyPreparationAttachments(state, 'p1-frontline-wang-hao', [preparationId]);
+const attached = applyPreparationAttachments(state, 'P1-004', [preparationId]);
 assert.equal(attached.preparations.at(-1)?.usedCount, 1, 'email attachment increments preparation usage');
 assert.equal(attached.preparations.at(-1)?.status, 'ready', 'reusable preparation remains ready after email delivery');
 assert.equal(state.preparations.at(-1)?.usedCount, 0, 'attachment application is pure');
 assert.throws(
-  () => applyPreparationAttachments(state, 'p1-frontline-wang-hao', ['missing-preparation']),
+  () => applyPreparationAttachments(state, 'P1-004', ['missing-preparation']),
   /EMAIL_ATTACHMENT_NOT_AVAILABLE/,
   'unknown preparation cannot be attached',
 );
 assert.throws(
-  () => applyPreparationAttachments(state, 'p1-procurement-liu-kai', [preparationId]),
+  () => applyPreparationAttachments(state, 'P1-003', [preparationId]),
   /EMAIL_ATTACHMENT_NOT_AVAILABLE/,
   'another NPC preparation cannot be attached',
 );
@@ -109,8 +110,8 @@ assert.throws(
 const legacyState = normalizeProjectOneState({
   ...createProjectOneState(),
   publicResearch: {
-    'p1-frontline-wang-hao': {
-      npcId: 'p1-frontline-wang-hao',
+    'P1-004': {
+      npcId: 'P1-004',
       facts: ['旧资料'],
       weakSignals: [],
       sourceNote: '旧存档',
@@ -122,7 +123,7 @@ const legacyState = normalizeProjectOneState({
   preparations: [
     {
       id: 'legacy-material',
-      npcId: 'p1-frontline-wang-hao',
+      npcId: 'P1-004',
       appointmentId: null,
       type: 'materials',
       title: '历史项目材料',
@@ -136,7 +137,7 @@ const legacyState = normalizeProjectOneState({
     },
     {
       id: 'legacy-gift',
-      npcId: 'p1-frontline-wang-hao',
+      npcId: 'P1-004',
       appointmentId: null,
       type: 'courtesy_gift',
       title: '历史礼品',
@@ -155,23 +156,23 @@ assert.equal(legacyState.preparations.length, 2, 'legacy preparation rows remain
 assert.equal(isCurrentPreparationType('visit_preparation'), true);
 assert.equal(isCurrentPreparationType('materials'), false);
 assert.throws(
-  () => applyPreparationAttachments(legacyState, 'p1-frontline-wang-hao', ['legacy-material']),
+  () => applyPreparationAttachments(legacyState, 'P1-004', ['legacy-material']),
   /EMAIL_ATTACHMENT_NOT_AVAILABLE/,
   'legacy materials cannot become ordinary email attachments',
 );
 assert.throws(
-  () => applyPreparationAttachments(legacyState, 'p1-frontline-wang-hao', ['legacy-gift']),
+  () => applyPreparationAttachments(legacyState, 'P1-004', ['legacy-gift']),
   /EMAIL_ATTACHMENT_NOT_AVAILABLE/,
   'legacy gifts cannot become ordinary email attachments',
 );
-const nonEmailInviteState = connectNpc(createProjectOneState(), 'p1-frontline-wang-hao');
+const nonEmailInviteState = connectNpc(createProjectOneState(), 'P1-004');
 for (const channel of ['email', 'work_phone', 'wechat'] as const) {
   const naturalLanguageInvite = gameCommandSchema.parse({
     commandId: `invite-channel-${channel}`,
     expectedVersion: 1,
     type: 'invite',
     payload: {
-      npcId: 'p1-frontline-wang-hao',
+      npcId: 'P1-004',
       channel,
       rawText: '希望围绕当前客户问题和交付案例安排一次正式沟通。',
     },
@@ -184,7 +185,7 @@ assert.throws(
     commandId: 'legacy-online-request',
     expectedVersion: 1,
     type: 'request_online',
-    payload: { npcId: 'p1-frontline-wang-hao', message: '旧式线上申请路径不应再存在。' },
+    payload: { npcId: 'P1-004', message: '旧式线上申请路径不应再存在。' },
   }),
   'legacy request_online must not be accepted as an independent invitation/contact command',
 );
@@ -194,7 +195,7 @@ assert.throws(
     expectedVersion: nonEmailInviteState.version,
     type: 'invite',
     payload: {
-      npcId: 'p1-frontline-wang-hao',
+      npcId: 'P1-004',
       channel: 'work_phone',
       rawText: '想当面沟通方案。',
       attachmentIds: ['legacy-material'],
@@ -209,7 +210,7 @@ assert.throws(
     expectedVersion: nonEmailInviteState.version,
     type: 'invite',
     payload: {
-      npcId: 'p1-frontline-wang-hao',
+      npcId: 'P1-004',
       channel: 'work_phone',
       rawText: '想当面沟通方案。',
       emailAttachments: [{ fileName: '方案.pdf', description: '包含实施计划和验收口径。' }],
@@ -223,7 +224,7 @@ const describedEmailInvite = executeGameCommand(nonEmailInviteState, gameCommand
   expectedVersion: nonEmailInviteState.version,
   type: 'invite',
   payload: {
-    npcId: 'p1-frontline-wang-hao',
+    npcId: 'P1-004',
     channel: 'email',
     rawText: '想当面沟通方案，请查收附件。',
     emailAttachments: [{ fileName: '方案.pdf', description: '包含实施计划和验收口径。' }],
@@ -237,25 +238,25 @@ const wechatPayload = gameCommandSchema.parse({
   commandId: 'wechat-contract-1',
   expectedVersion: 1,
   type: 'request_wechat',
-  payload: { npcId: 'p1-frontline-wang-hao', message: '申请添加工作微信，方便后续沟通。' },
+  payload: { npcId: 'P1-004', message: '申请添加工作微信，方便后续沟通。' },
 });
 assert.equal(wechatPayload.type, 'request_wechat', 'wechat application uses the unified command contract');
-const connectedWechatState = connectNpc(createProjectOneState(), 'p1-frontline-wang-hao');
+const connectedWechatState = connectNpc(createProjectOneState(), 'P1-004');
 let acceptedWechatResult: ReturnType<typeof executeGameCommand> | null = null;
 for (let index = 0; index < 200 && !acceptedWechatResult; index += 1) {
   const candidate = executeGameCommand(connectedWechatState, {
     commandId: `wechat-state-${index}`,
     expectedVersion: connectedWechatState.version,
     type: 'request_wechat',
-    payload: { npcId: 'p1-frontline-wang-hao', message: '申请添加工作微信，方便后续沟通。' },
+    payload: { npcId: 'P1-004', message: '申请添加工作微信，方便后续沟通。' },
   });
   if (candidate.result.status === 'accepted') acceptedWechatResult = candidate;
 }
 assert.ok(acceptedWechatResult, 'the unified wechat command can produce an accepted request');
-assert.equal(acceptedWechatResult?.state.npcContacts['p1-frontline-wang-hao'].status, 'online');
-assert.equal(acceptedWechatResult?.state.npcContacts['p1-frontline-wang-hao'].wechatStatus, 'accepted');
+assert.equal(acceptedWechatResult?.state.npcContacts['P1-004'].status, 'online');
+assert.equal(acceptedWechatResult?.state.npcContacts['P1-004'].wechatStatus, 'accepted');
 assert.equal(acceptedWechatResult?.state.actionPoints, connectedWechatState.actionPoints - 1, 'wechat request charges one action point once');
-assert.equal(acceptedWechatResult?.state.npcContacts['p1-frontline-wang-hao'].onlineRequestedRound, 1);
+assert.equal(acceptedWechatResult?.state.npcContacts['P1-004'].onlineRequestedRound, 1);
 
 const beforeAdvance = state.actionPoints;
 const advanced = command('advance_phase', {}, 'advance-1');
@@ -265,13 +266,64 @@ assert.equal(state.actionPoints, Math.min(28, beforeAdvance + 8));
 assert.equal(state.competitorState.actions.length, 1, 'solo ABC simulation runs once per completed stage');
 assert.equal('competitorAction' in advanced.result, false, 'advance result does not expose the internal competitor action');
 assert.equal(state.notifications.some((item) => item.title === '竞品动态'), false, 'hidden competitor progress must not be pushed to the player');
-const visibleState = toPlayerVisibleGameState({ ...state, competitorClaims: [{ id: 'claim-1', npcId: 'p1-frontline-wang-hao', stage: 1, statement: '内部竞品主张', truthStatus: 'unverified' }] });
+const visibleState = toPlayerVisibleGameState({ ...state, competitorClaims: [{ id: 'claim-1', npcId: 'P1-004', stage: 1, statement: '内部竞品主张', truthStatus: 'unverified' }] });
 assert.deepEqual(visibleState.competitorClaims, [], 'player state does not expose competitor claims');
 assert.equal(visibleState.competitorState.actions.length, 0, 'player state does not expose competitor actions');
 assert.equal(normalizeProjectOneState({ ...createProjectOneState(), gameMode: 'multiplayer', roomStageVersion: 4 }).roomStageVersion, 4, 'room stage concurrency token survives player-state normalization');
 const duplicate = executeGameCommand(state, { commandId: 'advance-1', expectedVersion: state.version, type: 'advance_phase', payload: {} });
 assert.equal(duplicate.result.duplicate, true);
 assert.equal(duplicate.state.currentStage, 2);
+
+// DATA-001 regression: an unverified competitor claim is evidence to review,
+// not a command that can rewrite the server-authoritative ABC state. A long
+// or persuasive lie remains unverified and leaves the hidden progress intact.
+const claimState = createProjectOneState();
+const competitorStateBeforeClaim = structuredClone(claimState.competitorState);
+const unverifiedClaimEvaluation = {
+  affinityDelta: 0,
+  affinityReason: '仅记录待核验说法',
+  pleasureDelta: 0,
+  supportDelta: 0,
+  dimensionDeltas: {
+    decisionAnalysis: 0,
+    relationshipBuilding: 0,
+    valuePresentation: 0,
+    objectionHandling: 0,
+    informationDiscovery: 0,
+  },
+  cluesUnlocked: [],
+  confirmedFacts: [],
+  commitments: [],
+  publicValueEvidence: [],
+  personalBenefitEvidence: [],
+  workTopicOpenedBy: 'none' as const,
+  semanticFlags: {
+    negativeInformation: false,
+    negativeInformationType: 'none' as const,
+    riskyConduct: false,
+    giftMentioned: false,
+    explicitQuidProQuo: false,
+    repeatedPressure: false,
+  },
+  giftAssessment: {
+    giftType: 'none' as const,
+    outcome: 'not_applicable' as const,
+    riskLevel: 'none' as const,
+    riskReason: '本轮未涉及礼品',
+  },
+  handoff: null,
+  emotion: 'thinking' as const,
+} satisfies Parameters<typeof applyNpcEvaluation>[2];
+const afterLiedClaim = applyNpcEvaluation(
+  claimState,
+  'P1-004',
+  unverifiedClaimEvaluation,
+  '据说ABC竞品已经拿到内部确定性支持，但这条消息尚未核实。',
+);
+assert.deepEqual(afterLiedClaim.competitorState, competitorStateBeforeClaim,
+  'an NPC claim cannot mutate the backend competitor progress or actions');
+assert.equal(afterLiedClaim.competitorClaims.at(-1)?.truthStatus, 'unverified',
+  'competitor claims remain explicitly unverified until corroborated');
 
 const slots = [
   { playerUserId: 'u1', readyStage: 1, connected: true },

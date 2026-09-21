@@ -42,6 +42,42 @@ if ($gitRoot) {
     if ($trackedSecrets) {
         $errors += "Potential secret files are tracked: $($trackedSecrets -join ', ')"
     }
+
+    # Implementation changes and progress records must move together. This does not
+    # prove that prose is true, but prevents a code/database batch from passing the
+    # governance check while leaving every current progress ledger untouched.
+    $statusLines = @(& git -c "safe.directory=$projectRoot" -C $projectRoot status --porcelain=v1 --untracked-files=all)
+    $changedPaths = @(
+        foreach ($line in $statusLines) {
+            if ($line.Length -lt 4) { continue }
+            $path = $line.Substring(3).Trim('"').Replace('\', '/')
+            if ($path -match ' -> ') {
+                $path = ($path -split ' -> ')[-1]
+            }
+            $path
+        }
+    )
+
+    $implementationChanged = @($changedPaths | Where-Object {
+        $_ -eq 'projects/package.json' -or
+        $_ -like 'projects/src/*' -or
+        $_ -like 'projects/supabase/*' -or
+        $_ -like 'projects/scripts/*' -or
+        $_ -like 'projects/public/*'
+    }).Count -gt 0
+
+    if ($implementationChanged) {
+        $requiredProgressLedgers = @(
+            'harness/STATE.md',
+            'harness/plans/CURRENT_ITERATION.md',
+            'harness/issues/ISSUE_REGISTER.md',
+            'harness/memory/HANDOFF.md'
+        )
+        $missingLedgerUpdates = @($requiredProgressLedgers | Where-Object { $_ -notin $changedPaths })
+        if ($missingLedgerUpdates.Count -gt 0) {
+            $errors += "Implementation changed without updating required progress ledgers: $($missingLedgerUpdates -join ', ')"
+        }
+    }
 }
 
 if ($errors.Count -gt 0) {

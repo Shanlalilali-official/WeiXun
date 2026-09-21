@@ -14,7 +14,7 @@ assert.equal(emailAttachmentSchema.safeParse({ description: '只有内容描述�
 const chatRequest = npcChatRequestSchema.parse({
   gameSessionId: 'session-1',
   scenarioId: 'project-1',
-  npcId: 'p1-frontline-wang-hao',
+  npcId: 'P1-004',
   message: '请查收附件，里面是本次项目的实施方案。',
   commandId: 'email-attachment-command-1',
   expectedVersion: 1,
@@ -28,7 +28,7 @@ const promptContext = CUSTOMER_CONTEXT({
   gameSessionId: 'session-1',
   scenarioId: 'project-1',
   npc: {
-    name: '王浩',
+    name: '赵晓晨',
     title: '业务负责人',
     category: 'frontline',
     personality: '务实',
@@ -45,13 +45,13 @@ const promptContext = CUSTOMER_CONTEXT({
 assert.match(promptContext, /实施方案\.pdf/);
 assert.match(promptContext, /分阶段实施计划/);
 
-const baseState = connectNpc(createProjectOneState(), 'p1-frontline-wang-hao');
+const baseState = connectNpc(createProjectOneState(), 'P1-004');
 const invite = gameCommandSchema.parse({
   commandId: 'email-invite-attachment-1',
   expectedVersion: baseState.version,
   type: 'invite',
   payload: {
-    npcId: 'p1-frontline-wang-hao',
+    npcId: 'P1-004',
     channel: 'email',
     rawText: '希望围绕实施计划安排一次正式沟通。',
     emailAttachments: [attachment],
@@ -68,7 +68,7 @@ const nonEmail = gameCommandSchema.parse({
   expectedVersion: baseState.version,
   type: 'invite',
   payload: {
-    npcId: 'p1-frontline-wang-hao',
+    npcId: 'P1-004',
     channel: 'work_phone',
     rawText: '希望安排一次沟通。',
     emailAttachments: [attachment],

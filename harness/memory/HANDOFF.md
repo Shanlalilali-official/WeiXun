@@ -1,5 +1,27 @@
 # 工作交接
 
+## 2026-09-21 正式五人已切换
+
+- 正式 `/game` 的唯一人物源现由 `project-one-five-person.ts` 派生，ID 为 `P1-001`～`P1-005`。不要恢复 `p1-frontline-wang-hao`、`p1-procurement-liu-kai`、`p1-minister-chen-jianguo`、`p1-deputy-zhao-feng` 或任何人物映射兼容层。
+- 玩家单机入口固定进入 `/game?location=project-1&mode=solo`；`/project-one-preview` 只保留设计/测试预览。正式状态、消息、拜访、阶段、行动点、提交、结算和复盘均以 `/game` 服务端会话为权威。
+- 开发库应用 `20260921000400_replace_project_one_four_person_saves.sql` 前实查 10 个项目一正式存档均为旧四人，五人/未知存档和项目一房间均为 0；迁移后旧存档为 0。临时创建并清理的新存档完整持久化五个新 ID，30 条素材未变。
+- 多人基础建局会使用五人状态，但本批没有新增多人实时广播。预览共享限流、完整审计 DTO 和发布级真实模型/PDF 证据继续按原问题项推进，不得重新打开 FRONT-006 来替代这些独立问题。
+
+## 2026-09-21 台账真实性规则
+
+- 根 `AGENTS.md` 的“台账真实性硬约束”是全仓交付门：开始前必须实查代码、迁移、数据库/Storage 与测试，不能凭 ISSUE/STATE 直接判定未做；结束前必须做“实际实现 → 台账”和“台账声称 → 实际实现”双向复核。
+- 实现类文件有变化时，`scripts/harness-check.ps1` 要求 STATE、CURRENT_ITERATION、ISSUE_REGISTER、HANDOFF 四份台账全部同步，否则退出 1。新决定与新发现仍需分别写 DECISIONS/FINDINGS。
+- 自动门只检查必要台账是否同批变化，不能替代内容审阅。后续执行者必须把实查入口、已完成部分、确认缺口、本批不动部分和验证证据写清，部分完成不得标 Resolved。
+
+## 2026-09-21 持久化与设计能力批次
+
+- 25 张人物表情图已在真实 Supabase/Storage 逐一确认，元数据、对象和公开 URL 均有效；当前仍空的是 4 张拜访场景图。不要再按旧台账把 25 张表情图当空位，也不要在没有产品规则时自行把情绪状态映射到图片。
+- 新迁移 `20260921000100_project_one_preview_sessions.sql`、`20260921000200_prompt_test_sessions.sql`、`20260921000300_scenario_competitor_config.sql` 已应用开发库。五人预览和提示词测试会话已跨进程持久化，命令含请求哈希、版本、唯一幂等与可续租短租约；失败不提交候选状态。
+- 五人预览 GET 恢复只返回安全玩家态，不下发隐藏支持度、阻断、工作记忆、Evaluator 理由或附件正文。完整内部审计快照仍是 STATE-004 剩余项。
+- 单机竞品阶段动作已走真实结构化模型协议，失败确定性兜底；设计师竞品配置已有真实 CRUD、权限和 revision 冲突处理。四类性格字典已统一主档、Prompt、页面和 Excel。
+- 多人实时同步本批明确未动。该段关于旧 `/game` 四人链路的描述已由同日后续正式五人切换取代；共享限流、完整审计 DTO、真实双模型/PDF/多尺寸发布验收仍待完成。
+- 验证已完成：真实开发库跨实例恢复/重放/改包拒绝/版本推进，远端 migration 对齐与 db lint 0 error；相关专项、TypeScript、全量 ESLint、生产构建通过。临时数据库验证数据已清理。
+
 ## 2026-09-20 五人人物背景已写入系统
 
 - 五份默认提示词的“一、人物定位”与“二、话题判断”之间已加入“人物背景和当前处境”；源文件为 `projects/src/lib/designer/npc-role-prompts.ts`，审阅稿为 `outputs/五人人物提示词完整稿-2026-09-20.md`。
@@ -61,7 +83,7 @@
 
 日常使用 `corepack pnpm local:check:prompt-test`、`test:local-env`、`test:prompt-test`、`test:prompt-test-auth`、`test:prompt-test-ui`、`test:project-one-preview-ai`；增量用 `lint:cached`，发布保留 `lint:build`。PATH的pnpm11不是项目声明版本；启动脚本优先本地二进制，首次安装仍需缓存或网络。
 
-C0采用用户授权的新正向规则（D-052增量），不是恢复原稿。五人合规解除只核验本轮训练表达，不证明现实整改已完成。进程内会话、首次响应丢失但尚无sessionId时的恢复、完整真实双模型/PDF/多尺寸验收仍由STATE-002与TEST-003跟踪，不能在本轮标成正式持久化对局。
+C0采用用户授权的新正向规则（D-052增量），不是恢复原稿。五人合规解除只核验本轮训练表达，不证明现实整改已完成。正式五人业务存档已于 2026-09-21 切换；共享限流和完整真实双模型/PDF/多尺寸验收仍由 STATE-002 与 TEST-003 跟踪。
 
 2026-09-07 Windows 一键启动的生产构建已恢复并完成真实启动冒烟，`/api/health/startup` 返回应用标识、当前 buildId 与 `database: ok`。React Dev Inspector 与全局 `.babelrc` 已移除，Next.js 使用默认编译链；评分证据复核位于 `src/lib/ai/npc-evaluation-sources.ts`，该纯模块不能重新引入 AI client、Node 内置模块或其他服务端运行时依赖，否则 `/game` 客户端构建会再次失败。项目依赖应通过 packageManager 指定的 pnpm 9 安装。
 
@@ -96,7 +118,7 @@ Windows 人工验收可直接双击仓库根目录 `start-project.bat`；服务�
 1. 阅读 `harness/STATE.md`、`harness/context/FRONTEND_TARGET_WEIXUN_WEB.md` 和 `harness/issues/ISSUE_REGISTER.md`。
 2. 双击 `start-project.bat` 启动人工验收环境；无需 Docker。启动器会检查数据库、自动重建陈旧产物，并通过构建号健康检查避免复用旧服务（ENV-006 已解决）。
 3. 开发前运行 `projects/scripts/check-local-env.ts` 对应的 `pnpm local:check`，不得输出或提交密钥。
-4. FRONT-002/003 已完成。五人真实 AI 预览使用进程内会话，不写 Supabase；下一批正式业务同步应按 D-039～D-042迁移五人状态、公开信息和附件记忆到共享存储，并补齐多实例互斥/限流，不能把进程内预览态当正式存档。旧工程待办仍包括 MULTI-002/004、AI-019、DATA-001 和 UX-005。
+4. FRONT-002/003/006 已完成。五人预览仍是独立测试设施，玩家正式入口统一走五人 `/game`；后续补共享限流和完整审计时不得重新建立双写。旧工程待办仍包括 MULTI-002/004、DATA-001 和 UX-005。
 5. FLOW-003~005、UX-006、MULTI-001、MULTI-003 与 TEST-002 已于 2026-08-20 关闭：公开搜索、自由文本准备、电话、邮件附件、微信入口、自然语言邀约、多人房间原子推进和双账号联机闭环均按当时台账实现并通过验收；这些是当前实现事实，不再被误写成下一版目标。
 6. 更新所有问题状态与证据；不删除问题历史。
 

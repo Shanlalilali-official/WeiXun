@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { createPromptTestService, PromptTestError, type PromptTestInvoker } from '../src/lib/ai/prompt-test';
 import { getAiProviderConfig } from '../src/lib/ai/client';
+import {
+  getPromptTestRequestHash,
+  PromptTestRepositoryError,
+  type PromptTestPersistentState,
+  type PromptTestSessionPersistence,
+} from '../src/lib/ai/prompt-test-session-repository';
+import type { PromptTestProvider, PromptTestRequest, PromptTestResponse } from '../src/lib/contracts/prompt-test';
 
 let command = 0;
 function meta(provider: 'deepseek' | 'doubao', version: number, sessionId?: string) {
@@ -16,6 +23,56 @@ const evaluation = {
   newClues: [{ id: 'escalation-owner', text: '张建国要求明确升级责任人', sourceQuote: '我需要确认最终升级责任人', novel: true, actionable: true }],
   blockerUpdates: [],
 };
+
+class InMemoryDurablePromptTestPersistence implements PromptTestSessionPersistence {
+  private sessions = new Map<string, { userId: string; provider: PromptTestProvider; version: number; state: PromptTestPersistentState }>();
+  private commands = new Map<string, { sessionId: string; hash: string; status: 'pending' | 'completed'; leased: boolean; response?: PromptTestResponse }>();
+  private sequence = 0;
+  private key(userId: string, provider: PromptTestProvider, commandId: string) { return `${userId}\0${provider}\0${commandId}`; }
+  async acquire(args: { userId: string; provider: PromptTestProvider; request: PromptTestRequest; initialState: PromptTestPersistentState }) {
+    const key = this.key(args.userId, args.provider, args.request.commandId);
+    const hash = getPromptTestRequestHash(args.request);
+    const existing = this.commands.get(key);
+    if (existing) {
+      if (existing.hash !== hash) throw new PromptTestRepositoryError('conflict', 'PROMPT_TEST_VERSION_CONFLICT');
+      if (existing.status === 'completed') return { replay: structuredClone(existing.response!) };
+      if (existing.leased) throw new PromptTestRepositoryError('conflict', 'PROMPT_TEST_SESSION_BUSY');
+      const retrySession = this.sessions.get(existing.sessionId);
+      if (!retrySession || retrySession.version !== args.request.expectedVersion) throw new PromptTestRepositoryError('conflict', 'PROMPT_TEST_VERSION_CONFLICT');
+      existing.leased = true;
+      return { sessionId: existing.sessionId, version: retrySession.version, state: structuredClone(retrySession.state), leaseToken: `lease-${this.sequence}` };
+    }
+    const sessionId = args.request.sessionId ?? `prompt-test-durable-session-${++this.sequence}`;
+    let session = this.sessions.get(sessionId);
+    if (!session) {
+      if (args.request.sessionId || args.request.expectedVersion !== 0) throw new PromptTestRepositoryError('not_found', 'PROMPT_TEST_SESSION_NOT_FOUND');
+      session = { userId: args.userId, provider: args.provider, version: 0, state: structuredClone(args.initialState) };
+      this.sessions.set(sessionId, session);
+    }
+    if (session.userId !== args.userId || session.provider !== args.provider) throw new PromptTestRepositoryError('not_found', 'PROMPT_TEST_SESSION_NOT_FOUND');
+    if (session.version !== args.request.expectedVersion) throw new PromptTestRepositoryError('conflict', 'PROMPT_TEST_VERSION_CONFLICT');
+    this.commands.set(key, { sessionId, hash, status: 'pending', leased: true });
+    return { sessionId, version: session.version, state: structuredClone(session.state), leaseToken: `lease-${this.sequence}` };
+  }
+  async renew() {}
+  async commit(args: { userId: string; provider: PromptTestProvider; sessionId: string; commandId: string; expectedVersion: number; leaseToken: string; state: PromptTestPersistentState; response: PromptTestResponse }) {
+    const key = this.key(args.userId, args.provider, args.commandId);
+    const command = this.commands.get(key);
+    const session = this.sessions.get(args.sessionId);
+    if (!command || !session || command.sessionId !== args.sessionId || session.version !== args.expectedVersion) throw new PromptTestRepositoryError('conflict', 'PROMPT_TEST_VERSION_CONFLICT');
+    session.state = structuredClone(args.state);
+    session.version += 1;
+    command.status = 'completed';
+    command.leased = false;
+    command.response = structuredClone(args.response);
+    return structuredClone(args.response);
+  }
+  async abandon(args: { userId: string; provider: PromptTestProvider; sessionId: string; commandId: string; leaseToken: string }) {
+    const command = this.commands.get(this.key(args.userId, args.provider, args.commandId));
+    if (command && command.sessionId === args.sessionId && command.status === 'pending') command.leased = false;
+  }
+  snapshot(sessionId: string) { return structuredClone(this.sessions.get(sessionId)); }
+}
 
 async function main() {
   const original = { ...process.env };
@@ -447,6 +504,58 @@ async function main() {
   replay.state.support = 0;
   const replayAgain = await idempotentService.execute('user-idempotent', replayRequest);
   assert.equal(replayAgain.state.support, 57, 'cached idempotent snapshots are returned as immutable clones');
+
+  const durablePersistence = new InMemoryDurablePromptTestPersistence();
+  let durableCalls = 0;
+  const durableInvoker: PromptTestInvoker = async () => {
+    durableCalls += 1;
+    return durableCalls % 2 === 1
+      ? JSON.stringify({ content: '请补充可复核的责任人。' })
+      : JSON.stringify({ ...evaluation, newClues: [] });
+  };
+  const durableFirstService = createPromptTestService({ invoker: durableInvoker, persistence: durablePersistence });
+  const durableFirst = await durableFirstService.execute('user-durable', { action: 'run', text: '请说明责任人和复核范围。', ...meta('deepseek', 0) });
+  const durableSecondService = createPromptTestService({ invoker: durableInvoker, persistence: durablePersistence });
+  const durableSecondRequest = { action: 'run' as const, text: '请继续说明复核时间。', ...meta('deepseek', durableFirst.version, durableFirst.sessionId) };
+  const durableSecond = await durableSecondService.execute('user-durable', durableSecondRequest);
+  assert.equal(durableSecond.version, 2, 'a new service instance restores and advances the durable session');
+  assert.equal(durableSecond.records.length, 2, 'durable state keeps prior turns across a simulated restart');
+  const callsBeforeReplay = durableCalls;
+  const durableReplay = await durableSecondService.execute('user-durable', durableSecondRequest);
+  assert.deepEqual(durableReplay, durableSecond, 'a durable command replay returns its recorded response');
+  assert.equal(durableCalls, callsBeforeReplay, 'a durable replay never calls either model again');
+  await assert.rejects(
+    durableSecondService.execute('user-durable', { ...durableSecondRequest, text: 'attempt to alter an already completed command' }),
+    (error: unknown) => error instanceof PromptTestError && error.kind === 'conflict',
+    'a reused command id cannot change command content',
+  );
+  const beforeDurableFailure = durablePersistence.snapshot(durableFirst.sessionId);
+  const failingDurableService = createPromptTestService({
+    persistence: durablePersistence,
+    invoker: async () => { throw new Error('provider unavailable'); },
+  });
+  const failedDurableRequest = { action: 'run' as const, text: '本轮调用应失败且不写入状态。', ...meta('deepseek', durableSecond.version, durableFirst.sessionId) };
+  await assert.rejects(
+    failingDurableService.execute('user-durable', failedDurableRequest),
+    (error: unknown) => error instanceof PromptTestError && error.kind === 'unavailable',
+  );
+  assert.deepEqual(durablePersistence.snapshot(durableFirst.sessionId), beforeDurableFailure, 'a failed durable provider call leaves the persisted runtime unchanged');
+  await assert.rejects(
+    failingDurableService.execute('user-durable', { ...failedDurableRequest, text: '同一失败命令号不能替换为另一段话术。' }),
+    (error: unknown) => error instanceof PromptTestError && error.kind === 'conflict',
+    'abandoned commands retain their request hash and reject changed payloads',
+  );
+  let unavailableInvokerCalls = 0;
+  const unavailablePersistence: PromptTestSessionPersistence = {
+    acquire: async () => { throw new PromptTestRepositoryError('unavailable', 'PROMPT_TEST_PERSISTENCE_UNAVAILABLE'); },
+    renew: async () => {}, commit: async () => { throw new Error('unreachable'); }, abandon: async () => {},
+  };
+  await assert.rejects(
+    createPromptTestService({ persistence: unavailablePersistence, invoker: async () => { unavailableInvokerCalls += 1; return '{}'; } })
+      .execute('user-no-db', { action: 'run', text: '数据库不可用时不得退回内存。', ...meta('doubao', 0) }),
+    (error: unknown) => error instanceof PromptTestError && error.kind === 'unavailable',
+  );
+  assert.equal(unavailableInvokerCalls, 0, 'production persistence failure does not fall back to an in-memory session');
 
   let injectionCall = 0;
   const injectionPrompts: string[] = [];

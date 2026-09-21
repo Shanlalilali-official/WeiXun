@@ -6,6 +6,11 @@ import {
   type ProjectOneHierarchy,
   type ProjectOneVisitTask,
 } from '@/lib/designer/project-one-five-person';
+import {
+  PROJECT_ONE_PERSONALITY_TYPE_IDS,
+  PROJECT_ONE_PERSONALITY_TYPE_LIST,
+  toProjectOnePersonalityTypeId,
+} from '@/lib/designer/personality-types';
 import { aMetrics, bMetrics, cMetrics } from '@/lib/metrics-data';
 
 /**
@@ -76,9 +81,12 @@ export class DesignerExcelRequestError extends Error {
 }
 
 const PERSON_LEVELS = ['高层', '中层', '一线'] as const satisfies readonly ProjectOneHierarchy[];
-const PERSON_CATEGORIES = ['高层', '中层', '采购', '一线使用者', '办公室'] as const satisfies readonly ProjectOneCategory[];
+const PERSON_CATEGORIES = ['高层', '中层', '采购', '项目执行', '一线使用者', '办公室'] as const satisfies readonly ProjectOneCategory[];
 const PERSON_TASKS = ['提问', '质疑', '挖坑'] as const satisfies readonly ProjectOneVisitTask[];
-const PERSONALITY_TYPES = ['老虎型', '猫头鹰型', '孔雀型', '考拉型'] as const;
+const PERSONALITY_TYPES = PROJECT_ONE_PERSONALITY_TYPE_IDS;
+const PERSONALITY_TYPE_LABELS: Readonly<Record<string, string>> = Object.fromEntries(
+  PROJECT_ONE_PERSONALITY_TYPE_LIST.map((type) => [type.id, type.displayName]),
+);
 
 const personRows: Record<string, unknown>[] = PROJECT_ONE_FIVE_PERSON_IDS.map((id) => {
   const person = PROJECT_ONE_FIVE_PERSON_NPCS[id];
@@ -161,7 +169,7 @@ const personColumns: readonly DesignerExcelColumn[] = [
   { key: 'displayLevel', label: '组织图层级', description: '控制人物在组织图中的纵向位置。最高层填 1，下一层填 2，以此类推。', kind: 'number' },
   { key: 'displayOrder', label: '同层显示顺序', description: '控制同一层人物从左到右的顺序，从 1 开始填写。', kind: 'number' },
   { key: 'organization', label: '组织关系与职责', description: '说明此人的主要职责、汇报关系以及与其他部门的协作关系。', required: true, kind: 'text' },
-  { key: 'personalityType', label: '性格类型', description: '老虎型、猫头鹰型、孔雀型或考拉型。', required: true, kind: 'enum', enumValues: PERSONALITY_TYPES },
+  { key: 'personalityType', label: '性格类型', description: '从统一性格字典中选择老虎型、猫头鹰型、孔雀型或考拉型；人物具体边界优先。', required: true, kind: 'enum', enumValues: PERSONALITY_TYPES, valueLabels: PERSONALITY_TYPE_LABELS },
   { key: 'personality', label: '性格与沟通表现', description: '描述此人的说话方式、沟通偏好，以及面对玩家时的典型反应。', required: true, kind: 'text' },
   { key: 'coreNeeds', label: '核心诉求', description: '填写此人最关心的目标。多项内容请在同一单元格内换行，每行一项。', kind: 'list' },
   { key: 'facts', label: '已知事实', description: '填写此人已掌握、可用于对话的事实。多项内容每行一项。', kind: 'list' },
@@ -542,6 +550,7 @@ function parseRowValue(column: DesignerExcelColumn, value: unknown, rawKind?: un
   if (column.kind === 'number') return parseNumberCell(value);
   if (column.key === 'kind') return normalizeMetricKind(value);
   if (column.key === 'parentId') return cellText(value).trim() || null;
+  if (column.key === 'personalityType') return toProjectOnePersonalityTypeId(value) ?? cellText(value).trim();
   if (column.key === 'value' && rawKind !== undefined) return parseMetricValue(rawKind, value);
   return cellText(value).trim();
 }

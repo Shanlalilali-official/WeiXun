@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import {
-  PREVIEW_NPC_IDS, PREVIEW_NPCS, PreviewAiError, PreviewSessionStore, createPreviewAiService, getAllowedTasks, resolvePreviewNode,
+  PREVIEW_NPC_IDS, PREVIEW_NPCS, PreviewAiError, PreviewSessionStore, createPreviewAiService, createPreviewServerState, fromPersistedPreviewServerState,
+  getAllowedTasks, resolvePreviewNode, toPersistedPreviewServerState, toPreviewRecoveryDto, type PreviewSessionPersistence,
 } from '../src/lib/game/project-one-preview-ai';
 import { previewAiRequestSchema, previewAiResponseSchema, previewNpcEvaluationAiOutputSchema } from '../src/lib/contracts/project-one-preview-ai';
 import { PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS } from '../src/lib/designer/project-one-five-person';
+import { getPreviewRequestHash } from '../src/lib/game/project-one-preview-session-repository';
 
 const json = (value: unknown) => JSON.stringify(value);
 let commandIndex = 0;
@@ -422,6 +424,120 @@ async function main() {
   assert.equal(two.wechat['P1-001'], undefined);
   now = 20;
   assert.equal(store.size(), 0, 'expired sessions are cleaned up');
+
+  const hashRequest = withMeta({ action: 'plan' as const, text: '确认验收边界和下一步。' }, 0);
+  assert.equal(
+    getPreviewRequestHash({ ...hashRequest, previewSessionId: '00000000-0000-4000-8000-000000000014', expectedVersion: 9 }),
+    getPreviewRequestHash(hashRequest),
+    'a first-command retry may add the server session id and observe a later version',
+  );
+  assert.notEqual(
+    getPreviewRequestHash({ ...hashRequest, text: '改写后的正文不应重放。' }),
+    getPreviewRequestHash(hashRequest),
+    'reusing a command id with changed content must be rejected by the database hash check',
+  );
+
+  // Production persistence adapter: a command lease owns the pre-state, and
+  // only a fully validated result can replace it. This deliberately exercises
+  // no PreviewSessionStore fallback.
+  const durableState = createPreviewServerState('durable-user', '00000000-0000-4000-8000-000000000010');
+  let durableResponse: unknown;
+  let durableCommits = 0;
+  let durableAbandons = 0;
+  const durablePersistence: PreviewSessionPersistence = {
+    acquire: async () => ({
+      previewSessionId: durableState.previewSessionId,
+      version: durableState.version,
+      state: fromPersistedPreviewServerState(toPersistedPreviewServerState(durableState), durableState.userId, durableState.previewSessionId, durableState.version),
+      leaseToken: '00000000-0000-4000-8000-000000000011',
+    }),
+    commit: async ({ state, response }) => {
+      durableCommits += 1;
+      Object.assign(durableState, state);
+      durableResponse = response;
+      return response;
+    },
+    renew: async () => undefined,
+    abandon: async () => { durableAbandons += 1; },
+  };
+  const durableService = createPreviewAiService({ invoker: async () => json({ needsDetail: false, matchedNpcIds: ['P1-001'], recommendations: ['先确认验收边界。'] }) });
+  const durableResult = await durableService.executePersistent('durable-user', withMeta({ action: 'plan', text: '确认验收边界和下一步。' }, 0), durablePersistence);
+  assert.equal(durableCommits, 1, 'persistent execution commits exactly once after a valid result');
+  assert.equal(durableAbandons, 0, 'successful persistent execution does not abandon its lease');
+  assert.equal(durableState.version, 1, 'persistent state advances only at commit');
+  assert.equal(durableResponse, durableResult, 'persistent commit returns the public response');
+
+  const failedDurableState = createPreviewServerState('durable-failure', '00000000-0000-4000-8000-000000000012');
+  const failedDurablePersistence: PreviewSessionPersistence = {
+    acquire: async () => ({ previewSessionId: failedDurableState.previewSessionId, version: 0, state: failedDurableState, leaseToken: '00000000-0000-4000-8000-000000000013' }),
+    commit: async () => { throw new Error('commit must not run for an invalid model result'); },
+    renew: async () => undefined,
+    abandon: async () => { durableAbandons += 1; },
+  };
+  const failedDurableService = createPreviewAiService({ invoker: async () => 'not json' });
+  await assert.rejects(
+    failedDurableService.executePersistent('durable-failure', withMeta({ action: 'plan', text: '确认验收边界和下一步。' }, 0), failedDurablePersistence),
+    (error: unknown) => error instanceof PreviewAiError && error.kind === 'protocol',
+  );
+  assert.equal(failedDurableState.version, 0, 'failed persistent execution cannot mutate durable state');
+  assert.equal(durableAbandons, 1, 'failed persistent execution releases its command lease');
+
+  const renewingState = createPreviewServerState('durable-renew', '00000000-0000-4000-8000-000000000015');
+  let renewCalls = 0;
+  const renewingPersistence: PreviewSessionPersistence = {
+    acquire: async () => ({ previewSessionId: renewingState.previewSessionId, version: 0, state: renewingState, leaseToken: '00000000-0000-4000-8000-000000000016' }),
+    renew: async () => { renewCalls += 1; },
+    commit: async ({ state, response }) => { Object.assign(renewingState, state); return response; },
+    abandon: async () => undefined,
+  };
+  const renewingService = createPreviewAiService({
+    leaseRenewIntervalMs: 1,
+    invoker: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 12));
+      return json({ needsDetail: false, matchedNpcIds: [], recommendations: [] });
+    },
+  });
+  await renewingService.executePersistent('durable-renew', withMeta({ action: 'plan', text: '确认验收边界和下一步。' }, 0), renewingPersistence);
+  assert.ok(renewCalls > 0, 'long-lived persistent commands renew their lease before commit');
+
+  const renewalFailureState = createPreviewServerState('durable-renew-failure', '00000000-0000-4000-8000-000000000017');
+  let renewalFailureCommitted = false;
+  const renewalFailurePersistence: PreviewSessionPersistence = {
+    acquire: async () => ({ previewSessionId: renewalFailureState.previewSessionId, version: 0, state: renewalFailureState, leaseToken: '00000000-0000-4000-8000-000000000018' }),
+    renew: async () => { throw new PreviewAiError('conflict', 'PREVIEW_COMMAND_LEASE_LOST'); },
+    commit: async () => { renewalFailureCommitted = true; throw new Error('commit must not run after lease renewal fails'); },
+    abandon: async () => undefined,
+  };
+  const renewalFailureService = createPreviewAiService({
+    leaseRenewIntervalMs: 1,
+    invoker: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 12));
+      return json({ needsDetail: false, matchedNpcIds: [], recommendations: [] });
+    },
+  });
+  await assert.rejects(
+    renewalFailureService.executePersistent('durable-renew-failure', withMeta({ action: 'plan', text: '确认验收边界和下一步。' }, 0), renewalFailurePersistence),
+    (error: unknown) => error instanceof PreviewAiError && error.kind === 'conflict',
+  );
+  assert.equal(renewalFailureCommitted, false, 'a lost lease can never commit a finished model response');
+  assert.equal(renewalFailureState.version, 0, 'a lost lease leaves durable state untouched');
+
+  durableState.conversations['P1-001'].push({
+    messageId: 'recovery-message', role: 'player', channel: 'wechat', text: '请确认验收记录。', at: Date.now(),
+    attachment: { title: '验收记录', content: 'PRIVATE_ATTACHMENT_CONTENT', viewed: false, impact: '尚未查看' },
+    delivery: { responseAction: 'read_no_reply', readStatus: 'read', reasonCode: 'current_priority_low', reasonEvidence: 'internal only' },
+  });
+  durableState.npcStates['P1-001'].support = 88;
+  durableState.npcStates['P1-001'].activeBlockers.push('compliance_redline');
+  durableState.npcStates['P1-001'].workingMemory.push({ id: 'internal-memory', type: 'fact', summary: '内部评估', sourceMessageIds: ['recovery-message'], status: 'active', tags: ['internal'], mustMention: true });
+  const recovery = toPreviewRecoveryDto(durableState);
+  const recoveryJson = JSON.stringify(recovery);
+  assert.match(recoveryJson, /请确认验收记录/, 'recovery includes player-visible conversation data');
+  assert.equal(recoveryJson.includes('PRIVATE_ATTACHMENT_CONTENT'), false, 'recovery never exposes attachment content');
+  assert.equal(recoveryJson.includes('reasonCode'), false, 'recovery never exposes internal silence diagnostics');
+  assert.equal(recoveryJson.includes('support'), false, 'recovery never exposes scoring state');
+  assert.equal(recoveryJson.includes('activeBlockers'), false, 'recovery never exposes blockers');
+  assert.equal(recoveryJson.includes('workingMemory'), false, 'recovery never exposes working memory');
   console.log('project-one preview AI tests passed');
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

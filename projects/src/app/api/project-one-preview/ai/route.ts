@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
 import { previewAiRequestSchema } from '@/lib/contracts/project-one-preview-ai';
-import { PreviewAiError, previewAiService } from '@/lib/game/project-one-preview-ai';
+import { PreviewAiError, previewAiService, toPreviewRecoveryDto } from '@/lib/game/project-one-preview-ai';
+import { previewSessionRepository } from '@/lib/game/project-one-preview-session-repository';
 import { isFastDebugEnabled, runWithFastTestObservability } from '@/lib/testing/fast-test-observability';
 import { DEFAULT_PROJECT_ONE_PROMPT_CONFIG } from '@/lib/designer/prompt-config';
 import { loadProjectOnePromptConfig } from '@/lib/designer/prompt-config-repository';
 
 export const runtime = 'nodejs';
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const RATE_WINDOW_MS = 60_000;
 const MAX_REQUESTS_PER_WINDOW = 60;
@@ -111,7 +114,7 @@ export async function POST(request: NextRequest) {
       .catch(() => DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
     const execute = () => runWithFastTestObservability(
       guard.session!.userId,
-      () => previewAiService.execute(guard.session!.userId, parsed.data, promptConfig),
+      () => previewAiService.executePersistent(guard.session!.userId, parsed.data, previewSessionRepository, promptConfig),
     );
     const acceptsStream = request.headers.get('accept')?.includes('text/event-stream');
     const streamableAction = parsed.data.action === 'phone_connect'
@@ -128,5 +131,24 @@ export async function POST(request: NextRequest) {
     }
     console.error('Project one preview AI request failed unexpectedly', { code: 'PREVIEW_UNEXPECTED_ERROR' });
     return NextResponse.json({ error: '五人预览 AI 服务暂时不可用，请稍后重试。' }, { status: 503 });
+  }
+}
+
+/** Restore only player-visible preview state; internal evaluation data stays server-only. */
+export async function GET(request: NextRequest) {
+  const guard = authGuard(request);
+  if (!guard.ok || !guard.session) return guard.response!;
+  const previewSessionId = request.nextUrl.searchParams.get('previewSessionId')?.trim();
+  if (!previewSessionId || !UUID_PATTERN.test(previewSessionId)) {
+    return NextResponse.json({ error: '预览会话不存在或已过期，请重新开始。' }, { status: 404 });
+  }
+  try {
+    const state = await previewSessionRepository.load(guard.session.userId, previewSessionId);
+    return NextResponse.json({ success: true, data: toPreviewRecoveryDto(state) });
+  } catch (error) {
+    const known = previewErrorResponse(error);
+    if (known) return NextResponse.json({ error: known.message }, { status: known.status });
+    console.error('Project one preview recovery failed', { code: 'PREVIEW_RECOVERY_UNEXPECTED_ERROR' });
+    return NextResponse.json({ error: '五人预览状态暂时不可恢复，请稍后重试。' }, { status: 503 });
   }
 }

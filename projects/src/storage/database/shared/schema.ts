@@ -335,6 +335,9 @@ export const scenarioTemplates = pgTable("scenario_templates", {
 	clientDemands: jsonb("client_demands").default([]).notNull(),
 	decisionMakerProfile: jsonb("decision_maker_profile").notNull(),
 	competitors: jsonb().default([]).notNull(),
+	revision: integer().default(0).notNull(),
+	updatedBy: varchar("updated_by", { length: 64 }),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	tags: jsonb().default([]).notNull(),
 	difficulty: integer().default(3).notNull(),
 	description: text(),
@@ -344,6 +347,7 @@ export const scenarioTemplates = pgTable("scenario_templates", {
 }, (table) => [
 	unique("scenario_templates_code_unique").on(table.code),
 	index("scenario_templates_industry_idx").using("btree", table.industryCode.asc().nullsLast().op("text_ops")),
+	check("scenario_templates_revision_check", sql`${table.revision} >= 0`),
 	pgPolicy("scenario_templates_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 

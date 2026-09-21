@@ -55,7 +55,7 @@ async function chatInvitation(token: string, message: string, channel: 'email' |
     body: JSON.stringify({
       gameSessionId: sessionId,
       scenarioId: 'project-1',
-      npcId: 'p1-frontline-wang-hao',
+      npcId: 'P1-004',
       message,
       intent: 'message',
       channel,
@@ -127,7 +127,7 @@ async function main() {
   assert.equal(firstRead.gameSession.state.version, currentState.version);
   assert.equal(firstRead.gameSession.state.actionPoints, currentState.actionPoints);
 
-  const npcId = 'p1-frontline-wang-hao';
+  const npcId = 'P1-004';
   const firstSearch = await command(login.token, 'research_public_info', { npcId });
   const firstResearch = firstSearch.result.publicResearch as { facts?: unknown[]; weakSignals?: unknown[]; costPoints?: number };
   assert(firstResearch && Array.isArray(firstResearch.facts));
@@ -180,13 +180,13 @@ async function main() {
   const prepared = await command(login.token, 'prepare', {
     npcId,
     preparationType: 'visit_preparation',
-    content: '目标人物：王浩；客户问题：一线重复录入和跨部门确认成本；方案维度：流程、交付和实施；证据：同类案例、验收数据和可核验交付记录；下一步：确认技术交流和责任人。',
+    content: '目标人物：赵晓晨；客户问题：一线重复录入和跨部门确认成本；方案维度：流程、交付和实施；证据：同类案例、验收数据和可核验交付记录；下一步：确认技术交流和责任人。',
   });
   const preparation = prepared.result.preparation as GameRuntimeState['preparations'][number];
   assert(preparation?.id);
   assert.equal(preparation.type, 'visit_preparation');
   assert(preparation.brief, 'free-text preparation must produce a deterministic brief');
-  assert.equal(preparation.brief?.audience.includes('王浩'), true);
+  assert.equal(preparation.brief?.audience.includes('赵晓晨'), true);
   assert.equal(preparation.brief?.problem.includes('重复录入'), true);
   assert.equal(preparation.brief?.dimensions.includes('流程'), true);
   assert.equal(preparation.brief?.evidence.includes('案例'), true);

@@ -31,7 +31,7 @@ import {
   WalletCards,
   X,
 } from 'lucide-react';
-import { getPhaseName, isCurrentPreparationType, type CompetitorActionRecord, type GamePublicResearchRecord, type GameRuntimeState } from '@/lib/game/state';
+import { getPhaseName, isCurrentPreparationType, type GamePublicResearchRecord, type GameRuntimeState } from '@/lib/game/state';
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -45,12 +45,6 @@ interface Message {
 interface EmailAttachmentDraft {
   fileName: string;
   description: string;
-}
-
-interface CompetitorProfile {
-  company_name: string;
-  features: string;
-  more_info: string;
 }
 
 interface NpcProfile {
@@ -224,12 +218,6 @@ const PHASE_GUIDANCE = [
   { goal: '方案验证与异议处理', hint: '用证据回应客户价值、竞品比较和实施风险。' },
   { goal: '决策闭环', hint: '检查承诺、待办、风险和关键人物支持，再决定是否提交。' },
 ] as const;
-
-const COMPETITIVE_POSITION_META = {
-  lagging: { label: '我方暂时落后', tone: 'border-red-200 bg-red-50 text-red-700' },
-  close: { label: '双方态势接近', tone: 'border-amber-200 bg-amber-50 text-amber-700' },
-  leading: { label: '我方暂时领先', tone: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
-} as const;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -505,7 +493,6 @@ function GameInner() {
   const [savePickerError, setSavePickerError] = useState('');
   const [loadingSave, setLoadingSave] = useState(false);
   const [npcs, setNpcs] = useState<NpcProfile[]>([]);
-  const [competitors, setCompetitors] = useState<CompetitorProfile[]>([]);
   const [selectedNpc, setSelectedNpc] = useState<string | null>(null);
   const [phoneTab, setPhoneTab] = useState<PhoneTab>('contacts');
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('conversation');
@@ -518,7 +505,6 @@ function GameInner() {
   const [commandBusy, setCommandBusy] = useState<string | null>(null);
   const [commandFeedback, setCommandFeedback] = useState('');
   const [showResourceDetails, setShowResourceDetails] = useState(false);
-  const [showCompetitors, setShowCompetitors] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [preparationType] = useState<(typeof PREPARATION_OPTIONS)[number]['type']>('visit_preparation');
   const [preparationText, setPreparationText] = useState('');
@@ -528,7 +514,6 @@ function GameInner() {
   const [invitationResult, setInvitationResult] = useState<InvitationResultView | null>(null);
   const [showEndDayCheck, setShowEndDayCheck] = useState(false);
   const [showSubmissionCheck, setShowSubmissionCheck] = useState(false);
-  const [competitorEvent, setCompetitorEvent] = useState<CompetitorActionRecord | null>(null);
   const [minutesDraft, setMinutesDraft] = useState<MeetingMinutesDraft | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -580,7 +565,6 @@ function GameInner() {
   const nextAppointment = appointments
     .filter((item) => ['accepted', 'countered', 'pending'].includes(item.status))
     .sort((a, b) => a.stage - b.stage || a.scheduledMinute - b.scheduledMinute)[0];
-  const competitorMeta = COMPETITIVE_POSITION_META[gameState?.competitorState?.position ?? 'close'];
   const todayUnfinishedAppointments = appointments.filter((item) => item.stage === round && ['pending', 'accepted', 'countered'].includes(item.status));
   const unreadFollowUps = notifications.filter((item) => !item.read && item.target === 'follow_up');
   const submissionWarnings = [
@@ -651,10 +635,6 @@ function GameInner() {
         : code);
       setSavePickerReady(true);
     });
-    fetch(`/api/game-data/competitors?project_id=${projectId}`)
-      .then((response) => response.json())
-      .then((data) => setCompetitors(Array.isArray(data.data) ? data.data : []))
-      .catch(() => setCompetitors([]));
     return () => { cancelled = true; };
   }, [location]);
 
@@ -1424,15 +1404,6 @@ function GameInner() {
         </div>
       )}
 
-      {showCompetitors && (
-        <Modal title="竞品实时竞争情况" onClose={() => setShowCompetitors(false)}>
-          <div className={`rounded-xl border p-4 ${competitorMeta.tone}`}><div className="text-xs font-semibold">当前模糊态势</div><div className="mt-1 text-lg font-bold">{competitorMeta.label}</div><p className="mt-2 text-xs leading-5">这是根据已发生事件的区间判断，对局结束前不显示竞品精确分数。</p></div>
-          <section className="mt-4"><h3 className="text-sm font-bold">竞品行动记录</h3><div className="mt-2 space-y-2">{gameState?.competitorState?.actions.length ? [...gameState.competitorState.actions].reverse().map((action) => <div key={action.id} className="rounded-xl border border-slate-200 p-3"><div className="flex items-center justify-between gap-2 text-xs"><strong>第{action.round}阶段 · {npcs.find((npc) => npc.id === action.targetNpcId)?.name ?? '关键人'}</strong><span className={`rounded-full px-2 py-1 text-[10px] ${action.mitigated ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{action.mitigated ? '我方已部分对冲' : '产生压力'}</span></div><p className="mt-1 text-xs leading-5 text-slate-600">{action.summary}</p></div>) : <div className="rounded-xl border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500">竞品尚未出现明显动作。</div>}</div></section>
-          <h3 className="mt-5 border-t border-slate-100 pt-4 text-sm font-bold">竞品公开资料</h3>
-          {competitors.length === 0 ? <div className="py-10 text-center text-sm text-slate-500">暂无竞品数据</div> : <div className="space-y-3">{competitors.map((competitor) => <div key={competitor.company_name} className="rounded-xl border border-slate-200 p-4"><div className="text-sm font-bold text-blue-700">{competitor.company_name}</div><div className="mt-2 text-xs text-slate-700">{competitor.features}</div><div className="mt-1 text-[11px] text-slate-500">{competitor.more_info || '暂无更多公开信息'}</div></div>)}</div>}
-        </Modal>
-      )}
-
       {invitationResult && (
         <Modal title="邀约结果" onClose={() => setInvitationResult(null)}>
           <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-4"><div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-700 text-lg font-bold text-white">{invitationResult.npcName.slice(0, 1)}</div><div><div className="font-bold">{invitationResult.npcName}</div><div className="text-xs text-slate-500">{invitationResult.npcTitle}</div></div></div>
@@ -1455,12 +1426,6 @@ function GameInner() {
           <div className="mt-4 space-y-2 text-xs"><CheckRow label="决策链" value={gameState?.unlockedClues?.includes('decision_process') ? '已核实' : '未核实'} warning={!gameState?.unlockedClues?.includes('decision_process')} /><CheckRow label="公开信息" value="按需即时搜索" warning={false} /><CheckRow label="线下拜访纪要" value={`${meetingMinutes.length} 份`} warning={meetingMinutes.length === 0} /><CheckRow label="合规风险" value={gameState?.complianceRisks?.some((risk) => risk.status === 'latent' || risk.status === 'triggered') ? '存在风险' : '未发现高风险'} warning={Boolean(gameState?.complianceRisks?.some((risk) => risk.status === 'latent' || risk.status === 'triggered'))} /></div>
           {submissionWarnings.length > 0 && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900"><strong>提交前注意：</strong>{submissionWarnings.join('；')}</div>}
           <div className="mt-5 flex justify-end gap-2"><button onClick={() => setShowSubmissionCheck(false)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold">返回补充</button><button onClick={async () => { setShowSubmissionCheck(false); await runCommand('submit'); }} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white">确认提交并结算</button></div>
-        </Modal>
-      )}
-
-      {competitorEvent && (
-        <Modal title={`第${competitorEvent.round}阶段 · 竞品动态`} onClose={() => setCompetitorEvent(null)}>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-800">{competitorEvent.summary}</div><div className={`mt-3 rounded-xl border p-3 text-xs ${competitorEvent.mitigated ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>{competitorEvent.mitigated ? '你此前积累的调研、拜访或材料已对冲部分压力。' : '该动作已影响目标联系人，请尽快核实并回应。'}</div>
         </Modal>
       )}
 

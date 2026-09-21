@@ -4,8 +4,8 @@ import { authGuard } from '@/lib/auth/guard';
 import { createServerClient } from '@/storage/database/supabase-client';
 
 const DEFAULT_COMPANIES = [
-  { company_id: 'player-company', company_name: '我方公司', initial_personal_info: { 'p1-frontline-wang-hao': ['曾在公开交流活动中短暂接触。'] } },
-  { company_id: 'abc-company', company_name: 'ABC公司', initial_personal_info: { 'p1-procurement-liu-kai': ['熟悉其对采购留痕和验收边界的重视。'], 'p1-minister-chen-jianguo': ['知道其近期关注可量化的部门整体成果。'] } },
+  { company_id: 'player-company', company_name: '我方公司', initial_personal_info: { 'P1-004': ['曾在公开交流活动中短暂接触。'] } },
+  { company_id: 'abc-company', company_name: 'ABC公司', initial_personal_info: { 'P1-003': ['熟悉其对采购留痕和验收边界的重视。'], 'P1-002': ['知道其近期关注可量化、可验证的方案落地证据。'] } },
 ];
 const COACH_ROLES = new Set(['trainer', 'enterprise_admin', 'platform_designer']);
 

@@ -6,6 +6,8 @@
  * 允许披露的内容。这里不放年龄、籍贯或旧版“软肋”字段。
  */
 
+import type { ProjectOnePersonalityTypeId } from '@/lib/designer/personality-types';
+
 export const PROJECT_ONE_FIVE_PERSON_IDS = [
   'P1-001',
   'P1-002',
@@ -47,7 +49,7 @@ export interface ProjectOneFivePersonNpc {
   displayLevel: number;
   displayOrder: number;
   organization: string;
-  personalityType: '老虎型' | '猫头鹰型' | '孔雀型' | '考拉型';
+  personalityType: ProjectOnePersonalityTypeId;
   personality: string;
   coreNeeds: readonly string[];
   facts: readonly string[];
@@ -80,7 +82,7 @@ export const PROJECT_ONE_FIVE_PERSON_NPCS = {
     displayLevel: 1,
     displayOrder: 1,
     organization: '项目一最终决策牵头人；招采与项目团队向其汇报。只负责方向判断、是否值得转交和下一步安排，不代替招采、业务、技术或项目部门处理细节。',
-    personalityType: '老虎型',
+    personalityType: 'tiger',
     personality: '强势、时间观念极强、对供应商天然戒备；偏好一两句结论，只判断是否值得转交、安排或指向相关部门，不争论、不追问细节。',
     coreNeeds: ['降低项目决策风险', '确保稳定落地与性价比', '不被低质量销售浪费时间'],
     facts: [
@@ -128,7 +130,7 @@ export const PROJECT_ONE_FIVE_PERSON_NPCS = {
     displayLevel: 2,
     displayOrder: 1,
     organization: '技术与方案把关人；直接影响张建国的决策报告；赵晓晨向其反馈一线问题。',
-    personalityType: '猫头鹰型',
+    personalityType: 'owl',
     personality: '资深、严谨、专业、重逻辑与数据；愿意和真正懂技术的人深聊。',
     coreNeeds: ['方案稳定、兼容、数据充分', '供应商能快速响应并按反馈持续改进', '形成可用于汇报的技术证据'],
     facts: [
@@ -176,7 +178,7 @@ export const PROJECT_ONE_FIVE_PERSON_NPCS = {
     displayLevel: 2,
     displayOrder: 2,
     organization: '采购流程与价格信息枢纽；接近退休，熟悉供应商套路。',
-    personalityType: '孔雀型',
+    personalityType: 'peacock',
     personality: '热情、健谈、重视被尊重；表面亲近但对底价和纪律有边界。',
     coreNeeds: ['流程合规且工作轻松', '报价有竞争力', '获得尊重、体面和稳定的人际关系'],
     facts: [
@@ -224,7 +226,7 @@ export const PROJECT_ONE_FIVE_PERSON_NPCS = {
     displayLevel: 3,
     displayOrder: 1,
     organization: '李明辉的直属下属，负责项目具体执行；承担需求落实、任务执行、进度反馈、材料处理、跨环节协调和一线操作验证。',
-    personalityType: '考拉型',
+    personalityType: 'koala',
     personality: '谨慎内敛、怕担责、不愿主动透露信息；建立安全感后会表达真实体验。',
     coreNeeds: ['任务边界清楚并能按要求落地', '进度、材料和异常能够及时向李明辉反馈，避免无故担责', '执行方案不把额外工作量和风险无计划地压给自己或一线同事'],
     facts: [
@@ -272,7 +274,7 @@ export const PROJECT_ONE_FIVE_PERSON_NPCS = {
     displayLevel: 3,
     displayOrder: 2,
     organization: '办公室信息节点；了解人员状态与非正式动态，但不直接掌握核心项目。',
-    personalityType: '孔雀型',
+    personalityType: 'peacock',
     personality: '热情开朗、擅长拉近关系、喜欢轻松话题；涉及机密时会巧妙回避。',
     coreNeeds: ['获得关注与愉快交流', '维持办公室关系', '避免因泄露核心信息惹麻烦'],
     facts: [

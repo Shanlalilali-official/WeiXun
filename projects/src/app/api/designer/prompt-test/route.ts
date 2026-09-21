@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
       const message = error.kind === 'not_found' ? '测试会话已过期，请重置。'
         : error.kind === 'conflict' ? '测试会话版本冲突，请重置后重试。'
           : error.kind === 'protocol' ? '模型输出不符合测试协议，请重试。'
-            : '所选模型暂时不可用，请检查服务端配置。';
+            : '提示词测试服务暂时不可用，请检查模型与状态存储配置。';
       console.error('Prompt test failed', { kind: error.kind });
       return NextResponse.json({ error: message }, { status });
     }

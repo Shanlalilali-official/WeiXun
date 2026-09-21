@@ -115,10 +115,11 @@ export const npcTurnEvaluationSchema = z.object({
   giftAssessment: giftAssessmentSchema,
   handoff: z.object({
     targetNpcId: z.enum([
-      'p1-frontline-wang-hao',
-      'p1-procurement-liu-kai',
-      'p1-minister-chen-jianguo',
-      'p1-deputy-zhao-feng',
+      'P1-001',
+      'P1-002',
+      'P1-003',
+      'P1-004',
+      'P1-005',
     ]),
     summary: z.string().trim().min(1).max(180),
   }).nullable(),

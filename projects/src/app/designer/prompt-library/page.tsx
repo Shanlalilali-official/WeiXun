@@ -30,6 +30,7 @@ import {
   getPromptTestUserId,
 } from '@/lib/designer/prompt-test-storage';
 import type { PromptExcelImportResult } from '@/lib/designer/prompt-excel';
+import { getProjectOnePersonalityType } from '@/lib/designer/personality-types';
 
 type Person = (typeof PROJECT_ONE_FIVE_PERSON_NPCS)[ProjectOneFivePersonId];
 type Channel = (typeof PROJECT_ONE_CHANNEL_MODIFIERS)[ProjectOneChannelId];
@@ -466,6 +467,7 @@ function ReadOnlyChannelSummary({ channel, modifier }: { channel: Channel; modif
 }
 
 function ReadOnlyPersonSummary({ person }: { person: Person }) {
+  const personalityType = getProjectOnePersonalityType(person.personalityType);
   return (
     <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
       <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
@@ -473,10 +475,20 @@ function ReadOnlyPersonSummary({ person }: { person: Person }) {
       </div>
       <p className="mt-2 text-xs leading-5 text-slate-600">{person.organization}</p>
       <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-slate-500">
-        <span className="rounded bg-white px-2 py-1">性格：{person.personalityType}</span>
+        <span className="rounded bg-white px-2 py-1">性格：{personalityType.displayName}</span>
+        <span className="rounded bg-white px-2 py-1">类型 ID：{personalityType.id}</span>
+        <span className="rounded bg-white px-2 py-1">DISC：{personalityType.disc}（{personalityType.discLabel}）</span>
         <span className="rounded bg-white px-2 py-1">层级：{person.level}</span>
         <span className="rounded bg-white px-2 py-1">渠道规则由系统叠加</span>
       </div>
+      <div className="mt-3 grid gap-3 text-[11px] leading-5 text-slate-600 sm:grid-cols-2">
+        <div><span className="font-semibold text-slate-500">沟通偏好：</span>{personalityType.communicationPreference}</div>
+        <div><span className="font-semibold text-slate-500">正向触发：</span>{personalityType.positiveTriggers.join('；')}</div>
+        <div><span className="font-semibold text-slate-500">负向触发：</span>{personalityType.negativeTriggers.join('；')}</div>
+        <div><span className="font-semibold text-slate-500">信息披露倾向：</span>{personalityType.informationDisclosureTendency}</div>
+        <div className="sm:col-span-2"><span className="font-semibold text-slate-500">默认风险反应：</span>{personalityType.defaultRiskResponse}</div>
+      </div>
+      <p className="mt-3 text-[10px] leading-5 text-amber-700">人物主档中的职务、诉求、信息边界、禁忌和状态节点规则优先于通用性格类型；此处只能作为表达风格参考。</p>
     </div>
   );
 }

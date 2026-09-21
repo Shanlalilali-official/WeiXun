@@ -6,7 +6,7 @@ const base = createProjectOneState();
 const state = {
   ...base,
   conversationMemories: {
-    'p1-frontline-wang-hao': {
+    'P1-004': {
       summary: '第81条以后客户确认试点范围，并承诺下周给出接口负责人。',
       summarizedMessageCount: 84,
       confirmedFacts: ['第81条以后确认试点范围'],
@@ -15,7 +15,7 @@ const state = {
   },
   complianceRisks: [{
     id: 'risk:late:1',
-    npcId: 'p1-frontline-wang-hao',
+    npcId: 'P1-004',
     preparationId: 'gift-late',
     kind: 'explicit_bribe' as const,
     severity: 5,
@@ -32,7 +32,7 @@ const state = {
     actions: [{
       id: 'competitor:hidden',
       round: 5,
-      targetNpcId: 'p1-frontline-wang-hao',
+      targetNpcId: 'P1-004',
       kind: 'price' as const,
       title: '隐藏竞品动作',
       summary: 'HIDDEN_COMPETITOR_SECRET',
@@ -49,17 +49,17 @@ const transcript: StoredChatMessage[] = Array.from({ length: 100 }, (_, index) =
   content: `第${index + 1}条对话`,
   round: Math.ceil((index + 1) / 20),
   createdAt: `2026-08-31T00:00:${String(index).padStart(2, '0')}.000Z`,
-  metadata: { npcId: 'p1-frontline-wang-hao' },
+  metadata: { npcId: 'P1-004' },
 }));
 
 const events: StoredGameEvent[] = [
   {
     id: 'event-late-commitment',
-    npcId: 'p1-frontline-wang-hao',
+    npcId: 'P1-004',
     round: 5,
     eventType: 'npc.turn.completed',
     payload: {
-      npcId: 'p1-frontline-wang-hao',
+      npcId: 'P1-004',
       commitments: ['第81条以后客户承诺下周给出接口负责人'],
       confirmedFacts: ['第81条以后确认试点范围'],
       semanticFlags: { riskyConduct: true, explicitQuidProQuo: true },
@@ -69,7 +69,7 @@ const events: StoredGameEvent[] = [
   },
   {
     id: 'event-old-gift',
-    npcId: 'p1-frontline-wang-hao',
+    npcId: 'P1-004',
     round: 4,
     eventType: 'gift.delivered',
     payload: {
@@ -111,7 +111,7 @@ assert.equal(context.recentMessages[0]?.id, 'message-69');
 assert.equal(context.recentMessages.at(-1)?.id, 'message-100');
 assert.equal(context.recentMessages.some((message) => message.id === 'message-1'), false, 'old raw transcript is not sent wholesale');
 
-const memory = context.npcMemories['p1-frontline-wang-hao'];
+const memory = context.npcMemories['P1-004'];
 assert.ok(memory?.summary.includes('第81条以后'));
 assert.ok(memory?.confirmedFacts.includes('第81条以后确认试点范围'));
 assert.ok(memory?.commitments.includes('客户承诺下周给出接口负责人'));

@@ -1,37 +1,28 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { authGuard } from '@/lib/auth/guard';
-import { PROJECT_ONE_COMPETITORS } from '@/lib/game/project-one';
+import { NextRequest } from 'next/server';
+import {
+  handleCompetitorDelete,
+  handleCompetitorGet,
+  handleCompetitorPost,
+  handleCompetitorPut,
+} from '@/lib/designer/competitor-api';
 
-// GET /api/game-data/competitors?project_id=1 - 获取项目一竞品（可用游戏依赖，保留真实内容）
+export const runtime = 'nodejs';
+
+// Collection endpoint.  PUT/DELETE accept the item id in the strict JSON
+// body for compatibility with the existing designer page; item endpoints are
+// also exposed from [id]/route.ts.
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const projectId = searchParams.get('project_id');
-
-  if (projectId === '1') {
-    return NextResponse.json({ success: true, data: PROJECT_ONE_COMPETITORS });
-  }
-
-  // 非项目一的竞品表尚未建模，先干净降级。
-  return NextResponse.json({ error: '功能未实现' }, { status: 501 });
+  return handleCompetitorGet(request);
 }
 
-// POST /api/game-data/competitors - 新增竞品（设计师 CRUD，尚未建模）
 export async function POST(request: NextRequest) {
-  const g = authGuard(request);
-  if (!g.ok) return g.response;
-  return NextResponse.json({ error: '功能未实现' }, { status: 501 });
+  return handleCompetitorPost(request);
 }
 
-// PUT /api/game-data/competitors/:id - 修改竞品
 export async function PUT(request: NextRequest) {
-  const g = authGuard(request);
-  if (!g.ok) return g.response;
-  return NextResponse.json({ error: '功能未实现' }, { status: 501 });
+  return handleCompetitorPut(request);
 }
 
-// DELETE /api/game-data/competitors/:id - 删除竞品
 export async function DELETE(request: NextRequest) {
-  const g = authGuard(request);
-  if (!g.ok) return g.response;
-  return NextResponse.json({ error: '功能未实现' }, { status: 501 });
+  return handleCompetitorDelete(request);
 }

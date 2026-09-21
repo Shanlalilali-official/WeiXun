@@ -97,7 +97,6 @@ export default function StartPage() {
   const [showBackground, setShowBackground] = useState(false);
   const [difficulty, setDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
   const [identity, setIdentity] = useState<{ displayName: string; role: string } | null>(null);
-  const [competitors, setCompetitors] = useState<{company_name: string; features: string; more_info: string; project_id: number}[]>([]);
   const [playMode, setPlayMode] = useState<'solo' | 'multiplayer'>('solo');
   const [roomCode, setRoomCode] = useState('');
   const [companyId, setCompanyId] = useState('player-company');
@@ -150,14 +149,6 @@ export default function StartPage() {
       .catch(() => {});
   }, []);
 
-  // 加载竞品数据
-  useEffect(() => {
-    fetch('/api/game-data/competitors')
-      .then(r => r.json())
-      .then(d => setCompetitors(d.data || []))
-      .catch(() => {});
-  }, []);
-
   const sideHotspots = projects;
 
   const handleStart = async () => {
@@ -178,7 +169,10 @@ export default function StartPage() {
       }
       return;
     }
-    router.push('/project-one-preview');
+    // The player-facing solo flow has one authoritative client: the formal
+    // game page owns saves, commands, chat and settlement.  The five-person
+    // preview remains available only as a design/test route.
+    router.push('/game?location=project-1&mode=solo');
   };
 
   return (
@@ -282,7 +276,7 @@ export default function StartPage() {
               onClick={() => setSelected(null)}
             />
             <div className="absolute inset-0 z-40 flex items-center justify-center pointer-events-none">
-              <div className="w-[440px] max-h-[85vh] bg-card rounded-2xl shadow-2xl flex flex-col pointer-events-auto animate-modal-in">
+              <div className="w-[calc(100%-2rem)] max-w-[440px] max-h-[85vh] bg-card rounded-2xl shadow-2xl flex flex-col pointer-events-auto animate-modal-in">
                 {/* 头部 - 固定 */}
                 <div className="p-6 pb-4 flex-shrink-0 border-b border-border">
                   <div className="flex items-center justify-between">
@@ -318,44 +312,6 @@ export default function StartPage() {
                     <div className="flex justify-between"><span className="text-muted-foreground">参与竞品</span><span className="font-semibold text-foreground">3 家</span></div>
                   </div>
                 </div>
-
-                {/* 竞品公司特点表 */}
-                {competitors.filter(c => c.project_id === selected.projectId).length > 0 && (
-                  <div className="hidden mb-4 p-4 rounded-xl bg-gradient-to-br from-primary/5 to-transparent border border-primary/20">
-                    <div className="text-xs font-semibold text-foreground mb-3 flex items-center gap-2 uppercase tracking-wider">
-                      <svg className="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      {competitors.filter(c => c.project_id === selected.projectId).length === 3 ? 'ABC' : 'ABCD'}公司特点表
-                    </div>
-                    <div className="bg-card rounded-lg border border-border overflow-hidden">
-                      <table className="w-full text-[11px]">
-                        <thead>
-                          <tr className="bg-surface-container border-b border-border">
-                            <th className="px-3 py-2 text-left font-semibold text-foreground">公司</th>
-                            {competitors.filter(c => c.project_id === selected.projectId).map((cp, i) => (
-                              <th key={i} className="px-3 py-2 text-center font-bold text-primary">{cp.company_name}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr className="border-b border-border">
-                            <td className="px-3 py-2 font-semibold text-foreground">特点</td>
-                            {competitors.filter(c => c.project_id === selected.projectId).map((cp, i) => (
-                              <td key={i} className="px-3 py-2 text-center text-foreground/80">{cp.features}</td>
-                            ))}
-                          </tr>
-                          <tr>
-                            <td className="px-3 py-2 font-semibold text-foreground align-top">更多信息</td>
-                            {competitors.filter(c => c.project_id === selected.projectId).map((cp, i) => (
-                              <td key={i} className="px-3 py-2 text-center text-muted-foreground align-top">{cp.more_info || '-'}</td>
-                            ))}
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
 
                 {/* 技术难点 */}
                 <div className="mb-4">
@@ -422,10 +378,10 @@ export default function StartPage() {
                 <div className="mx-6 mb-2 rounded-xl border border-border bg-surface-container p-4">
                   <div className="text-xs font-semibold text-foreground">游戏模式</div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
-                    <button onClick={() => setPlayMode('solo')} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${playMode === 'solo' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card'}`}>单机 · 五人前端测试版</button>
+                    <button onClick={() => setPlayMode('solo')} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${playMode === 'solo' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card'}`}>单机 · 正式五人对局</button>
                     <button onClick={() => setPlayMode('multiplayer')} className={`rounded-lg border px-3 py-2 text-xs font-semibold ${playMode === 'multiplayer' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card'}`}>联机 · 公司均由玩家控制</button>
                   </div>
-                  {playMode === 'solo' && <div className="mt-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">单机将进入新版五人真实 AI 预览：计划、NPC 沟通与拜访接入项目 AI Provider；预览会话暂不写入正式数据库存档。</div>}
+                  {playMode === 'solo' && <div className="mt-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">单机进入正式五人对局：存档、阶段、行动点、NPC 沟通和结算均由服务端会话保存与恢复。</div>}
                   {playMode === 'multiplayer' && <div className="mt-3 grid grid-cols-2 gap-2"><input value={roomCode} onChange={(event) => setRoomCode(event.target.value.toUpperCase())} placeholder="房间码" className="rounded-lg border border-border bg-card px-3 py-2 text-xs" /><select value={companyId} onChange={(event) => setCompanyId(event.target.value)} className="rounded-lg border border-border bg-card px-3 py-2 text-xs"><option value="player-company">我方公司</option><option value="abc-company">ABC公司</option></select></div>}
                   {joinError && <div className="mt-2 text-[11px] text-red-600">{joinError}</div>}
                 </div>

@@ -101,7 +101,7 @@ const evaluatorSystemPrompt = `你是销售谈判游戏的独立评分器，不�
 - handoff仅当NPC实际回复明确说要向具体人物汇报/转告时填写，否则为null。
 - emotion只能是greeting/thinking/excited/annoyed。
 
-固定人物ID：p1-frontline-wang-hao、p1-procurement-liu-kai、p1-minister-chen-jianguo、p1-deputy-zhao-feng。
+固定人物ID：P1-001、P1-002、P1-003、P1-004、P1-005。
 字符串上限：affinityReason 120字；confirmedFacts/commitments每项160字；publicValueEvidence/personalBenefitEvidence的statement每项180字；handoff.summary 180字。
 必须包含：affinityDelta、affinityReason、pleasureDelta、supportDelta、dimensionDeltas、cluesUnlocked、confirmedFacts、commitments、publicValueEvidence、personalBenefitEvidence、workTopicOpenedBy、semanticFlags、giftAssessment、handoff、emotion。
 
@@ -454,10 +454,11 @@ export function createFallbackNpcEvaluation(ctx: NpcEvaluationContext): NpcTurnE
   if (cluesUnlocked.length < 2 && /绩效|政绩|成果目标/.test(reply)) cluesUnlocked.push('performance_goal');
 
   const names: Array<[string, NonNullable<NpcTurnEvaluation['handoff']>['targetNpcId']]> = [
-    ['王浩', 'p1-frontline-wang-hao'],
-    ['刘凯', 'p1-procurement-liu-kai'],
-    ['陈建国', 'p1-minister-chen-jianguo'],
-    ['赵峰', 'p1-deputy-zhao-feng'],
+    ['张建国', 'P1-001'],
+    ['李明辉', 'P1-002'],
+    ['王德福', 'P1-003'],
+    ['赵晓晨', 'P1-004'],
+    ['刘思琪', 'P1-005'],
   ];
   const target = names.find(([name]) => reply.includes(name));
   const handoff = target && /汇报|上报|转告|转达/.test(reply)

@@ -78,7 +78,7 @@ assert.notEqual(signedSeedA, signedSeedC);
 assert.equal(signedSeedA.includes('client-command-1'), false);
 
 const memoryState = createProjectOneState();
-memoryState.conversationMemories['p1-frontline-wang-hao'] = {
+memoryState.conversationMemories['P1-004'] = {
   summary: '旧摘要',
   summarizedMessageCount: 8,
   confirmedFacts: ['客户已确认验收需要留痕'],
@@ -86,14 +86,14 @@ memoryState.conversationMemories['p1-frontline-wang-hao'] = {
 };
 const summarizedState = mergeConversationMemorySummary(
   memoryState,
-  'p1-frontline-wang-hao',
+  'P1-004',
   ' 新摘要 ',
   16,
 );
-assert.equal(summarizedState.conversationMemories['p1-frontline-wang-hao'].summary, '新摘要');
-assert.equal(summarizedState.conversationMemories['p1-frontline-wang-hao'].summarizedMessageCount, 16);
-assert.deepEqual(summarizedState.conversationMemories['p1-frontline-wang-hao'].confirmedFacts, ['客户已确认验收需要留痕']);
-assert.deepEqual(summarizedState.conversationMemories['p1-frontline-wang-hao'].commitments, ['客户承诺周五反馈']);
+assert.equal(summarizedState.conversationMemories['P1-004'].summary, '新摘要');
+assert.equal(summarizedState.conversationMemories['P1-004'].summarizedMessageCount, 16);
+assert.deepEqual(summarizedState.conversationMemories['P1-004'].confirmedFacts, ['客户已确认验收需要留痕']);
+assert.deepEqual(summarizedState.conversationMemories['P1-004'].commitments, ['客户承诺周五反馈']);
 
 function run(state: GameRuntimeState, raw: Omit<GameCommand, 'expectedVersion'>): ExecuteGameCommandResult {
   const command = gameCommandSchema.parse({ ...raw, expectedVersion: state.version });
@@ -112,7 +112,7 @@ function findAcceptedInvite(
       commandId: `${prefix}-${index}`,
       type: 'invite',
       payload: {
-        npcId: 'p1-frontline-wang-hao',
+        npcId: 'P1-004',
         channel: 'work_phone',
         invitationMethod: visitType === 'short' ? 'drop_in' : 'dedicated',
         visitType,
@@ -140,17 +140,17 @@ assert.equal(initialAtA.phaseStartedAt, initialAtB.phaseStartedAt);
 assert.equal(initialAtA.phaseEndsAt, initialAtB.phaseEndsAt);
 assert.equal(initialAtA.pausedAt, null);
 assert.equal(reconcileExpiredPhases(initialAtA, Number.MAX_SAFE_INTEGER), initialAtA);
-assert.equal(initialAtA.unlockedNpcIds.length, 4);
+assert.equal(initialAtA.unlockedNpcIds.length, 5);
 
 const publicResearchResult = run(initialAtA, {
   commandId: 'research-wang-public-info',
   type: 'research_public_info',
-  payload: { npcId: 'p1-frontline-wang-hao' },
+  payload: { npcId: 'P1-004' },
 });
 assert.equal(publicResearchResult.state.simulatedClockMinutes, PROJECT_ONE_DAY_START_MINUTE);
 assert.equal(publicResearchResult.state.actionPoints, 26);
 assert.equal(publicResearchResult.eventType, 'public_info.researched');
-assert.equal(publicResearchResult.eventPayload.factCount, 2);
+assert.equal(publicResearchResult.eventPayload.factCount, 3);
 assert.equal((publicResearchResult.result.publicResearch as { weakSignals: string[] }).weakSignals.length, 1);
 assert.deepEqual(publicResearchResult.state.publicResearch, {}, 'public search is returned once and is not persisted on the contact card');
 
@@ -162,7 +162,7 @@ const legacy = normalizeProjectOneState({
   actionPoints: 12,
   status: 'playing',
   dimensions: initialAtA.dimensions,
-  npcAffinity: { ...initialAtA.npcAffinity, 'p1-frontline-wang-hao': 47 },
+  npcAffinity: { ...initialAtA.npcAffinity, 'P1-004': 47 },
   unlockedClues: [],
   conversationMemories: {},
   lastAction: null,
@@ -170,19 +170,19 @@ const legacy = normalizeProjectOneState({
 });
 assert.equal(legacy.simulatedClockMinutes, 9 * 60);
 assert.equal(legacy.dayAvailableMinutes, 0);
-assert.equal(legacy.npcAttitudes['p1-frontline-wang-hao'].support, 47);
-assert.equal(legacy.npcAffinity['p1-frontline-wang-hao'], 47);
+assert.equal(legacy.npcAttitudes['P1-004'].support, 47);
+assert.equal(legacy.npcAffinity['P1-004'], 47);
 
 // Online channels consume action points only after a command succeeds.
 let state = run(initialAtA, {
   commandId: 'contact-wang',
   type: 'contact',
-  payload: { npcId: 'p1-frontline-wang-hao', channel: 'work_phone' },
+  payload: { npcId: 'P1-004', channel: 'work_phone' },
 }).state;
 assert.equal(state.simulatedClockMinutes, 9 * 60);
 assert.equal(state.dayAvailableMinutes, 0);
 assert.equal(state.cumulativeTimeMinutes, 0);
-assert.equal(state.npcContacts['p1-frontline-wang-hao'].hasReplied, true);
+assert.equal(state.npcContacts['P1-004'].hasReplied, true);
 
 // A formal appointment reserves 40 minutes; conversation turns do not consume time.
 const invited = findAcceptedInvite(state, 'formal', 11 * 60, 'formal-invite');
@@ -290,7 +290,7 @@ assert.doesNotThrow(() => run(state, {
   commandId: 'invalid-late-formal',
   type: 'invite',
   payload: {
-    npcId: 'p1-frontline-wang-hao',
+    npcId: 'P1-004',
     channel: 'work_phone',
     invitationMethod: 'dedicated',
     visitType: 'formal',
@@ -307,7 +307,7 @@ assert.deepEqual(PROJECT_ONE_VISIT_RULES.formal, { durationMinutes: 40, maxTurns
 assert.deepEqual(PROJECT_ONE_VISIT_RULES.informal, { durationMinutes: 60, maxTurns: 5 });
 
 for (const [visitType, startMinute] of [['short', 11 * 60], ['informal', 18 * 60]] as const) {
-  let visitState = connectNpc(initialAtA, 'p1-frontline-wang-hao');
+  let visitState = connectNpc(initialAtA, 'P1-004');
   const accepted = findAcceptedInvite(visitState, visitType, startMinute, `${visitType}-invite`);
   visitState = accepted.state;
   const appointment = accepted.result.appointment as GameAppointment;
@@ -335,8 +335,8 @@ const migratedOnline = {
   ...initialAtA,
   npcContacts: {
     ...initialAtA.npcContacts,
-    'p1-frontline-wang-hao': {
-      ...initialAtA.npcContacts['p1-frontline-wang-hao'],
+    'P1-004': {
+      ...initialAtA.npcContacts['P1-004'],
       status: 'online' as const,
       hasReplied: false,
     },
@@ -346,7 +346,7 @@ assert.doesNotThrow(() => run(migratedOnline, {
   commandId: 'migrated-online-invite',
   type: 'invite',
   payload: {
-    npcId: 'p1-frontline-wang-hao', channel: 'online', invitationMethod: 'dedicated',
+    npcId: 'P1-004', channel: 'online', invitationMethod: 'dedicated',
     visitType: 'formal', venue: '会议室', purpose: '历史联系人续约', scheduledRound: 1, startMinute: 12 * 60,
   },
 }));
@@ -357,7 +357,7 @@ for (let index = 0; index < 300 && !naturalInvite; index += 1) {
     commandId: `natural-language-invite-${index}`,
     type: 'invite',
     payload: {
-      npcId: 'p1-frontline-wang-hao',
+      npcId: 'P1-004',
       channel: 'email',
       rawText: '王经理您好，想约您第2阶段下午3点在贵公司会议室正式沟通实施方案和交付风险。',
     },
@@ -372,7 +372,7 @@ assert.equal(naturalInvite.venue, '贵公司会议室');
 assert.ok(naturalInvite.extractedFields?.includes('startMinute'));
 
 const unmetConditionAppointment: GameAppointment = {
-  id: 'condition-required', npcId: 'p1-frontline-wang-hao', invitationMethod: 'dedicated', visitType: 'formal',
+  id: 'condition-required', npcId: 'P1-004', invitationMethod: 'dedicated', visitType: 'formal',
   venue: '会议室', purpose: '方案沟通', scheduledRound: 1, startMinute: 15 * 60, durationMinutes: 40,
   maxTurns: 5, status: 'countered', conditions: ['请先发送议程或案例材料'], reservedMinutes: 0, workTopicOpenedBy: null,
   invitationCommandId: 'condition-required',
@@ -384,7 +384,7 @@ assert.throws(() => run({ ...initialAtA, appointments: [unmetConditionAppointmen
 }), /APPOINTMENT_CONDITION_UNMET/);
 
 const acceptedEvening: GameAppointment = {
-  id: 'evening-one', npcId: 'p1-frontline-wang-hao', invitationMethod: 'dedicated', visitType: 'informal',
+  id: 'evening-one', npcId: 'P1-004', invitationMethod: 'dedicated', visitType: 'informal',
   venue: '餐厅', purpose: '晚餐', scheduledRound: 1, startMinute: 18 * 60, durationMinutes: 60,
   maxTurns: 5, status: 'accepted', conditions: [], reservedMinutes: 60, workTopicOpenedBy: null,
   invitationCommandId: 'evening-one',
@@ -404,7 +404,7 @@ assert.doesNotThrow(() => run({
 }));
 
 // AI controls person-specific attitude deltas while deterministic code clamps and mirrors support.
-const evaluated = applyNpcEvaluation(initialAtA, 'p1-frontline-wang-hao', evaluation({
+const evaluated = applyNpcEvaluation(initialAtA, 'P1-004', evaluation({
   affinityDelta: 1,
   pleasureDelta: -7,
   supportDelta: 4,
@@ -419,18 +419,18 @@ const evaluated = applyNpcEvaluation(initialAtA, 'p1-frontline-wang-hao', evalua
   publicValueEvidence: [{ statement: '该方案可以降低交付风险', strength: 5 }],
   personalBenefitEvidence: [{ statement: '这个流程能减少重复录入工作', strength: 4 }],
 }), '该方案可以降低交付风险。这个流程能减少重复录入工作。');
-assert.equal(evaluated.npcAttitudes['p1-frontline-wang-hao'].pleasantness, 43);
-assert.equal(evaluated.npcAttitudes['p1-frontline-wang-hao'].support, 39);
-assert.equal(evaluated.npcAffinity['p1-frontline-wang-hao'], 39);
+assert.equal(evaluated.npcAttitudes['P1-004'].pleasantness, 43);
+assert.equal(evaluated.npcAttitudes['P1-004'].support, 34);
+assert.equal(evaluated.npcAffinity['P1-004'], 34);
 assert.equal(evaluated.outcomeEvidence.publicValue.length, 1);
 assert.equal(evaluated.outcomeEvidence.personalBenefit.length, 1);
 assert.equal(calculateTotalScore(evaluated.dimensions), 51);
 
 // Indirect impressions propagate once, at 50% before meeting, without cyclical reapplication.
-const indirectlyChanged = applyIndirectImpression(initialAtA, 'p1-procurement-liu-kai', 8, '方案准备充分', 'p1-frontline-wang-hao', 'handoff-1');
-assert.equal(indirectlyChanged.npcAttitudes['p1-procurement-liu-kai'].unmetImpression, 3);
+const indirectlyChanged = applyIndirectImpression(initialAtA, 'P1-003', 8, '方案准备充分', 'P1-004', 'handoff-1');
+assert.equal(indirectlyChanged.npcAttitudes['P1-003'].unmetImpression, 3);
 assert.deepEqual(
-  applyIndirectImpression(indirectlyChanged, 'p1-procurement-liu-kai', 8, '方案准备充分', 'p1-frontline-wang-hao', 'handoff-1'),
+  applyIndirectImpression(indirectlyChanged, 'P1-003', 8, '方案准备充分', 'P1-004', 'handoff-1'),
   indirectlyChanged,
 );
 
@@ -438,7 +438,7 @@ assert.deepEqual(
 let giftState = run(initialAtA, {
   commandId: 'contact-gift-target',
   type: 'contact',
-  payload: { npcId: 'p1-frontline-wang-hao', channel: 'work_phone' },
+  payload: { npcId: 'P1-004', channel: 'work_phone' },
 }).state;
 const giftInvite = findAcceptedInvite(giftState, 'formal', 15 * 60, 'gift-visit');
 giftState = giftInvite.state;
@@ -562,7 +562,7 @@ assert.equal(forcedReported.state.complianceRisks.at(-1)?.status, 'latent');
 
 // Ledger-bearing model claims require an exact source in the NPC's actual
 // response.  Player claims and cross-category reuse must never score.
-const sourceChecked = applyNpcEvaluation(initialAtA, 'p1-frontline-wang-hao', evaluation({
+const sourceChecked = applyNpcEvaluation(initialAtA, 'P1-004', evaluation({
   confirmedFacts: ['验收需要留痕', '玩家宣称已经获得客户批准'],
   commitments: ['我会在周五反馈', '玩家承诺下周上线'],
   publicValueEvidence: [
@@ -574,8 +574,8 @@ const sourceChecked = applyNpcEvaluation(initialAtA, 'p1-frontline-wang-hao', ev
     { statement: '该方案可以降低交付风险', strength: 5 },
   ],
 }), '验收需要留痕。该方案可以降低交付风险。这个流程能减少重复录入工作。我会在周五反馈。');
-assert.deepEqual(sourceChecked.conversationMemories['p1-frontline-wang-hao'].confirmedFacts, ['验收需要留痕']);
-assert.deepEqual(sourceChecked.conversationMemories['p1-frontline-wang-hao'].commitments, ['我会在周五反馈']);
+assert.deepEqual(sourceChecked.conversationMemories['P1-004'].confirmedFacts, ['验收需要留痕']);
+assert.deepEqual(sourceChecked.conversationMemories['P1-004'].commitments, ['我会在周五反馈']);
 assert.deepEqual(sourceChecked.outcomeEvidence.publicValue.map((item) => [item.statement, item.strength]), [
   ['该方案可以降低交付风险', 5],
 ]);
@@ -588,12 +588,12 @@ assert.equal(getGameOutcome(sourceChecked).personalBenefitScore, 60, 'personal e
 // Mixed result formula combines capability, verified value and weighted support, then subtracts risk.
 const strongEvidence = {
   publicValue: [
-    { id: 'pub-1', npcId: 'p1-deputy-zhao-feng', statement: '降低组织风险', strength: 5, source: 'ai_confirmed' as const, confirmedRound: 5 },
-    { id: 'pub-2', npcId: 'p1-minister-chen-jianguo', statement: '项目可落地', strength: 5, source: 'material' as const, confirmedRound: 5 },
+    { id: 'pub-1', npcId: 'P1-001', statement: '降低组织风险', strength: 5, source: 'ai_confirmed' as const, confirmedRound: 5 },
+    { id: 'pub-2', npcId: 'P1-002', statement: '项目可落地', strength: 5, source: 'material' as const, confirmedRound: 5 },
   ],
   personalBenefit: [
-    { id: 'per-1', npcId: 'p1-frontline-wang-hao', statement: '减少重复工作', strength: 5, source: 'ai_confirmed' as const, confirmedRound: 5 },
-    { id: 'per-2', npcId: 'p1-procurement-liu-kai', statement: '提升专业声誉', strength: 5, source: 'ai_confirmed' as const, confirmedRound: 5 },
+    { id: 'per-1', npcId: 'P1-004', statement: '减少重复工作', strength: 5, source: 'ai_confirmed' as const, confirmedRound: 5 },
+    { id: 'per-2', npcId: 'P1-003', statement: '提升专业声誉', strength: 5, source: 'ai_confirmed' as const, confirmedRound: 5 },
   ],
 };
 const highDimensions = Object.fromEntries(Object.keys(initialAtA.dimensions).map((key) => [key, 100])) as GameRuntimeState['dimensions'];
@@ -617,7 +617,7 @@ assert.equal(outcome.won, true);
 const penalized = getGameOutcome({
   ...outcomeState,
   complianceRisks: [{
-    id: 'triggered-risk', npcId: 'p1-frontline-wang-hao', preparationId: null, kind: 'report', severity: 5,
+    id: 'triggered-risk', npcId: 'P1-004', preparationId: null, kind: 'report', severity: 5,
     status: 'triggered', penalty: 20, reason: '已上报', createdRound: 5, triggerRound: 5, outcome: 'reported',
   }],
 });
@@ -663,8 +663,8 @@ assert.equal(gameCommandSchema.safeParse({
 assert.equal(shouldNpcRespond('stable-seed', 50), shouldNpcRespond('stable-seed', 50));
 
 const evaluationContext = {
-  npcId: 'p1-procurement-liu-kai',
-  npcName: '刘凯',
+  npcId: 'P1-003',
+  npcName: '王德福',
   npcTitle: '采购专员',
   npcPersonality: '谨慎、重视流程',
   npcCategory: '一线',

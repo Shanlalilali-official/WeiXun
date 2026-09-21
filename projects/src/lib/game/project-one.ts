@@ -1,3 +1,9 @@
+import {
+  PROJECT_ONE_FIVE_PERSON_IDS,
+  PROJECT_ONE_FIVE_PERSON_NPCS,
+  type ProjectOneFivePersonId,
+} from '@/lib/designer/project-one-five-person';
+
 export const PROJECT_ONE_CODE = 'project-1';
 export const PROJECT_ONE_MAX_ROUNDS = 5;
 export const PROJECT_ONE_INITIAL_ACTION_POINTS = 28;
@@ -77,28 +83,16 @@ export interface ProjectOnePublicProfile {
  * Publicly obtainable information only. These records intentionally exclude
  * private interests, hidden attitudes, decision weights and win conditions.
  */
-export const PROJECT_ONE_PUBLIC_PROFILES: Record<string, ProjectOnePublicProfile> = {
-  'p1-frontline-wang-hao': {
-    facts: ['现任项目一线办事员，日常负责业务材料流转与跨部门协调。', '曾参与单位内部的数据汇总与流程整理工作。'],
-    weakSignals: ['公开工作记录多次提到重复录入与跨部门确认成本，可能重视方案是否真正减轻一线负担。'],
-    sourceNote: '单位公开通讯与公开岗位信息整理',
-  },
-  'p1-procurement-liu-kai': {
-    facts: ['现任采购专员，工作范围覆盖采购流程、供应商材料与合规核验。', '参加过单位公开的采购规范与数字化采购培训。'],
-    weakSignals: ['公开活动记录中频繁出现验收依据、交付边界和流程留痕，可能优先关注可审计性。'],
-    sourceNote: '公开采购培训与岗位信息整理',
-  },
-  'p1-minister-chen-jianguo': {
-    facts: ['现任业务部部长，负责业务部门整体推进与项目落地协调。', '曾在单位内部公开交流中介绍业务数字化与部门协同。'],
-    weakSignals: ['公开表述更强调规模化落地与部门整体成效，方案准备应避免只描述单点功能。'],
-    sourceNote: '单位公开交流与部门介绍整理',
-  },
-  'p1-deputy-zhao-feng': {
-    facts: ['现任分管业务副主任，负责业务方向与重点项目统筹。', '近期公开讲话强调重点项目要形成可衡量成果并守住合规底线。'],
-    weakSignals: ['更可能从组织成果、实施风险和可复制性判断方案，而非只看产品参数。'],
-    sourceNote: '公开讲话与单位新闻整理',
-  },
-};
+export const PROJECT_ONE_PUBLIC_PROFILES: Record<string, ProjectOnePublicProfile> = Object.fromEntries(
+  PROJECT_ONE_FIVE_PERSON_IDS.map((npcId) => {
+    const npc = PROJECT_ONE_FIVE_PERSON_NPCS[npcId];
+    return [npcId, {
+      facts: [...npc.facts],
+      weakSignals: [...npc.clues],
+      sourceNote: '项目一五人人物主档中的公开岗位与公开工作信息',
+    } satisfies ProjectOnePublicProfile];
+  }),
+);
 
 export type ProjectOneClue =
   | 'decision_process'
@@ -120,6 +114,7 @@ export interface ProjectOneNpc {
   weakness: string;
   initiallyVisible: boolean;
   initialContactChannel: Extract<ContactChannel, 'email' | 'work_phone'>;
+  initialSupport: number;
   decisionWeight: number;
   complianceSensitivity: number;
   actionPreferences: Partial<Record<string, number>>;
@@ -137,85 +132,58 @@ export const PROJECT_ONE_COMPETITORS = [
 /** Private opening knowledge is deliberately asymmetric by company. */
 export const PROJECT_ONE_COMPANY_PERSONAL_INFO: Record<string, Record<string, string[]>> = {
   'player-company': {
-    'p1-frontline-wang-hao': ['我方曾在公开交流活动中与王浩有过短暂接触，但不了解其项目态度。'],
+    'P1-004': ['我方曾在公开交流活动中与赵晓晨有过短暂接触，但不了解其项目态度。'],
   },
   'abc-company': {
-    'p1-procurement-liu-kai': ['ABC曾参与刘凯经手的另一项供应商材料核验，熟悉其对留痕和验收边界的重视。'],
-    'p1-minister-chen-jianguo': ['ABC通过既有客情知道陈建国近期更关注可量化的部门整体成果。'],
+    'P1-003': ['ABC曾参与王德福经手的另一项供应商材料核验，熟悉其对流程留痕和验收边界的重视。'],
+    'P1-002': ['ABC通过既有客情知道李明辉更关注可量化、可验证的方案落地证据。'],
   },
 };
 
 /** 来源：项目内“各项目人物表.docx”的最新导入版本。 */
-export const PROJECT_ONE_NPCS: ProjectOneNpc[] = [
-  {
-    id: 'p1-frontline-wang-hao',
+const FIVE_PERSON_RUNTIME_METADATA: Record<ProjectOneFivePersonId, Pick<
+  ProjectOneNpc,
+  'initialContactChannel' | 'complianceSensitivity' | 'actionPreferences'
+>> = {
+  'P1-001': { initialContactChannel: 'work_phone', complianceSensitivity: 85, actionPreferences: { roadshow: 3, visit: 2, video: 1, gift: -3, dinner: -2 } },
+  'P1-002': { initialContactChannel: 'email', complianceSensitivity: 70, actionPreferences: { roadshow: 2, visit: 2, tea: 1, gift: -3 } },
+  'P1-003': { initialContactChannel: 'email', complianceSensitivity: 90, actionPreferences: { sample: 2, video: 1, gift: -3, dinner: -2 } },
+  'P1-004': { initialContactChannel: 'work_phone', complianceSensitivity: 60, actionPreferences: { tea: 2, festival: 1, gift: -1, roadshow: 1 } },
+  'P1-005': { initialContactChannel: 'work_phone', complianceSensitivity: 55, actionPreferences: { tea: 2, festival: 1, gift: -1, dinner: 1 } },
+};
+
+const TOTAL_FIVE_PERSON_INFLUENCE = PROJECT_ONE_FIVE_PERSON_IDS.reduce(
+  (sum, npcId) => sum + PROJECT_ONE_FIVE_PERSON_NPCS[npcId].influenceWeight,
+  0,
+);
+
+/**
+ * Formal project-one source of truth.  The legacy four-person list is
+ * intentionally not retained as a compatibility path: old sessions are
+ * deleted by the matching migration instead of being mapped to new people.
+ */
+export const PROJECT_ONE_NPCS: ProjectOneNpc[] = PROJECT_ONE_FIVE_PERSON_IDS.map((npcId) => {
+  const person = PROJECT_ONE_FIVE_PERSON_NPCS[npcId];
+  const metadata = FIVE_PERSON_RUNTIME_METADATA[npcId];
+  return {
+    id: person.id,
     projectId: 1,
-    category: '一线',
-    name: '王浩',
-    title: '一线办事员',
-    gender: '男',
+    category: person.level,
+    name: person.name,
+    title: person.title,
+    gender: '未提供',
     age: null,
     hometown: '未提供',
-    personality: '四种性格之一，由场景初始化确定',
-    weakness: '工作减负、绩效加分或个人业余爱好',
+    personality: person.personality,
+    weakness: person.coreNeeds.join('、'),
     initiallyVisible: true,
-    initialContactChannel: 'work_phone',
-    decisionWeight: 0.1,
-    complianceSensitivity: 45,
-    actionPreferences: { tea: 2, festival: 1, gift: -1, roadshow: 1 },
-  },
-  {
-    id: 'p1-procurement-liu-kai',
-    projectId: 1,
-    category: '一线',
-    name: '刘凯',
-    title: '采购专员',
-    gender: '男',
-    age: null,
-    hometown: '未提供',
-    personality: '老虎型或孔雀型，由场景初始化确定',
-    weakness: '评优晋升或家庭育儿需求',
-    initiallyVisible: true,
-    initialContactChannel: 'email',
-    decisionWeight: 0.2,
-    complianceSensitivity: 80,
-    actionPreferences: { sample: 2, video: 1, gift: -2, dinner: -1 },
-  },
-  {
-    id: 'p1-minister-chen-jianguo',
-    projectId: 1,
-    category: '中层',
-    name: '陈建国',
-    title: '业务部部长',
-    gender: '男',
-    age: null,
-    hometown: '未提供',
-    personality: '老虎型',
-    weakness: '职称评级、行业个人口碑或子女升学',
-    initiallyVisible: true,
-    initialContactChannel: 'work_phone',
-    decisionWeight: 0.3,
-    complianceSensitivity: 70,
-    actionPreferences: { roadshow: 2, visit: 2, tea: 1, gift: -3 },
-  },
-  {
-    id: 'p1-deputy-zhao-feng',
-    projectId: 1,
-    category: '高层',
-    name: '赵峰',
-    title: '分管业务副主任',
-    gender: '男',
-    age: null,
-    hometown: '未提供',
-    personality: '老虎型，年富力强',
-    weakness: '政绩考核与新项目落地成果',
-    initiallyVisible: true,
-    initialContactChannel: 'work_phone',
-    decisionWeight: 0.4,
-    complianceSensitivity: 85,
-    actionPreferences: { roadshow: 3, visit: 2, video: 1, gift: -3, dinner: -2 },
-  },
-];
+    initialContactChannel: metadata.initialContactChannel,
+    initialSupport: person.initialSupport,
+    decisionWeight: person.influenceWeight / TOTAL_FIVE_PERSON_INFLUENCE,
+    complianceSensitivity: metadata.complianceSensitivity,
+    actionPreferences: metadata.actionPreferences,
+  };
+});
 
 export function getProjectOneNpc(npcId: string): ProjectOneNpc | null {
   return PROJECT_ONE_NPCS.find((npc) => npc.id === npcId) ?? null;

@@ -19,6 +19,10 @@ import {
   DEFAULT_PROJECT_ONE_PROMPT_CONFIG,
   type ProjectOnePromptConfig,
 } from '@/lib/designer/prompt-config';
+import {
+  formatProjectOnePersonalityTypeForPrompt,
+  getProjectOnePersonalityType,
+} from '@/lib/designer/personality-types';
 
 type VisitTask = z.infer<typeof previewVisitTaskSchema>;
 export const PREVIEW_NPCS: Record<PreviewNpcId, ProjectOneFivePersonNpc> = PROJECT_ONE_FIVE_PERSON_NPCS;
@@ -93,6 +97,38 @@ export type PreviewServerState = {
   version: number; completedCommands: Map<string, PreviewAiResponse>;
 };
 
+/**
+ * The durable preview session intentionally excludes completedCommands. Command
+ * replay is a database concern so retries survive a restart and are shared by
+ * every application instance.
+ */
+export type PersistedPreviewServerState = Omit<PreviewServerState, 'completedCommands'>;
+
+export type PreviewPersistentCommandLease = {
+  previewSessionId: string;
+  version: number;
+  state: PreviewServerState;
+  leaseToken: string;
+} | {
+  replay: PreviewAiResponse;
+};
+
+/** Database adapter boundary. The in-memory store remains useful for pure unit tests. */
+export interface PreviewSessionPersistence {
+  acquire(userId: string, request: PreviewAiRequest): Promise<PreviewPersistentCommandLease>;
+  renew(args: { userId: string; previewSessionId: string; commandId: string; leaseToken: string }): Promise<void>;
+  commit(args: {
+    userId: string;
+    previewSessionId: string;
+    commandId: string;
+    expectedVersion: number;
+    leaseToken: string;
+    state: PreviewServerState;
+    response: PreviewAiResponse;
+  }): Promise<PreviewAiResponse>;
+  abandon(args: { userId: string; previewSessionId: string; commandId: string; leaseToken: string }): Promise<void>;
+}
+
 function newConversations(): Record<PreviewNpcId, ConversationMessage[]> {
   return Object.fromEntries(PREVIEW_NPC_IDS.map((id) => [id, []])) as unknown as Record<PreviewNpcId, ConversationMessage[]>;
 }
@@ -105,6 +141,35 @@ function newNpcStates(): Record<PreviewNpcId, PreviewNpcRuntimeState> {
 }
 export function createPreviewServerState(userId: string, previewSessionId: string, now = Date.now()): PreviewServerState {
   return { userId, previewSessionId, conversations: newConversations(), wechat: {}, appointments: {}, activeMeeting: null, lastActiveAt: now, approvedVisitPreparations: {}, npcStates: newNpcStates(), version: 0, completedCommands: new Map() };
+}
+
+export function toPersistedPreviewServerState(state: PreviewServerState): PersistedPreviewServerState {
+  const persisted = structuredClone(state) as PreviewServerState;
+  delete (persisted as Partial<PreviewServerState>).completedCommands;
+  return persisted as PersistedPreviewServerState;
+}
+
+/**
+ * State JSON is service-authored and stored behind the server role. Start from
+ * a complete current default so an older, partial row cannot omit new fields.
+ */
+export function fromPersistedPreviewServerState(
+  value: unknown,
+  userId: string,
+  previewSessionId: string,
+  version: number,
+): PreviewServerState {
+  const initial = createPreviewServerState(userId, previewSessionId);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return { ...initial, version };
+  const stored = value as Partial<PersistedPreviewServerState>;
+  return {
+    ...initial,
+    ...structuredClone(stored),
+    userId,
+    previewSessionId,
+    version,
+    completedCommands: new Map(),
+  };
 }
 /** Process-local preview state; this is intentionally not persistent game state. */
 export class PreviewSessionStore {
@@ -308,6 +373,9 @@ function isHardBlockerText(playerText: string): boolean {
   return (HARD_BLOCKER_PATTERN.test(playerText) || REDLINE_TERM_PATTERN.test(playerText))
     && !isDeterministicBlockerRepair('compliance_redline', playerText);
 }
+export function buildPreviewNpcPersonalityPrompt(npcId: PreviewNpcId): string {
+  return formatProjectOnePersonalityTypeForPrompt(PREVIEW_NPCS[npcId].personalityType);
+}
 function layeredNpcContext(state: PreviewServerState, npcId: PreviewNpcId, channel: string, promptConfig: ProjectOnePromptConfig) {
   const runtime = state.npcStates[npcId];
   const node = resolvePreviewNode(runtime);
@@ -316,6 +384,7 @@ function layeredNpcContext(state: PreviewServerState, npcId: PreviewNpcId, chann
     ? { goal: '优先说明阻断或修复所需的正式下一步，不因普通好感或支持度升级。', disclosure: '仅讨论纠正、合规和可验证修复。' }
     : { ...NODE_REQUIREMENTS[node], ...(guidance ? { memoryFocus: guidance.memoryFocus, preferredTopics: guidance.preferredTopics, avoidTopics: guidance.avoidTopics } : {}) };
   return {
+    personalityType: getProjectOnePersonalityType(PREVIEW_NPCS[npcId].personalityType),
     stateNode: { node, goal: nodeRule.goal, disclosure: nodeRule.disclosure },
     runtimeState: { support: runtime.support, pleasantness: runtime.pleasantness, effectiveContactCount: runtime.effectiveContactCount, activeBlockers: runtime.activeBlockers },
     highValueWorkingMemory: highValueMemory(runtime),
@@ -331,6 +400,7 @@ function layeredNpcPrompt(state: PreviewServerState, npcId: PreviewNpcId, channe
   const layerText = (id: keyof typeof PROJECT_ONE_PROMPT_LAYERS) => promptConfig.promptLayers[id] ?? layers[id].template;
   return [
     layers.npc_baseline.label + '：' + (promptConfig.npcRolePrompts[npcId] || layerText('npc_baseline')),
+    '通用性格类型字典（行为风格参考）：\n' + buildPreviewNpcPersonalityPrompt(npcId),
     layers.state_node.label + '：' + layerText('state_node') + '只读取 <untrusted_data> 中 npcContext.stateNode，并严格遵守其披露边界。',
     layers.runtime_state.label + '：' + layerText('runtime_state'),
     layers.working_memory.label + '：' + layerText('working_memory'),
@@ -508,6 +578,47 @@ function listAppointments(state: PreviewServerState): PreviewAppointment[] {
     return appointment ? [{ ...appointment }] : [];
   });
 }
+
+/**
+ * Recovery is deliberately not a debug endpoint. It contains only the fields
+ * a player can already observe in the preview, and omits evaluator output,
+ * support scores, blockers, working memory and internal silence diagnostics.
+ */
+export function toPreviewRecoveryDto(state: PreviewServerState) {
+  return {
+    previewSessionId: state.previewSessionId,
+    version: state.version,
+    conversations: Object.fromEntries(PREVIEW_NPC_IDS.map((npcId) => [npcId,
+      state.conversations[npcId].slice(-100).map((message) => ({
+        messageId: message.messageId,
+        role: message.role,
+        channel: message.channel,
+        text: message.text,
+        at: message.at,
+        ...(message.attachment ? { attachment: {
+          title: message.attachment.title,
+          viewed: message.attachment.viewed,
+          impact: message.attachment.impact,
+        } } : {}),
+        ...(message.delivery ? { delivery: {
+          responseAction: message.delivery.responseAction,
+          ...(message.delivery.readStatus ? { readStatus: message.delivery.readStatus } : {}),
+        } } : {}),
+      })),
+    ])),
+    wechat: { ...state.wechat },
+    appointments: listAppointments(state),
+    activeMeeting: state.activeMeeting ? {
+      npcId: state.activeMeeting.npcId,
+      turn: state.activeMeeting.turn,
+      completedTasks: [...state.activeMeeting.completedTasks],
+      ended: state.activeMeeting.ended,
+      ...(state.activeMeeting.endReason ? { endReason: state.activeMeeting.endReason } : {}),
+      ...(state.activeMeeting.awaitingFinalReplyFrom ? { awaitingFinalReplyFrom: state.activeMeeting.awaitingFinalReplyFrom } : {}),
+    } : null,
+    approvedVisitPreparationNpcIds: Object.keys(state.approvedVisitPreparations) as PreviewNpcId[],
+  };
+}
 function saveAppointment(state: PreviewServerState, npcId: PreviewNpcId, draft: AppointmentDraft, phase: number, status: PreviewAppointmentStatus = 'accepted'): PreviewAppointment {
   const appointment = previewAppointmentSchema.parse({
     id: state.appointments[npcId]?.id ?? randomUUID(), npcId, status, phase,
@@ -550,9 +661,10 @@ function messagePurpose(channel: string, hasAttachment: boolean, allowReadNoRepl
     + (hasAttachment ? '玩家附带了材料。若上下文说明未查看，只能知道已收到，不能假设或引用材料正文。' : '没有附件。');
 }
 
-export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: PreviewSessionStore } = {}) {
+export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: PreviewSessionStore; leaseRenewIntervalMs?: number } = {}) {
   const invoker = deps.invoker ?? invokeLLM;
   const store = deps.store ?? new PreviewSessionStore();
+  const leaseRenewIntervalMs = deps.leaseRenewIntervalMs ?? 30_000;
   const inFlightSessions = new Set<string>();
 
   async function executeUnsafe(state: PreviewServerState, request: PreviewAiRequest, promptConfig: ProjectOnePromptConfig): Promise<PreviewAiResponse> {
@@ -765,7 +877,65 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
       inFlightSessions.delete(lockKey);
     }
   }
-  return { execute, store };
+
+  /**
+   * Production path: acquire a database command lease before any model call,
+   * evaluate on a clone, then atomically commit the full result. The in-memory
+   * execute path above remains a small, deterministic unit-test harness.
+   */
+  async function executePersistent(
+    userId: string,
+    request: PreviewAiRequest,
+    persistence: PreviewSessionPersistence,
+    promptConfig: ProjectOnePromptConfig = DEFAULT_PROJECT_ONE_PROMPT_CONFIG,
+  ): Promise<PreviewAiResponse> {
+    const acquired = await persistence.acquire(userId, request);
+    if ('replay' in acquired) return acquired.replay;
+    let renewalFailure: unknown;
+    let renewal: Promise<void> | null = null;
+    const renewLease = () => {
+      if (renewal || renewalFailure) return;
+      renewal = persistence.renew({
+        userId,
+        previewSessionId: acquired.previewSessionId,
+        commandId: request.commandId,
+        leaseToken: acquired.leaseToken,
+      }).catch((error) => {
+        renewalFailure = error;
+      }).finally(() => {
+        renewal = null;
+      });
+    };
+    const renewalTimer = setInterval(renewLease, leaseRenewIntervalMs);
+    try {
+      const pending = structuredClone(acquired.state) as PreviewServerState;
+      const raw = await executeUnsafe(pending, request, promptConfig);
+      if (renewal) await renewal;
+      if (renewalFailure) throw renewalFailure;
+      pending.version = acquired.version + 1;
+      const response = previewAiResponseSchema.parse({ ...raw, version: pending.version });
+      return await persistence.commit({
+        userId,
+        previewSessionId: acquired.previewSessionId,
+        commandId: request.commandId,
+        expectedVersion: acquired.version,
+        leaseToken: acquired.leaseToken,
+        state: pending,
+        response,
+      });
+    } catch (error) {
+      await persistence.abandon({
+        userId,
+        previewSessionId: acquired.previewSessionId,
+        commandId: request.commandId,
+        leaseToken: acquired.leaseToken,
+      }).catch(() => undefined);
+      throw error;
+    } finally {
+      clearInterval(renewalTimer);
+    }
+  }
+  return { execute, executePersistent, store };
 }
 const previewRuntime = globalThis as typeof globalThis & {
   __weixunProjectOnePreviewAiService?: ReturnType<typeof createPreviewAiService>;

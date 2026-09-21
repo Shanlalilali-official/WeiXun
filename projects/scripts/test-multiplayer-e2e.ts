@@ -249,7 +249,7 @@ async function main(): Promise<void> {
       commandId: `multi-prestart-${crypto.randomUUID()}`,
       expectedVersion: numberField(detachedState, 'version'),
       type: 'research_public_info',
-      payload: { npcId: 'p1-frontline-wang-hao' },
+      payload: { npcId: 'P1-004' },
     }),
   }, playerA.token);
   expectStatus(preStartCommand, 409, 'pre-start multiplayer command rejection');

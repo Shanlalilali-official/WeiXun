@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, type ChangeEvent } from 'react';
+import { useState, useEffect, useCallback, type ChangeEvent, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { Wand2, Building2, Users, FileText, Save, ArrowLeft, UserCog, BarChart3, Plus, Trash2, Pencil, X, LogOut, ShieldCheck, FlaskConical, Library, Database, ImageIcon, FileBarChart, TestTube2, PlayCircle, ClipboardList, Upload, Sparkles, FolderOpen } from 'lucide-react';
 import { aMetrics, bMetrics, cMetrics } from '@/lib/metrics-data';
@@ -100,8 +100,14 @@ interface ProjectConfig {
 }
 
 interface Competitor {
-  id: number;
+  id: string;
   project_id: number;
+  company_name: string;
+  features: string;
+  more_info: string;
+}
+
+interface CompetitorForm {
   company_name: string;
   features: string;
   more_info: string;
@@ -135,6 +141,13 @@ export default function DesignerPage() {
   const [projects, setProjects] = useState<ProjectConfig[]>(FALLBACK_PROJECTS);
   const [selectedProject, setSelectedProject] = useState<number>(1);
   const [competitors, setCompetitors] = useState<Competitor[]>([]);
+  const [competitorRevision, setCompetitorRevision] = useState(0);
+  const [competitorsLoading, setCompetitorsLoading] = useState(true);
+  const [competitorNotice, setCompetitorNotice] = useState('');
+  const [competitorFormOpen, setCompetitorFormOpen] = useState(false);
+  const [editingCompetitorId, setEditingCompetitorId] = useState<string | null>(null);
+  const [competitorForm, setCompetitorForm] = useState<CompetitorForm>({ company_name: '', features: '', more_info: '' });
+  const [competitorSaving, setCompetitorSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedModule, setSelectedModule] = useState<'assets' | 'data' | 'reports' | 'testing'>('assets');
   const [selectedDataTab, setSelectedDataTab] = useState<'project' | 'competitors' | 'metrics'>('project');
@@ -195,12 +208,6 @@ export default function DesignerPage() {
       })
       .catch(() => {});
 
-    // 加载竞品数据
-    fetch('/api/game-data/competitors')
-      .then(r => r.json())
-      .then(d => setCompetitors(d.data || []))
-      .catch(() => {});
-
     // 加载 NPC 数据
     fetch('/api/game-data/npcs')
       .then(r => r.json())
@@ -229,6 +236,31 @@ export default function DesignerPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  const loadCompetitors = useCallback(async (projectId: number) => {
+    setCompetitorsLoading(true);
+    try {
+      const token = window.localStorage.getItem('weixun_session') || '';
+      const response = await fetch(`/api/game-data/competitors?project_id=${projectId}`, {
+        headers: { 'x-session': token },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || '竞品数据读取失败');
+      setCompetitors(Array.isArray(body.data) ? body.data : []);
+      setCompetitorRevision(typeof body.revision === 'number' ? body.revision : 0);
+      setCompetitorNotice('');
+    } catch (error) {
+      setCompetitors([]);
+      setCompetitorRevision(0);
+      setCompetitorNotice(error instanceof Error ? error.message : '竞品数据读取失败');
+    } finally {
+      setCompetitorsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadCompetitors(selectedProject);
+  }, [loadCompetitors, selectedProject]);
 
   useEffect(() => {
     fetch('/api/designer/image-assets')
@@ -291,6 +323,94 @@ export default function DesignerPage() {
       setImageAssetNotice(error instanceof Error ? error.message : '图片上传失败');
     } finally {
       setUploadingImageSlot(null);
+    }
+  };
+
+  const resetCompetitorForm = () => {
+    setCompetitorForm({ company_name: '', features: '', more_info: '' });
+    setEditingCompetitorId(null);
+    setCompetitorFormOpen(false);
+  };
+
+  const startAddCompetitor = () => {
+    setCompetitorForm({ company_name: '', features: '', more_info: '' });
+    setEditingCompetitorId(null);
+    setCompetitorNotice('');
+    setCompetitorFormOpen(true);
+  };
+
+  const startEditCompetitor = (competitor: Competitor) => {
+    setCompetitorForm({
+      company_name: competitor.company_name,
+      features: competitor.features,
+      more_info: competitor.more_info,
+    });
+    setEditingCompetitorId(competitor.id);
+    setCompetitorNotice('');
+    setCompetitorFormOpen(true);
+  };
+
+  const handleSaveCompetitor = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setCompetitorSaving(true);
+    setCompetitorNotice('');
+    try {
+      const token = window.localStorage.getItem('weixun_session') || '';
+      const payload = {
+        project_id: selectedProject,
+        expected_revision: competitorRevision,
+        ...competitorForm,
+        ...(editingCompetitorId ? { id: editingCompetitorId } : {}),
+      };
+      const response = await fetch('/api/game-data/competitors', {
+        method: editingCompetitorId ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-session': token },
+        body: JSON.stringify(payload),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (response.status === 409) await loadCompetitors(selectedProject);
+        throw new Error(body.error || '竞品保存失败');
+      }
+      setCompetitors(Array.isArray(body.data) ? body.data : []);
+      setCompetitorRevision(typeof body.revision === 'number' ? body.revision : competitorRevision + 1);
+      setCompetitorNotice(editingCompetitorId ? '竞品已更新。' : '竞品已添加。');
+      resetCompetitorForm();
+    } catch (error) {
+      setCompetitorNotice(error instanceof Error ? error.message : '竞品保存失败');
+    } finally {
+      setCompetitorSaving(false);
+    }
+  };
+
+  const handleDeleteCompetitor = async (competitor: Competitor) => {
+    if (!window.confirm(`确定删除竞品「${competitor.company_name}」吗？`)) return;
+    setCompetitorSaving(true);
+    setCompetitorNotice('');
+    try {
+      const token = window.localStorage.getItem('weixun_session') || '';
+      const response = await fetch('/api/game-data/competitors', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'x-session': token },
+        body: JSON.stringify({
+          id: competitor.id,
+          project_id: selectedProject,
+          expected_revision: competitorRevision,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (response.status === 409) await loadCompetitors(selectedProject);
+        throw new Error(body.error || '竞品删除失败');
+      }
+      setCompetitors(Array.isArray(body.data) ? body.data : []);
+      setCompetitorRevision(typeof body.revision === 'number' ? body.revision : competitorRevision + 1);
+      setCompetitorNotice('竞品已删除。');
+      if (editingCompetitorId === competitor.id) resetCompetitorForm();
+    } catch (error) {
+      setCompetitorNotice(error instanceof Error ? error.message : '竞品删除失败');
+    } finally {
+      setCompetitorSaving(false);
     }
   };
 
@@ -761,13 +881,65 @@ export default function DesignerPage() {
               <Users className="w-4 h-4 text-primary" /> 竞品数据
               <span className="ml-auto text-[10px] font-normal text-muted-foreground">当前项目 · {currentCompetitors.length} 家</span>
             </div>
-            {currentCompetitors.length > 0 ? (
+
+            {competitorNotice && (
+              <div role="status" className="mb-4 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+                {competitorNotice}
+              </div>
+            )}
+
+            {competitorFormOpen && (
+              <form onSubmit={handleSaveCompetitor} className="mb-4 space-y-3 rounded-lg border border-primary/20 bg-primary/5 p-4">
+                <div className="text-xs font-semibold text-foreground">{editingCompetitorId ? '编辑竞品' : '添加竞品'}</div>
+                <input
+                  required
+                  maxLength={64}
+                  value={competitorForm.company_name}
+                  onChange={(event) => setCompetitorForm((current) => ({ ...current, company_name: event.target.value }))}
+                  placeholder="公司名称"
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <textarea
+                  required
+                  maxLength={2_000}
+                  value={competitorForm.features}
+                  onChange={(event) => setCompetitorForm((current) => ({ ...current, features: event.target.value }))}
+                  placeholder="产品特点与竞争优势"
+                  rows={3}
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <textarea
+                  required
+                  maxLength={4_000}
+                  value={competitorForm.more_info}
+                  onChange={(event) => setCompetitorForm((current) => ({ ...current, more_info: event.target.value }))}
+                  placeholder="更多信息、主张或配置说明"
+                  rows={3}
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={resetCompetitorForm} disabled={competitorSaving} className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50">
+                    取消
+                  </button>
+                  <button type="submit" disabled={competitorSaving} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">
+                    {competitorSaving ? '保存中…' : '保存竞品'}
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {competitorsLoading ? (
+              <div className="py-8 text-center text-sm text-muted-foreground">正在读取竞品数据…</div>
+            ) : currentCompetitors.length > 0 ? (
               <div className="space-y-3">
                 {currentCompetitors.map(c => (
                   <div key={c.id} className="bg-muted rounded-lg p-4 border border-border">
                     <div className="flex items-center justify-between mb-2">
                       <div className="font-semibold text-foreground">{c.company_name}</div>
-                      <button className="text-xs text-primary hover:text-primary/80">编辑</button>
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => startEditCompetitor(c)} disabled={competitorSaving} className="text-xs text-primary hover:text-primary/80 disabled:opacity-50">编辑</button>
+                        <button type="button" onClick={() => void handleDeleteCompetitor(c)} disabled={competitorSaving} className="text-xs text-destructive hover:text-destructive/80 disabled:opacity-50">删除</button>
+                      </div>
                     </div>
                     <div className="text-xs text-muted-foreground mb-1">
                       <span className="font-medium">产品特点：</span>{c.features}
@@ -781,7 +953,7 @@ export default function DesignerPage() {
             ) : (
               <div className="text-sm text-muted-foreground text-center py-8">暂无竞品数据</div>
             )}
-            <button className="mt-4 w-full px-4 py-2 rounded-lg bg-primary/10 text-primary text-sm font-semibold hover:bg-primary/20">
+            <button type="button" onClick={startAddCompetitor} disabled={competitorSaving || competitorsLoading || competitorFormOpen} className="mt-4 w-full px-4 py-2 rounded-lg bg-primary/10 text-primary text-sm font-semibold hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-50">
               添加竞品
             </button>
           </div>

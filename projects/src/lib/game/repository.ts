@@ -1,7 +1,7 @@
 import { createServerClient } from '@/storage/database/supabase-client';
 import { getProgressionMultiplier } from '@/lib/game/acceptance-mode';
 import { assertMultiplayerRoomRunning } from '@/lib/game/multiplayer';
-import { createProjectOneState, getGameOutcome, normalizeProjectOneState, reconcileNarrativeDiscoveries, type GameOutcome, type GameRuntimeState } from '@/lib/game/state';
+import { createProjectOneState, getGameOutcome, normalizeProjectOneState, type GameOutcome, type GameRuntimeState } from '@/lib/game/state';
 import type { GameReview } from '@/lib/contracts/game';
 
 export interface StoredChatMessage {
@@ -329,17 +329,9 @@ export async function getOwnedGameSession(sessionId: string, userId: string): Pr
   }
   // Reading a session is deliberately side-effect free. Simulated time advances
   // only through an explicit command, never because a browser refreshed later.
-  if (!state.unlockedClues.includes('key_contact')) {
-    const { data: replies } = await supabase
-      .from('chat_messages')
-      .select('content')
-      .eq('session_id', sessionId)
-      .eq('sender', 'assistant')
-      .ilike('content', '%陈建国%')
-      .limit(20);
-    const reconciled = reconcileNarrativeDiscoveries(state, (replies ?? []).map((reply) => String(reply.content)));
-    if (reconciled !== state) state = reconciled;
-  }
+  // The formal five-person roster is fixed at state creation; old four-person
+  // saves are removed by the cutover migration, so no transcript discovery
+  // compatibility query is needed here.
   return {
     id: session.id as string,
     userId: session.user_id as string,

@@ -7,7 +7,6 @@ import {
   Award,
   BarChart3,
   Building2,
-  Clock3,
   FileCheck2,
   FileText,
   Gift,
@@ -143,13 +142,6 @@ function clampOutcomeScore(value: number | undefined): number | undefined {
   return typeof value === 'number'
     ? Math.max(0, Math.min(100, Math.round(value * 10) / 10))
     : undefined;
-}
-
-function formatDuration(minutes: number): string {
-  const safe = Math.max(0, Math.round(minutes));
-  const hours = Math.floor(safe / 60);
-  const remainder = safe % 60;
-  return hours ? `${hours}小时${remainder ? `${remainder}分` : ''}` : `${remainder}分钟`;
 }
 
 function normalizeOutcome(value: unknown, fallbackFiveDimension: number): OutcomeView {
@@ -310,7 +302,6 @@ function ResultInner() {
   const complianceEvents = getComplianceEvents(state);
   const evidence = getEvidence(state);
   const root = asRecord(state);
-  const cumulativeTime = firstNumber(root, ['cumulativeTimeMinutes', 'totalInvestedMinutes']) ?? 0;
   const cumulativeSpent = firstNumber(root, ['cumulativeSpentPoints', 'totalActionPointsSpent']) ?? 0;
   const completeHybridData = outcome.publicValueScore !== undefined && outcome.personalBenefitScore !== undefined && outcome.decisionChainSupport !== undefined;
   const decisionReplay = attitudes.map((attitude) => {
@@ -348,8 +339,8 @@ function ResultInner() {
           </div>
           <div className="mt-6 grid gap-3 border-t border-white/15 pt-5 sm:grid-cols-4">
             <SummaryStat icon={Target} label="基础结果" value={outcome.baseScore !== undefined ? `${outcome.baseScore}分` : '旧存档'} />
-            <SummaryStat icon={Clock3} label="累计投入" value={cumulativeTime ? formatDuration(cumulativeTime) : `${state.currentRound}/${state.maxRounds}阶段`} />
-            <SummaryStat icon={Sparkles} label="累计行动点" value={cumulativeSpent ? `${cumulativeSpent}点` : `剩余${state.actionPoints}点`} />
+            <SummaryStat icon={Sparkles} label="阶段进度" value={`第${state.currentStage}/${state.maxStages}阶段`} />
+            <SummaryStat icon={Sparkles} label="行动点" value={cumulativeSpent ? `已消耗${cumulativeSpent}点` : `剩余${state.actionPoints}点`} />
             <SummaryStat icon={FileCheck2} label="确认价值证据" value={`${evidence.filter((item) => item.confirmed).length}条`} />
           </div>
         </section>

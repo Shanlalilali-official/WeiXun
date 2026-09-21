@@ -10,6 +10,12 @@ import {
   type ProjectOneHierarchy,
   type ProjectOneVisitTask,
 } from '@/lib/designer/project-one-five-person';
+import {
+  getProjectOnePersonalityType,
+  PROJECT_ONE_PERSONALITY_TYPE_LIST,
+  toProjectOnePersonalityTypeId,
+  type ProjectOnePersonalityTypeId,
+} from '@/lib/designer/personality-types';
 
 type EditablePerson = {
   id: string;
@@ -21,7 +27,7 @@ type EditablePerson = {
   displayLevel: number;
   displayOrder: number;
   organization: string;
-  personalityType: string;
+  personalityType: ProjectOnePersonalityTypeId;
   personality: string;
   coreNeeds: string[];
   facts: string[];
@@ -99,6 +105,7 @@ export default function KeyPersonsPage() {
       if (!Array.isArray(parsed.rows) || parsed.rows.length === 0) return;
       setPersons(parsed.rows.map((person) => ({
         ...person,
+        personalityType: toProjectOnePersonalityTypeId(person.personalityType) ?? 'tiger',
         parentId: person.parentId || null,
         coreNeeds: [...(person.coreNeeds || [])],
         facts: [...(person.facts || [])],
@@ -226,7 +233,19 @@ export default function KeyPersonsPage() {
                   <p className="mt-1 text-foreground">{person.parentId ? `上级：${parentName(person.parentId)}` : '上级：无（项目决策牵头）'}</p>
                   <p className="mt-1 text-xs leading-5 text-muted-foreground">展示层级 {person.displayLevel} · 展示顺序 {person.displayOrder} · {person.organization}</p>
                 </div>
-                <InfoBlock title={`性格 · ${person.personalityType}`} items={[person.personality]} />
+                <InfoBlock
+                  title={`性格 · ${getProjectOnePersonalityType(person.personalityType).displayName}`}
+                  items={[
+                    person.personality,
+                    `DISC 对应：${getProjectOnePersonalityType(person.personalityType).disc}（${getProjectOnePersonalityType(person.personalityType).discLabel}）`,
+                    `通用沟通偏好：${getProjectOnePersonalityType(person.personalityType).communicationPreference}`,
+                    `正向触发：${getProjectOnePersonalityType(person.personalityType).positiveTriggers.join('；')}`,
+                    `负向触发：${getProjectOnePersonalityType(person.personalityType).negativeTriggers.join('；')}`,
+                    `信息披露倾向：${getProjectOnePersonalityType(person.personalityType).informationDisclosureTendency}`,
+                    `默认风险反应：${getProjectOnePersonalityType(person.personalityType).defaultRiskResponse}`,
+                    '优先级：人物主档的职务、诉求、边界、禁忌和状态节点规则优先。',
+                  ]}
+                />
                 <InfoBlock title="允许的拜访任务" items={person.allowedTasks} />
                 <InfoBlock title="核心诉求" items={person.coreNeeds} />
                 <InfoBlock title="公开事实" items={person.facts} />
@@ -256,9 +275,14 @@ export default function KeyPersonsPage() {
               <Field label="姓名"><input value={draft.name} onChange={(event) => updateDraft('name', event.target.value)} className="field-input" /></Field>
               <Field label="职务"><input value={draft.title} onChange={(event) => updateDraft('title', event.target.value)} className="field-input" /></Field>
               <Field label="层级"><select value={draft.level} onChange={(event) => updateDraft('level', event.target.value as ProjectOneHierarchy)} className="field-input"><option value="高层">高层</option><option value="中层">中层</option><option value="一线">一线</option></select></Field>
-              <Field label="角色类别"><select value={draft.category} onChange={(event) => updateDraft('category', event.target.value as ProjectOneCategory)} className="field-input"><option value="高层">高层</option><option value="中层">中层</option><option value="采购">采购</option><option value="一线使用者">一线使用者</option><option value="办公室">办公室</option></select></Field>
+              <Field label="角色类别"><select value={draft.category} onChange={(event) => updateDraft('category', event.target.value as ProjectOneCategory)} className="field-input"><option value="高层">高层</option><option value="中层">中层</option><option value="采购">采购</option><option value="项目执行">项目执行</option><option value="一线使用者">一线使用者</option><option value="办公室">办公室</option></select></Field>
               <Field label="上级人物"><select value={draft.parentId ?? ''} onChange={(event) => updateDraft('parentId', event.target.value || null)} className="field-input"><option value="">无（顶层节点）</option>{persons.filter((person) => person.id !== draft.id).map((person) => <option key={person.id} value={person.id}>{person.name} · {person.id}</option>)}</select></Field>
-              <Field label="性格类型"><select value={draft.personalityType} onChange={(event) => updateDraft('personalityType', event.target.value)} className="field-input"><option value="老虎型">老虎型</option><option value="猫头鹰型">猫头鹰型</option><option value="孔雀型">孔雀型</option><option value="考拉型">考拉型</option></select></Field>
+              <Field label="性格类型" hint="通用行为风格；人物具体边界优先">
+                <select value={draft.personalityType} onChange={(event) => updateDraft('personalityType', event.target.value as ProjectOnePersonalityTypeId)} className="field-input">
+                  {PROJECT_ONE_PERSONALITY_TYPE_LIST.map((type) => <option key={type.id} value={type.id}>{type.displayName} · DISC {type.disc}</option>)}
+                </select>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{getProjectOnePersonalityType(draft.personalityType).communicationPreference}</p>
+              </Field>
               <Field label="组织关系" wide><textarea value={draft.organization} onChange={(event) => updateDraft('organization', event.target.value)} rows={2} className="field-input resize-none" /></Field>
               <Field label="性格与对话表现" wide><textarea value={draft.personality} onChange={(event) => updateDraft('personality', event.target.value)} rows={3} className="field-input resize-y" /></Field>
             </div>

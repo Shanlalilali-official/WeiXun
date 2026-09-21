@@ -250,16 +250,41 @@ export interface GameMeetingMinutes {
 
 export type CompetitivePosition = 'lagging' | 'close' | 'leading';
 
+export const COMPETITOR_TARGET_NPC_IDS = [
+  'P1-001',
+  'P1-002',
+  'P1-003',
+  'P1-004',
+  'P1-005',
+] as const;
+
+export type CompetitorTargetNpcId = (typeof COMPETITOR_TARGET_NPC_IDS)[number];
+export type CompetitorActionKind = 'relationship' | 'price' | 'case' | 'executive';
+
 export interface CompetitorActionRecord {
   id: string;
   round: number;
   targetNpcId: string;
-  kind: 'relationship' | 'price' | 'case' | 'executive';
+  kind: CompetitorActionKind;
   title: string;
   summary: string;
   pressureDelta: number;
   supportImpact: number;
   mitigated: boolean;
+}
+
+/**
+ * A server-validated, model-proposed competitor action.  It deliberately
+ * excludes support impact and mitigation: both are derived from authoritative
+ * game state after this candidate passes validation.
+ */
+export interface CompetitorStageActionCandidate {
+  round: number;
+  targetNpcId: CompetitorTargetNpcId;
+  kind: CompetitorActionKind;
+  title: string;
+  summary: string;
+  pressureDelta: number;
 }
 
 export interface CompetitorRuntimeState {
@@ -389,6 +414,9 @@ export interface GiftCommandEvaluation {
 
 export interface ExecuteGameCommandOptions {
   giftEvaluation?: GiftCommandEvaluation;
+  /** Trusted server-side competitor proposal; invalid values use the normal deterministic fallback. */
+  competitorStageAction?: CompetitorStageActionCandidate;
+  competitorStageSource?: 'model' | 'fallback';
 }
 
 export const RELATIONSHIP_ACTIONS: Record<string, RelationshipAction> = {
@@ -416,13 +444,54 @@ const DEFAULT_COMPETITOR_STATE: CompetitorRuntimeState = {
   actions: [],
 };
 
-const COMPETITOR_ACTIONS: Array<Omit<CompetitorActionRecord, 'id' | 'supportImpact' | 'mitigated'>> = [
-  { round: 1, targetNpcId: 'p1-frontline-wang-hao', kind: 'relationship', title: '竞品正在接触一线使用部门', summary: '公开迹象显示，竞品正在强调既有合作经验并争取一线反馈。', pressureDelta: 3 },
-  { round: 2, targetNpcId: 'p1-procurement-liu-kai', kind: 'price', title: '竞品释放价格攻势信号', summary: '采购侧出现竞品可能下调报价、强化商务条件的消息。', pressureDelta: 4 },
-  { round: 3, targetNpcId: 'p1-minister-chen-jianguo', kind: 'case', title: '竞品补充同类项目案例', summary: '竞品正在用同类案例证明交付确定性，业务部门可能重新比较方案风险。', pressureDelta: 4 },
-  { round: 4, targetNpcId: 'p1-deputy-zhao-feng', kind: 'executive', title: '竞品尝试推进高层沟通', summary: '竞品正在从组织成果和重点项目角度争取高层关注。', pressureDelta: 5 },
-  { round: 5, targetNpcId: 'p1-procurement-liu-kai', kind: 'price', title: '竞品进入最终商务冲刺', summary: '临近决策，竞品正在集中强化价格、交付承诺与内部支持。', pressureDelta: 5 },
+const COMPETITOR_STAGE_ACTION_KINDS: Readonly<Record<number, readonly CompetitorActionKind[]>> = {
+  1: ['relationship'],
+  2: ['relationship', 'price'],
+  3: ['price', 'case'],
+  4: ['case', 'executive'],
+  5: ['price', 'case', 'executive'],
+};
+
+const COMPETITOR_TARGETS_BY_KIND: Readonly<Record<CompetitorActionKind, readonly CompetitorTargetNpcId[]>> = {
+  relationship: COMPETITOR_TARGET_NPC_IDS,
+  price: ['P1-003', 'P1-002'],
+  case: ['P1-004', 'P1-002', 'P1-001'],
+  executive: ['P1-002', 'P1-001'],
+};
+
+const COMPETITOR_ACTIONS: CompetitorStageActionCandidate[] = [
+  { round: 1, targetNpcId: 'P1-004', kind: 'relationship', title: '竞品正在接触项目执行人员', summary: '公开迹象显示，竞品正在强调既有合作经验并争取一线执行反馈。', pressureDelta: 3 },
+  { round: 2, targetNpcId: 'P1-003', kind: 'price', title: '竞品释放价格攻势信号', summary: '招采侧出现竞品可能下调报价、强化商务条件的消息。', pressureDelta: 4 },
+  { round: 3, targetNpcId: 'P1-002', kind: 'case', title: '竞品补充同类项目案例', summary: '竞品正在用同类案例证明交付确定性，项目经理可能重新比较方案风险。', pressureDelta: 4 },
+  { round: 4, targetNpcId: 'P1-001', kind: 'executive', title: '竞品尝试推进高层沟通', summary: '竞品正在从组织成果和重点项目角度争取高层关注。', pressureDelta: 5 },
+  { round: 5, targetNpcId: 'P1-003', kind: 'price', title: '竞品进入最终商务冲刺', summary: '临近决策，竞品正在集中强化价格、交付承诺与内部支持。', pressureDelta: 5 },
 ];
+
+/**
+ * Validate the small action protocol at the state boundary as well as in the
+ * AI adapter.  This keeps direct reducer callers safe if they accidentally
+ * pass an untrusted object instead of going through the API orchestration.
+ */
+export function isCompetitorStageActionCandidate(
+  value: unknown,
+  round?: number,
+): value is CompetitorStageActionCandidate {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<CompetitorStageActionCandidate>;
+  const candidateRound = candidate.round;
+  const candidateTarget = candidate.targetNpcId;
+  const candidateKind = candidate.kind;
+  const pressureDelta = candidate.pressureDelta;
+  if (typeof candidateRound !== 'number' || !Number.isInteger(candidateRound) || candidateRound < 1 || candidateRound > PROJECT_ONE_MAX_ROUNDS) return false;
+  if (round !== undefined && candidateRound !== round) return false;
+  if (typeof candidateTarget !== 'string' || !COMPETITOR_TARGET_NPC_IDS.includes(candidateTarget as CompetitorTargetNpcId)) return false;
+  if (typeof pressureDelta !== 'number' || !Number.isInteger(pressureDelta) || pressureDelta < 1 || pressureDelta > 6) return false;
+  if (typeof candidate.title !== 'string' || candidate.title.trim().length < 1 || candidate.title.trim().length > 120) return false;
+  if (typeof candidate.summary !== 'string' || candidate.summary.trim().length < 1 || candidate.summary.trim().length > 320) return false;
+  if (typeof candidateKind !== 'string' || !Object.prototype.hasOwnProperty.call(COMPETITOR_TARGETS_BY_KIND, candidateKind)) return false;
+  if (!COMPETITOR_STAGE_ACTION_KINDS[candidateRound]?.includes(candidateKind)) return false;
+  return COMPETITOR_TARGETS_BY_KIND[candidateKind].includes(candidateTarget as CompetitorTargetNpcId);
+}
 
 function normalizeCompetitorState(value?: Partial<CompetitorRuntimeState>): CompetitorRuntimeState {
   return {
@@ -439,7 +508,7 @@ function positionFromScores(playerScore: number, competitorScore: number): Compe
 }
 
 function deriveUnlockedNpcIds(_unlockedClues: ProjectOneClue[]): string[] {
-  // D-024: project one exposes all four stakeholders from the beginning.
+  // Project one exposes all five formal stakeholders from the beginning.
   // Keep the field for save compatibility, but it no longer represents a
   // narrative unlock gate.
   return PROJECT_ONE_NPCS.map((npc) => npc.id);
@@ -505,7 +574,7 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
   }));
   const npcAttitudes = Object.fromEntries(PROJECT_ONE_NPCS.map((npc) => {
     const existing = state.npcAttitudes?.[npc.id];
-    const fallback = defaultAttitude(state.npcAffinity[npc.id] ?? 35);
+    const fallback = defaultAttitude(state.npcAffinity[npc.id] ?? npc.initialSupport);
     return [npc.id, {
       ...fallback,
       ...existing,
@@ -576,14 +645,15 @@ function normalizeActiveMeeting(meeting: ActiveMeeting): ActiveMeeting {
 }
 
 export function explicitlyRevealsMinister(replyContent: string): boolean {
-  if (!replyContent.includes('陈建国')) return false;
-  return /业务部.{0,8}陈建国.{0,4}部长|陈建国.{0,6}(业务部|部长)|陈部长|业务部部长/.test(replyContent);
+  // Kept as a legacy export for callers that still use this helper name.  Its
+  // semantic target is now the formal project manager, not the deleted person.
+  if (!replyContent.includes('李明辉')) return false;
+  return /项目.{0,8}李明辉.{0,4}经理|李明辉.{0,6}(项目|经理)|李经理|项目经理/.test(replyContent);
 }
 
 export function reconcileNarrativeDiscoveries(state: GameRuntimeState, assistantReplies: string[]): GameRuntimeState {
-  // Historical saves used NPC dialogue to unlock Chen Jianguo. The current
-  // baseline shows all four NPCs immediately, so loading old transcripts must
-  // not mutate state or replay a discovery event.
+  // All five formal NPCs are visible from the beginning, so dialogue never
+  // mutates the formal roster or replays a legacy discovery event.
   void assistantReplies;
   return { ...state, unlockedNpcIds: deriveUnlockedNpcIds(state.unlockedClues) };
 }
@@ -603,7 +673,7 @@ export function createProjectOneState(progressionMultiplier = 1, _legacyNow?: nu
       objectionHandling: 50,
       informationDiscovery: 50,
     },
-    npcAffinity: Object.fromEntries(PROJECT_ONE_NPCS.map((npc) => [npc.id, 35])),
+    npcAffinity: Object.fromEntries(PROJECT_ONE_NPCS.map((npc) => [npc.id, npc.initialSupport])),
     unlockedNpcIds: PROJECT_ONE_NPCS.map((npc) => npc.id),
     unlockedClues: [],
     conversationMemories: {},
@@ -1176,8 +1246,12 @@ function refreshCompetitivePosition(state: GameRuntimeState): GameRuntimeState {
     : { ...state, competitorState: { ...state.competitorState, position } };
 }
 
-function processCompetitorAction(state: GameRuntimeState): { state: GameRuntimeState; action: CompetitorActionRecord | null } {
-  const template = COMPETITOR_ACTIONS.find((item) => item.round === state.currentRound);
+function processCompetitorAction(
+  state: GameRuntimeState,
+  proposedAction?: CompetitorStageActionCandidate,
+): { state: GameRuntimeState; action: CompetitorActionRecord | null } {
+  const fallback = COMPETITOR_ACTIONS.find((item) => item.round === state.currentRound);
+  const template = isCompetitorStageActionCandidate(proposedAction, state.currentRound) ? proposedAction : fallback;
   if (!template || state.competitorState.actions.some((item) => item.round === state.currentRound)) {
     return { state, action: null };
   }
@@ -1216,7 +1290,7 @@ export function getWinConditions(state: GameRuntimeState) {
     ...outcome,
     totalScore: outcome.finalScore,
     hasDecisionClue: state.unlockedClues.includes('decision_process'),
-    keyAffinity: state.npcAttitudes['p1-minister-chen-jianguo']?.support ?? state.npcAffinity['p1-minister-chen-jianguo'] ?? 0,
+    keyAffinity: state.npcAttitudes['P1-001']?.support ?? state.npcAffinity['P1-001'] ?? 0,
   };
 }
 
@@ -1490,11 +1564,16 @@ export function endMeeting(state: GameRuntimeState): GameRuntimeState {
   return completeMeeting(state, 'player');
 }
 
-export function advanceRound(state: GameRuntimeState, _legacyNow?: number, probabilitySeed = 'legacy-advance'): GameRuntimeState {
+export function advanceRound(
+  state: GameRuntimeState,
+  _legacyNow?: number,
+  probabilitySeed = 'legacy-advance',
+  competitorStageAction?: CompetitorStageActionCandidate,
+): GameRuntimeState {
   if (state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
   if (state.activeMeeting) throw new Error('MEETING_ALREADY_ACTIVE');
   let next = processComplianceRisks(state, false, probabilitySeed);
-  next = processCompetitorAction(next).state;
+  next = processCompetitorAction(next, competitorStageAction).state;
   if (state.currentRound >= state.maxRounds) {
     return refreshCompetitivePosition({ ...next, submissionReady: true, lastAction: 'submission_check' });
   }
@@ -1826,7 +1905,7 @@ export function deriveBoundaryGiftDisposition(
   if (explicitBribe) return 'reported';
   const npc = getProjectOneNpc(npcId);
   if (!npc) throw new Error('NPC_UNKNOWN');
-  const procurementSensitive = npcId === 'p1-procurement-liu-kai';
+  const procurementSensitive = npcId === 'P1-003';
   let acceptChance = 55 - npc.complianceSensitivity * 0.4 + (support - 35) * 0.4;
   if (setting === 'private') acceptChance += 10;
   if (witnesses.length > 0) acceptChance -= 15;
@@ -2353,7 +2432,7 @@ export function executeGameCommand(
       const pendingAppointmentCount = state.appointments.filter((item) =>
         item.scheduledRound === fromRound && ['accepted', 'countered', 'pending'].includes(item.status)).length;
       const unreadNotificationCount = state.notifications.filter((item) => !item.isRead).length;
-      state = advanceRound(state, undefined, command.commandId);
+      state = advanceRound(state, undefined, command.commandId, options.competitorStageAction);
       const outcome = state.status === 'playing' ? null : getGameOutcome(state);
       const competitorAction = state.competitorState.actions.find((item) => item.round === fromRound) ?? null;
       // Competitor actions are internal simulation evidence. Keep only the
@@ -2371,6 +2450,9 @@ export function executeGameCommand(
         missedAppointmentCount: state.appointments.filter((item) => item.status === 'missed').length,
         competitorActionKind: competitorAction?.kind ?? null,
         competitorActionMitigated: competitorAction?.mitigated ?? null,
+        competitorActionSource: isCompetitorStageActionCandidate(options.competitorStageAction, fromRound)
+          ? (options.competitorStageSource ?? 'model')
+          : 'fallback',
         ...(outcome ? {
           finalScore: outcome.finalScore,
           won: outcome.won,

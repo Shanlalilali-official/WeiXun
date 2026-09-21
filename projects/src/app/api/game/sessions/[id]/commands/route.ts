@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { evaluateCompetitorStageAction } from '@/lib/ai/competitor-stage';
 import { evaluateGiftDecision } from '@/lib/ai/npc-evaluation';
 import { authGuard } from '@/lib/auth/guard';
 import { gameCommandSchema, type GameCommand } from '@/lib/contracts/game';
@@ -53,9 +54,28 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       commandId: createServerProbabilitySeed([id, parsed.data.commandId, parsed.data.type]),
     } as GameCommand;
 
-    // Pure preflight rejects invalid inventory/meeting/version state before an
-    // external AI call. The authoritative state is still committed only once.
-    let execution = executeGameCommand(gameSession.state, probabilityCommand);
+    // Solo competitor actions are generated before the pure reducer runs.
+    // The AI adapter returns a candidate only after schema/rule validation;
+    // on any failure, an absent candidate keeps the deterministic fallback in
+    // `advanceRound`. Multiplayer stage transitions remain room-controlled.
+    const shouldEvaluateCompetitor = parsed.data.type === 'advance_phase'
+      && gameSession.state.gameMode === 'solo'
+      && gameSession.state.status === 'playing'
+      && !gameSession.state.activeMeeting
+      && !gameSession.state.submissionReady;
+    const competitorDecision = shouldEvaluateCompetitor
+      ? await evaluateCompetitorStageAction({ sessionId: id, state: gameSession.state })
+      : undefined;
+
+    // The pure reducer still rejects invalid inventory/meeting/version state;
+    // the authoritative state is committed only once after the candidate has
+    // been validated or the deterministic fallback has been selected.
+    let execution = executeGameCommand(gameSession.state, probabilityCommand, competitorDecision?.candidate
+      ? {
+        competitorStageAction: competitorDecision.candidate,
+        competitorStageSource: 'model',
+      }
+      : undefined);
     if (parsed.data.type === 'give_gift') {
       const giftCommand = parsed.data;
       const preparation = gameSession.state.preparations.find((item) => item.id === giftCommand.payload.preparationId);
