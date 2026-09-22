@@ -123,6 +123,31 @@ export const designerImageAssets = pgTable("designer_image_assets", {
 	pgPolicy("designer_image_assets_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
 ]);
 
+export const designerSceneAssets = pgTable("designer_scene_assets", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	projectCode: varchar("project_code", { length: 32 }).default('project-one').notNull(),
+	slotKey: varchar("slot_key", { length: 96 }).notNull(),
+	sceneKey: varchar("scene_key", { length: 64 }).notNull(),
+	name: varchar({ length: 128 }).notNull(),
+	description: text().default('').notNull(),
+	storagePath: text("storage_path").notNull(),
+	publicUrl: text("public_url").notNull(),
+	originalFilename: varchar("original_filename", { length: 255 }).notNull(),
+	mimeType: varchar("mime_type", { length: 64 }).notNull(),
+	byteSize: integer("byte_size").notNull(),
+	updatedBy: varchar("updated_by", { length: 64 }),
+	updatedAt: timestamp("updated_at", { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	unique("designer_scene_assets_project_slot_unique").on(table.projectCode, table.slotKey),
+	unique("designer_scene_assets_project_key_unique").on(table.projectCode, table.sceneKey),
+	index("designer_scene_assets_project_updated_idx").on(table.projectCode, table.updatedAt),
+	check("designer_scene_assets_scene_key_check", sql`${table.sceneKey} ~ '^[a-z0-9][a-z0-9_-]*$'`),
+	check("designer_scene_assets_slot_key_check", sql`${table.slotKey} = 'visit_scene:' || ${table.sceneKey}`),
+	check("designer_scene_assets_mime_type_check", sql`${table.mimeType} in ('image/jpeg', 'image/png', 'image/webp')`),
+	check("designer_scene_assets_byte_size_check", sql`${table.byteSize} > 0 and ${table.byteSize} <= 5242880`),
+	pgPolicy("designer_scene_assets_service_role_only", { as: "restrictive", for: "all", to: ["service_role"], using: sql`true`, withCheck: sql`true` }),
+]);
+
 export const affinityScores = pgTable("affinity_scores", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	sessionId: uuid("session_id").notNull(),

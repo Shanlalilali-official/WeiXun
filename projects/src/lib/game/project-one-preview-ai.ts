@@ -5,7 +5,7 @@ import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import {
   attachmentDecisionAiOutputSchema, briefVisitAiOutputSchema, messageAiOutputSchema, phoneMessageAiOutputSchema, planAiOutputSchema, previewAiResponseSchema,
-  previewAppointmentSchema, previewAppointmentStatusSchema, previewEndReasonSchema, previewVisitTaskSchema, type PreviewAiRequest, type PreviewAiResponse,
+  previewAppointmentSchema, previewAppointmentStatusSchema, previewEndReasonSchema, previewNpcExpressionSchema, previewVisitTaskSchema, type PreviewAiRequest, type PreviewAiResponse,
   previewNpcEvaluationAiOutputSchema, previewWorkingMemoryStatusSchema, previewWorkingMemoryTypeSchema,
   type PreviewBlockerId, type PreviewNpcId, visitPreparationAiOutputSchema, visitTurnAiOutputSchema, wechatAiOutputSchema,
 } from '@/lib/contracts/project-one-preview-ai';
@@ -569,6 +569,14 @@ function meetingResponse(state: PreviewServerState) {
     completedTasks: meeting.completedTasks,
   };
 }
+/** Maps private pleasantness to a safe, visual-only expression for the meeting scene. */
+export function resolvePreviewNpcExpression(pleasantness: number): z.infer<typeof previewNpcExpressionSchema> {
+  if (pleasantness <= 19) return 'angry';
+  if (pleasantness <= 39) return 'serious';
+  if (pleasantness <= 59) return 'calm';
+  if (pleasantness <= 79) return 'pleasant';
+  return 'very_happy';
+}
 type PreviewAppointmentStatus = z.infer<typeof previewAppointmentStatusSchema>;
 type PreviewAppointmentAdjustment = Extract<PreviewAiRequest, { action: 'test_adjust_appointments' }>['appointments'][number];
 type AppointmentDraft = { timeWindow: string; location: string; agenda: string };
@@ -715,7 +723,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
       if (state.activeMeeting && !state.activeMeeting.ended) throw new PreviewAiError('conflict', 'VISIT_ALREADY_ACTIVE');
       if (!request.skipPreparation && !state.approvedVisitPreparations[request.npcId]) throw new PreviewAiError('protocol', 'VISIT_PREPARATION_REQUIRED');
       state.activeMeeting = { npcId: request.npcId, turn: 0, completedTasks: [], ended: false };
-      return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state) });
+      return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state), npcExpression: resolvePreviewNpcExpression(state.npcStates[request.npcId].pleasantness) });
     }
     if (request.action === 'end_visit') {
       const meeting = state.activeMeeting;
@@ -813,7 +821,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
         addMessage(state, npcId, playerMessage);
         endMeeting(meeting, 'npc_farewell');
         const appointment = completeAppointment(state, npcId);
-        return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state), ...(appointment ? { appointment } : {}) });
+        return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state), npcExpression: resolvePreviewNpcExpression(state.npcStates[npcId].pleasantness), ...(appointment ? { appointment } : {}) });
       }
       const remaining = npc.allowedTasks.filter((task) => !meeting.completedTasks.includes(task));
       const purpose = '这是实际拜访第 ' + nextTurn + ' 轮。自然回复，并仅在本轮确实完成任务时填写 completedTask。剩余允许任务：' + (remaining.join('、') || '无') + '。'
@@ -844,7 +852,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
       else if (npcFarewell) meeting.awaitingFinalReplyFrom = 'player';
       else resolveMeetingEnd(meeting);
       const appointment = meeting.ended ? completeAppointment(state, npcId) : undefined;
-      return previewAiResponseSchema.parse({ ...base, content: output.content, meeting: meetingResponse(state), ...(appointment ? { appointment } : {}) });
+      return previewAiResponseSchema.parse({ ...base, content: output.content, meeting: meetingResponse(state), npcExpression: resolvePreviewNpcExpression(state.npcStates[npcId].pleasantness), ...(appointment ? { appointment } : {}) });
     }
     throw new PreviewAiError('protocol', 'UNSUPPORTED_PREVIEW_ACTION');
   }

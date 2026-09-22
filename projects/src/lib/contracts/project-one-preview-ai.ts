@@ -111,6 +111,8 @@ const meetingStatusSchema = z.object({
   turn: z.number().int().min(0),
   completedTasks: z.array(previewVisitTaskSchema),
 });
+/** Public display cue only. The underlying relationship scores remain server-only. */
+export const previewNpcExpressionSchema = z.enum(['angry', 'serious', 'calm', 'pleasant', 'very_happy']);
 const previewNpcTestStateSchema = z.object({
   npcId: previewNpcIdSchema,
   support: z.number().int().min(0).max(100),
@@ -142,6 +144,7 @@ export const previewAiResponseSchema = z.object({
   risks: z.array(z.string().max(300)).max(4).optional(),
   nextStep: z.string().max(300).optional(),
   meeting: meetingStatusSchema.optional(),
+  npcExpression: previewNpcExpressionSchema.optional(),
   npcTestStates: z.array(previewNpcTestStateSchema).max(5).optional(),
 }).superRefine((value, context) => {
   if (value.action !== 'message') return;

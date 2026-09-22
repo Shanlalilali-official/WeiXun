@@ -1,5 +1,23 @@
 # 工作交接
 
+## 2026-09-22 张建国办公室沉浸式拜访样板
+
+- 五人预览的 `state.meeting` 存在时，`render()` 会跳过顶栏和三栏工作台，直接渲染 `visit-immersive`。`refreshWorkspaceBody()` 在会面期间改为完整重渲染，不要再假定存在 `.workspace-body`。
+- 张建国背景优先键为 `visit_scene:leader_office`，回退 `visit_scene:office` 与内置深色背景。五档表情读取 `person_expression:<npcId>:<expression>`，缺失时回退 `person_intro:<npcId>` 和本地介绍图。
+- `npcExpression` 是正常拜访响应的可选安全枚举；分档为 0–19 angry、20–39 serious、40–59 calm、60–79 pleasant、80–100 very_happy。不得用它扩张响应去下发愉悦度或支持度原始数值。
+- 本批是 `/project-one-preview` 的张建国样板，正式 `/game` 未迁移该界面。如果用户确认效果，再把模板抽象到其他人物/场景并单独设计正式链路的集成方式。
+
+## 2026-09-22 场景按钮与预览图标视觉修复
+
+- `projects/src/app/globals.css` 中 `.bg-role-designer` 是设计师页面的浅色径向背景，不是可与白字搭配的实色按钮工具类。场景新增/保存按钮已改用明确深紫实色；后续不要把它们改回 `.bg-role-designer`。
+- `projects/public/project1-prototype-v9.html` 的行动点和竞品情报图标保持相同 32×32 容器，分别用 `.gold-icon svg` 和 `.violet-icon svg` 做半像素光学校正。这是路径重心差异，不需要改卡片布局。
+
+## 2026-09-21 场景素材已改为动态数据表
+
+- `/designer` 素材库通过 `/api/designer/scene-assets` 管理独立 `designer_scene_assets` 记录，支持 GET/POST/PUT/DELETE；人物介绍图和表情图继续使用 `designer_image_assets` 固定槽位，不要把动态场景重新塞回人物素材表。
+- 开发库已应用 005 迁移并有 5 条正式场景记录：`company_lobby`、`restaurant_private_room`、`leader_office`、`conference_room`、`bar`。五张 Storage PNG 均实测可访问；临时 CRUD 验证记录已删除。
+- 正式 `/game` 仍有自己的固定背景。后续接入游戏时必须先定义地点到场景记录的选择规则，不能仅凭名称把会议室、电梯或两个办公室风格静默合并。
+
 ## 2026-09-21 正式五人已切换
 
 - 正式 `/game` 的唯一人物源现由 `project-one-five-person.ts` 派生，ID 为 `P1-001`～`P1-005`。不要恢复 `p1-frontline-wang-hao`、`p1-procurement-liu-kai`、`p1-minister-chen-jianguo`、`p1-deputy-zhao-feng` 或任何人物映射兼容层。
@@ -15,7 +33,7 @@
 
 ## 2026-09-21 持久化与设计能力批次
 
-- 25 张人物表情图已在真实 Supabase/Storage 逐一确认，元数据、对象和公开 URL 均有效；当前仍空的是 4 张拜访场景图。不要再按旧台账把 25 张表情图当空位，也不要在没有产品规则时自行把情绪状态映射到图片。
+- 25 张人物表情图已在真实 Supabase/Storage 逐一确认，元数据、对象和公开 URL 均有效；原 4 个固定拜访场景空槽已由同日动态场景表取代并导入 5 条记录。不要再按旧台账把表情或场景当空位，也不要在没有产品规则时自行把情绪状态或拜访地点映射到图片。
 - 新迁移 `20260921000100_project_one_preview_sessions.sql`、`20260921000200_prompt_test_sessions.sql`、`20260921000300_scenario_competitor_config.sql` 已应用开发库。五人预览和提示词测试会话已跨进程持久化，命令含请求哈希、版本、唯一幂等与可续租短租约；失败不提交候选状态。
 - 五人预览 GET 恢复只返回安全玩家态，不下发隐藏支持度、阻断、工作记忆、Evaluator 理由或附件正文。完整内部审计快照仍是 STATE-004 剩余项。
 - 单机竞品阶段动作已走真实结构化模型协议，失败确定性兜底；设计师竞品配置已有真实 CRUD、权限和 revision 冲突处理。四类性格字典已统一主档、Prompt、页面和 Excel。

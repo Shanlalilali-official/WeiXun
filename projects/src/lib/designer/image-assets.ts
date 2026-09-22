@@ -4,10 +4,14 @@ import { createAdminClient } from '@/storage/database/supabase-client';
 export const DESIGNER_IMAGE_ASSET_BUCKET = 'designer-image-assets';
 export const DESIGNER_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 export const DESIGNER_IMAGE_ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+export const DESIGNER_SCENE_KEY_MAX_LENGTH = 64;
+export const DESIGNER_SCENE_NAME_MAX_LENGTH = 128;
+export const DESIGNER_SCENE_DESCRIPTION_MAX_LENGTH = 2000;
+
+const DESIGNER_SCENE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
 export type DesignerImageAssetCategory = 'person_intro' | 'person_expression' | 'visit_scene';
 export type PersonExpression = 'angry' | 'serious' | 'calm' | 'pleasant' | 'very_happy';
-export type VisitScene = 'office' | 'restaurant' | 'elevator' | 'bar';
 
 export interface DesignerImageAssetSlot {
   slotKey: string;
@@ -42,13 +46,6 @@ const EXPRESSIONS: ReadonlyArray<{ id: PersonExpression; label: string }> = [
   { id: 'very_happy', label: '特别开心' },
 ];
 
-const VISIT_SCENES: ReadonlyArray<{ id: VisitScene; label: string }> = [
-  { id: 'office', label: '办公室' },
-  { id: 'restaurant', label: '饭店' },
-  { id: 'elevator', label: '电梯' },
-  { id: 'bar', label: '酒馆' },
-];
-
 function personName(personId: ProjectOneFivePersonId): string {
   return PROJECT_ONE_FIVE_PERSON_NPCS[personId].name;
 }
@@ -72,16 +69,7 @@ export function getDesignerImageAssetSlots(): DesignerImageAssetSlot[] {
     isDefault: false,
     updatedAt: null,
   })));
-  const scenes = VISIT_SCENES.map((scene) => ({
-    slotKey: `visit_scene:${scene.id}`,
-    category: 'visit_scene' as const,
-    personId: null,
-    label: `拜访场景 · ${scene.label}`,
-    imageUrl: null,
-    isDefault: false,
-    updatedAt: null,
-  }));
-  return [...intros, ...expressions, ...scenes];
+  return [...intros, ...expressions];
 }
 
 const slotsByKey = new Map(getDesignerImageAssetSlots().map((slot) => [slot.slotKey, slot]));
@@ -105,6 +93,14 @@ export function imageExtensionForMimeType(mimeType: (typeof DESIGNER_IMAGE_ALLOW
   if (mimeType === 'image/jpeg') return 'jpg';
   if (mimeType === 'image/png') return 'png';
   return 'webp';
+}
+
+export function isValidDesignerSceneKey(value: string): boolean {
+  return value.length > 0 && value.length <= DESIGNER_SCENE_KEY_MAX_LENGTH && DESIGNER_SCENE_KEY_PATTERN.test(value);
+}
+
+export function sceneSlotKey(sceneKey: string): string {
+  return `visit_scene:${sceneKey}`;
 }
 
 export async function listDesignerImageAssets(): Promise<DesignerImageAssetSlot[]> {

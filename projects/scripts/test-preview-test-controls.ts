@@ -30,6 +30,22 @@ assert(html.includes('response.npcTestStates||[]'), '没有接收服务端返回
 assert(route.includes("['test_adjust_npcs', 'test_adjust_appointments'].includes(parsed.data.action) && !isFastDebugEnabled()"), '生产环境没有默认关闭测试调节 action');
 assert(html.includes("if(value)state.wechat[id]=value;else delete state.wechat[id]"), '微信状态没有写入本地测试状态');
 assert(html.includes("if(state.wechat[n.id]==='accepted')return renderMessageWorkspace('wechat')"), '已添加状态不能直接进入微信对话');
+assert(html.includes('.gold-icon svg{transform:translateY(-.5px)}'), '行动点图标缺少视觉居中校正');
+assert(html.includes('.violet-icon svg{transform:translate(-.5px,-.5px)}'), '竞品情报图标缺少视觉居中校正');
+assert(html.includes('<span class="section-icon gold-icon">${actionIcon}</span>'), '行动点图标未使用校正类');
+assert(html.includes('<span class="section-icon violet-icon">${competitorIcon}</span>'), '竞品情报图标未使用校正类');
+assert(html.includes('const immersive=Boolean(state.meeting);'), '进行中的拜访没有切换到沉浸式页面壳');
+assert(html.includes('class="visit-immersive"'), '缺少近全视口沉浸式拜访画面');
+assert(html.includes("uploadedImageUrls['visit_scene:leader_office']||uploadedImageUrls['visit_scene:office']"), '张建国办公室没有优先读取专用场景并回退办公室场景');
+assert(html.includes('person_expression:${person?.id}:${expression}'), '人物表情素材键没有按 NPC 和表情读取');
+assert(html.includes("['angry','serious','calm','pleasant','very_happy']"), '前端没有限制为安全的五档表情枚举');
+assert(html.includes('id="meeting-input"'), '沉浸式拜访缺少自由文本输入框');
+assert(html.includes('data-action="meeting-send"'), '沉浸式拜访缺少发送入口');
+assert(html.includes('data-action="end-visit"'), '沉浸式拜访缺少主动告辞入口');
+assert(html.includes('entryTransitionUntil'), '进入拜访缺少一次性入场过场状态');
+assert(html.includes("prefers-reduced-motion: reduce"), '过场没有尊重减少动态效果偏好');
+assert(html.includes('.visit-composer{display:grid;grid-template-columns:minmax(0,1fr) auto;'), '沉浸式输入区缺少防溢出布局');
+assert(html.includes('function refreshWorkspaceBody(){if(state.meeting){render();return}'), '进入或更新拜访后没有刷新完整沉浸式画面');
 
 const applyStart = html.indexOf('async function applyTestControls(){');
 const handlerStart = html.indexOf('\nasync function handleAction', applyStart);

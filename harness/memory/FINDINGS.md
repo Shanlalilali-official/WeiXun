@@ -1,5 +1,22 @@
 # 调查发现
 
+## 2026-09-22 沉浸式拜访实查
+
+- 旧拜访界面不是缺少自由输入或 AI 链路；`meetingSend` 已经使用 `textarea` 和服务端 `visit_turn`。真正缺口是 `renderMeeting` 被限制在 `.workspace-body` 内，且只使用介绍头像和旧固定场景键。
+- 动态场景 API 已通过 `/api/designer/image-assets` 返回 `visit_scene:<sceneKey>`，因此张建国样板可以精确读取 `visit_scene:leader_office`，不需要从“领导办公室”名称做不稳定正则推断。
+- 愉悦度是服务端权威内部状态，正常恢复 DTO 不下发它。为了使用现有五档表情素材，最小安全契约是服务端返回派生枚举，而不是向页面暴露原始分数。
+
+## 2026-09-22 UI 对比度与光学对齐实查
+
+- `.bg-role-designer` 在 `globals.css` 中显式定义为以 `#F6F8FB` 为基色的页面背景径向渐变，它覆盖了同名 Tailwind 颜色工具类的预期；因此白色按钮文字几乎落在白色背景上。
+- 两枚预览图标的外层图标盒尺寸、grid 居中和卡片排版本来就一致；确认缺口是两条 SVG path 的视觉重心不同，故只需独立微调内层 SVG，无需改变外层布局。
+
+## 2026-09-21 场景素材 CRUD 实查
+
+- 原实现的 `VISIT_SCENES`、slot 白名单和数据库 check 同时固定为 office/restaurant/elevator/bar；API 只有固定 slot 上传，故 UI 改成表格本身不能产生真实 CRUD，必须拆出独立记录表和写接口。
+- 人物素材与场景素材的生命周期不同：人物有确定的 5+25 槽位，场景需要动态增删。独立表能避免为场景放宽 `designer_image_assets` 约束，从而保护已上传的 30 条人物素材。
+- 005 迁移后开发库场景表初始为 0；导入用户五张图后为 5。公开地址全部返回 200、`image/png`；额外临时记录完成 create/read/update/delete 并从数据库与 Storage 清理，证明不是只验证静态 UI。
+
 ## 2026-09-21 正式五人切换实查
 
 - 开发库切换前共有 10 个项目一正式 `game_sessions`，每个 `npc_affinity` 都包含旧四人 ID；五人存档 0、未知/孤立存档 0、项目一联机房间 0。因此本次无需人物映射，也没有新五人存档被误删的风险。

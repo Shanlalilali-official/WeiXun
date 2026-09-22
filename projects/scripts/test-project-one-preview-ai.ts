@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   PREVIEW_NPC_IDS, PREVIEW_NPCS, PreviewAiError, PreviewSessionStore, createPreviewAiService, createPreviewServerState, fromPersistedPreviewServerState,
-  getAllowedTasks, resolvePreviewNode, toPersistedPreviewServerState, toPreviewRecoveryDto, type PreviewSessionPersistence,
+  getAllowedTasks, resolvePreviewNpcExpression, resolvePreviewNode, toPersistedPreviewServerState, toPreviewRecoveryDto, type PreviewSessionPersistence,
 } from '../src/lib/game/project-one-preview-ai';
 import { previewAiRequestSchema, previewAiResponseSchema, previewNpcEvaluationAiOutputSchema } from '../src/lib/contracts/project-one-preview-ai';
 import { PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS } from '../src/lib/designer/project-one-five-person';
@@ -42,6 +42,7 @@ async function main() {
   assert.equal(previewAiRequestSchema.safeParse(withMeta({ action: 'test_adjust_npcs', adjustments: [{ npcId: 'P1-001', support: 10, pleasantness: 50, effectiveContactCount: 1 }, { npcId: 'P1-001', support: 20, pleasantness: 60, effectiveContactCount: 2 }] }, 0)).success, false, 'NPC test adjustments reject duplicate people');
   assert.equal(previewAiRequestSchema.safeParse(withMeta({ action: 'start_visit', npcId: 'P1-001', skipPreparation: 'yes' }, 0)).success, false, 'skip preparation must be an explicit boolean');
   assert.equal(previewAiResponseSchema.safeParse({ previewSessionId: 'x'.repeat(20), version: 1, action: 'reset' }).success, true);
+  assert.deepEqual([0, 19, 20, 39, 40, 59, 60, 79, 80, 100].map(resolvePreviewNpcExpression), ['angry', 'angry', 'serious', 'serious', 'calm', 'calm', 'pleasant', 'pleasant', 'very_happy', 'very_happy'], 'pleasantness boundaries map to safe display expressions');
   assert.equal(previewNpcEvaluationAiOutputSchema.safeParse({ ...emptyEvaluation, blockerUpdates: [{ action: 'add', value: 'model_invented_blocker' }] }).success, false, 'blocker IDs are a server-controlled enum');
 
   const prompts: string[] = [];
@@ -229,7 +230,9 @@ async function main() {
   assert.deepEqual(appointmentState.appointments['P1-001'], appointmentUpdated.appointments[0]);
   appointmentState.approvedVisitPreparations['P1-001'] = '已准备拜访';
   const visitStarted = await appointmentService.execute('user-appointment', withMeta({ action: 'start_visit', npcId: 'P1-001' }, appointmentUpdated.version, appointmentCreated.previewSessionId));
+  assert.equal(visitStarted.npcExpression, 'calm', 'start_visit returns a safe visible NPC expression');
   const farewell = await appointmentService.execute('user-appointment', withMeta({ action: 'visit_turn', npcId: 'P1-001', text: '感谢您的时间，今天先这样，改天再聊。' }, visitStarted.version, appointmentCreated.previewSessionId));
+  assert.equal(farewell.npcExpression, 'calm', 'visit_turn returns the current safe visible NPC expression');
   assert.equal(farewell.meeting?.meetingEnded, true, 'farewell visit turn ends the active meeting');
   assert.equal(farewell.content, '好，那今天先到这里。', 'player farewell allows exactly one final NPC reply');
   assert.deepEqual(farewell.appointment, { ...appointmentUpdated.appointments[0], status: 'completed' }, 'farewell visit turn completes the authoritative appointment');
@@ -288,6 +291,7 @@ async function main() {
   assert.equal(npcFarewellService.store.get('user-npc-farewell', npcFarewellStarted.previewSessionId)?.version, npcFarewell.version, 'rejected end_visit does not commit a version');
   const finalPlayerReply = await npcFarewellService.execute('user-npc-farewell', withMeta({ action: 'visit_turn', npcId: 'P1-001', text: '好的，谢谢，您先忙。' }, npcFarewell.version, npcFarewellStarted.previewSessionId));
   assert.equal(finalPlayerReply.content, undefined, 'final player reply does not trigger another NPC reply');
+  assert.equal(finalPlayerReply.npcExpression, 'calm', 'the final visit_turn still returns the safe NPC expression');
   assert.equal(finalPlayerReply.meeting?.meetingEnded, true);
   assert.equal(finalPlayerReply.meeting?.endReason, 'npc_farewell');
   assert.equal(npcFarewellCalls, 2, 'final player reply closes without another model call');

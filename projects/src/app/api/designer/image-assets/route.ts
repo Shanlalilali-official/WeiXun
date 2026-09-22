@@ -1,12 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
 import { DESIGNER_IMAGE_MAX_BYTES, detectDesignerImageMimeType, getDesignerImageAssetSlot, isAllowedDesignerImageMimeType, listDesignerImageAssets, saveDesignerImageAsset } from '@/lib/designer/image-assets';
+import { listDesignerSceneAssets } from '@/lib/designer/scene-assets';
 
 export const runtime = 'nodejs';
 
 export async function GET() {
   try {
-    return NextResponse.json({ success: true, assets: await listDesignerImageAssets() });
+    const [assets, scenes] = await Promise.all([listDesignerImageAssets(), listDesignerSceneAssets()]);
+    return NextResponse.json({
+      success: true,
+      assets: [
+        ...assets,
+        ...scenes.map((scene) => ({
+          slotKey: scene.slotKey,
+          category: 'visit_scene' as const,
+          personId: null,
+          label: `拜访场景 · ${scene.name}`,
+          imageUrl: scene.imageUrl,
+          isDefault: false,
+          updatedAt: scene.updatedAt,
+        })),
+      ],
+    });
   } catch (error) {
     console.error('Designer image assets read failed', { code: error instanceof Error ? error.message : 'unknown' });
     return NextResponse.json({ error: '图片素材暂时无法读取，请确认数据库迁移已执行。' }, { status: 503 });

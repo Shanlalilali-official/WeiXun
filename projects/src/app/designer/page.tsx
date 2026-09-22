@@ -19,6 +19,24 @@ interface DesignerImageAsset {
   updatedAt: string | null;
 }
 
+interface DesignerSceneAsset {
+  slotKey: string;
+  sceneKey: string;
+  name: string;
+  description: string;
+  imageUrl: string;
+  originalFilename: string;
+  byteSize: number;
+  updatedAt: string;
+}
+
+interface SceneAssetForm {
+  sceneKey: string;
+  name: string;
+  description: string;
+  file: File | null;
+}
+
 type ConfigRecord = Record<string, unknown>;
 
 interface FivePersonNpcConfig extends ConfigRecord {
@@ -169,6 +187,14 @@ export default function DesignerPage() {
   const [imageAssetNotice, setImageAssetNotice] = useState('');
   const [uploadingImageSlot, setUploadingImageSlot] = useState<string | null>(null);
   const [previewImageAsset, setPreviewImageAsset] = useState<DesignerImageAsset | null>(null);
+  const [sceneAssets, setSceneAssets] = useState<DesignerSceneAsset[]>([]);
+  const [sceneAssetsLoading, setSceneAssetsLoading] = useState(true);
+  const [sceneAssetNotice, setSceneAssetNotice] = useState('');
+  const [sceneAssetFormOpen, setSceneAssetFormOpen] = useState(false);
+  const [editingSceneSlotKey, setEditingSceneSlotKey] = useState<string | null>(null);
+  const [sceneAssetForm, setSceneAssetForm] = useState<SceneAssetForm>({ sceneKey: '', name: '', description: '', file: null });
+  const [sceneAssetSaving, setSceneAssetSaving] = useState(false);
+  const [deletingSceneSlotKey, setDeletingSceneSlotKey] = useState<string | null>(null);
 
   useEffect(() => {
     const importedMetrics = window.localStorage.getItem('weixun_designer_excel_import:metrics');
@@ -236,6 +262,27 @@ export default function DesignerPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  const loadSceneAssets = useCallback(async () => {
+    setSceneAssetsLoading(true);
+    try {
+      const token = window.localStorage.getItem('weixun_session') || '';
+      const response = await fetch('/api/designer/scene-assets', { headers: { 'x-session': token }, cache: 'no-store' });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || '场景素材读取失败');
+      setSceneAssets(Array.isArray(body.scenes) ? body.scenes : []);
+      setSceneAssetNotice('');
+    } catch (error) {
+      setSceneAssets([]);
+      setSceneAssetNotice(error instanceof Error ? error.message : '场景素材读取失败');
+    } finally {
+      setSceneAssetsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSceneAssets();
+  }, [loadSceneAssets]);
 
   const loadCompetitors = useCallback(async (projectId: number) => {
     setCompetitorsLoading(true);
@@ -323,6 +370,82 @@ export default function DesignerPage() {
       setImageAssetNotice(error instanceof Error ? error.message : '图片上传失败');
     } finally {
       setUploadingImageSlot(null);
+    }
+  };
+
+  const resetSceneAssetForm = () => {
+    setSceneAssetForm({ sceneKey: '', name: '', description: '', file: null });
+    setEditingSceneSlotKey(null);
+    setSceneAssetFormOpen(false);
+  };
+
+  const startAddSceneAsset = () => {
+    setSceneAssetForm({ sceneKey: '', name: '', description: '', file: null });
+    setEditingSceneSlotKey(null);
+    setSceneAssetNotice('');
+    setSceneAssetFormOpen(true);
+  };
+
+  const startEditSceneAsset = (scene: DesignerSceneAsset) => {
+    setSceneAssetForm({ sceneKey: scene.sceneKey, name: scene.name, description: scene.description, file: null });
+    setEditingSceneSlotKey(scene.slotKey);
+    setSceneAssetNotice('');
+    setSceneAssetFormOpen(true);
+  };
+
+  const handleSaveSceneAsset = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editingSceneSlotKey && !sceneAssetForm.file) {
+      setSceneAssetNotice('新增场景时请选择图片。');
+      return;
+    }
+    setSceneAssetSaving(true);
+    setSceneAssetNotice('');
+    try {
+      const token = window.localStorage.getItem('weixun_session') || '';
+      const form = new FormData();
+      form.append('sceneKey', sceneAssetForm.sceneKey.trim());
+      form.append('name', sceneAssetForm.name.trim());
+      form.append('description', sceneAssetForm.description.trim());
+      if (editingSceneSlotKey) form.append('slotKey', editingSceneSlotKey);
+      if (sceneAssetForm.file) form.append('file', sceneAssetForm.file);
+      const response = await fetch('/api/designer/scene-assets', {
+        method: editingSceneSlotKey ? 'PUT' : 'POST',
+        headers: { 'x-session': token },
+        body: form,
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || '场景素材保存失败');
+      resetSceneAssetForm();
+      await loadSceneAssets();
+      setSceneAssetNotice(`已保存「${body.scene?.name || sceneAssetForm.name}」。`);
+    } catch (error) {
+      setSceneAssetNotice(error instanceof Error ? error.message : '场景素材保存失败');
+    } finally {
+      setSceneAssetSaving(false);
+    }
+  };
+
+  const handleDeleteSceneAsset = async (scene: DesignerSceneAsset) => {
+    if (!window.confirm(`确定删除场景素材「${scene.name}」？图片文件也会一并删除。`)) return;
+    setDeletingSceneSlotKey(scene.slotKey);
+    setSceneAssetNotice('');
+    try {
+      const token = window.localStorage.getItem('weixun_session') || '';
+      const response = await fetch('/api/designer/scene-assets', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json', 'x-session': token },
+        body: JSON.stringify({ slotKey: scene.slotKey }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || '场景素材删除失败');
+      setSceneAssets((current) => current.filter((item) => item.slotKey !== scene.slotKey));
+      setSceneAssetNotice(`已删除「${scene.name}」。`);
+      if (editingSceneSlotKey === scene.slotKey) resetSceneAssetForm();
+    } catch (error) {
+      setSceneAssetNotice(error instanceof Error ? error.message : '场景素材删除失败');
+    } finally {
+      setDeletingSceneSlotKey(null);
     }
   };
 
@@ -741,30 +864,79 @@ export default function DesignerPage() {
             <div className="rounded-xl border border-border bg-card p-5">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-base font-semibold text-foreground">拜访场景图片</h2>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">办公室、饭店、电梯和酒馆均从空素材位开始，可在此上传并替换。</p>
+                  <h2 className="text-base font-semibold text-foreground">场景素材管理</h2>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">以数据记录管理场景名称、唯一标识、说明和图片，支持新增、查看、编辑与删除。</p>
                 </div>
-                <span className="rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">PNG、JPEG、WebP · 5 MB 以内</span>
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">{sceneAssets.length} 条记录</span>
+                  <button type="button" onClick={startAddSceneAsset} className="flex items-center gap-1.5 rounded-lg bg-[#6D28D9] px-3 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-[#5B21B6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]/35 focus-visible:ring-offset-2">
+                    <Plus className="h-3.5 w-3.5" /> 新增场景
+                  </button>
+                </div>
               </div>
-              {imageAssetNotice && <p role="status" className="mb-3 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">{imageAssetNotice}</p>}
-              {imageAssetsLoading ? (
+              {sceneAssetNotice && <p role="status" className="mb-3 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">{sceneAssetNotice}</p>}
+
+              {sceneAssetFormOpen && (
+                <form onSubmit={(event) => void handleSaveSceneAsset(event)} className="mb-4 rounded-xl border border-role-designer/25 bg-role-designer/5 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-semibold text-foreground">{editingSceneSlotKey ? '编辑场景记录' : '新增场景记录'}</h3>
+                    <button type="button" onClick={resetSceneAssetForm} className="rounded p-1 text-muted-foreground hover:bg-muted" aria-label="关闭场景表单"><X className="h-4 w-4" /></button>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label className="space-y-1.5 text-xs text-foreground">
+                      <span className="font-medium">场景名称</span>
+                      <input required maxLength={120} value={sceneAssetForm.name} onChange={(event) => setSceneAssetForm((current) => ({ ...current, name: event.target.value }))} placeholder="例如：公司前台" className="w-full rounded-lg border border-border bg-card px-3 py-2 outline-none focus:border-role-designer" />
+                    </label>
+                    <label className="space-y-1.5 text-xs text-foreground">
+                      <span className="font-medium">唯一标识</span>
+                      <input required pattern="[a-z0-9][a-z0-9_-]{0,63}" maxLength={64} value={sceneAssetForm.sceneKey} onChange={(event) => setSceneAssetForm((current) => ({ ...current, sceneKey: event.target.value.toLowerCase() }))} placeholder="例如：company_lobby" className="w-full rounded-lg border border-border bg-card px-3 py-2 font-mono outline-none focus:border-role-designer" />
+                      <span className="block text-[10px] text-muted-foreground">仅小写字母、数字、下划线和连字符，保存后仍可修改。</span>
+                    </label>
+                    <label className="space-y-1.5 text-xs text-foreground md:col-span-2">
+                      <span className="font-medium">场景说明</span>
+                      <textarea maxLength={1000} rows={3} value={sceneAssetForm.description} onChange={(event) => setSceneAssetForm((current) => ({ ...current, description: event.target.value }))} placeholder="说明适用的拜访地点或使用方式" className="w-full resize-y rounded-lg border border-border bg-card px-3 py-2 outline-none focus:border-role-designer" />
+                    </label>
+                    <label className="space-y-1.5 text-xs text-foreground md:col-span-2">
+                      <span className="font-medium">场景图片{editingSceneSlotKey ? '（不选择则保留原图）' : ''}</span>
+                      <input required={!editingSceneSlotKey} type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => setSceneAssetForm((current) => ({ ...current, file: event.target.files?.[0] ?? null }))} className="block w-full rounded-lg border border-border bg-card px-3 py-2 text-xs file:mr-3 file:rounded file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs" />
+                      <span className="block text-[10px] text-muted-foreground">PNG、JPEG、WebP，最大 5 MB。</span>
+                    </label>
+                  </div>
+                  <div className="mt-4 flex justify-end gap-2">
+                    <button type="button" onClick={resetSceneAssetForm} className="rounded-lg border border-border px-4 py-2 text-xs font-semibold text-foreground hover:bg-muted">取消</button>
+                    <button type="submit" disabled={sceneAssetSaving} className="rounded-lg bg-[#6D28D9] px-4 py-2 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-[#5B21B6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]/35 focus-visible:ring-offset-2 disabled:opacity-50">{sceneAssetSaving ? '保存中…' : '保存记录'}</button>
+                  </div>
+                </form>
+              )}
+
+              {sceneAssetsLoading ? (
                 <div className="py-8 text-center text-xs text-muted-foreground">正在读取场景素材…</div>
+              ) : sceneAssets.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-border py-10 text-center">
+                  <ImageIcon className="mx-auto h-8 w-8 text-muted-foreground" />
+                  <p className="mt-2 text-sm font-medium text-foreground">暂无场景记录</p>
+                  <p className="mt-1 text-xs text-muted-foreground">点击“新增场景”创建第一条记录。</p>
+                </div>
               ) : (
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  {imageAssets.filter((asset) => asset.category === 'visit_scene').map((asset) => (
-                    <article key={asset.slotKey} className="overflow-hidden rounded-xl border border-dashed border-border bg-muted/25">
-                      <div className="h-40 bg-muted">
-                        {asset.imageUrl ? <button type="button" onClick={() => setPreviewImageAsset(asset)} className="h-full w-full cursor-zoom-in" aria-label={`查看${asset.label}高清大图`}><img src={asset.imageUrl} alt={asset.label} className="h-full w-full object-cover" /></button> : <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground"><ImageIcon className="h-7 w-7" /><span className="text-xs">暂未上传</span></div>}
-                      </div>
-                      <div className="p-3">
-                        <h3 className="text-sm font-semibold text-foreground">{asset.label}</h3>
-                        <label className="mt-3 flex cursor-pointer items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-muted">
-                          <Upload className="h-3.5 w-3.5" /> {uploadingImageSlot === asset.slotKey ? '上传中…' : asset.imageUrl ? '替换图片' : '上传图片'}
-                          <input className="sr-only" type="file" accept="image/png,image/jpeg,image/webp" disabled={uploadingImageSlot !== null} onChange={(event) => void handleImageUpload(asset.slotKey, event)} />
-                        </label>
-                      </div>
-                    </article>
-                  ))}
+                <div className="overflow-x-auto rounded-xl border border-border">
+                  <table className="w-full min-w-[900px] border-collapse text-left text-xs">
+                    <thead className="bg-muted/70 text-muted-foreground">
+                      <tr><th className="px-4 py-3 font-medium">预览</th><th className="px-4 py-3 font-medium">场景名称</th><th className="px-4 py-3 font-medium">唯一标识</th><th className="px-4 py-3 font-medium">说明</th><th className="px-4 py-3 font-medium">文件</th><th className="px-4 py-3 font-medium">更新时间</th><th className="px-4 py-3 text-right font-medium">操作</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {sceneAssets.map((scene) => (
+                        <tr key={scene.slotKey} className="bg-card hover:bg-muted/30">
+                          <td className="px-4 py-3"><button type="button" onClick={() => setPreviewImageAsset({ slotKey: scene.slotKey, category: 'visit_scene', personId: null, label: scene.name, imageUrl: scene.imageUrl, isDefault: false, updatedAt: scene.updatedAt })} className="h-14 w-20 overflow-hidden rounded-md border border-border bg-muted" aria-label={`查看${scene.name}高清大图`}><img src={scene.imageUrl} alt={scene.name} className="h-full w-full object-cover" /></button></td>
+                          <td className="px-4 py-3 font-medium text-foreground">{scene.name}</td>
+                          <td className="px-4 py-3"><code className="rounded bg-muted px-1.5 py-1 text-[11px] text-foreground">{scene.sceneKey}</code></td>
+                          <td className="max-w-[260px] px-4 py-3 text-muted-foreground"><span className="line-clamp-2">{scene.description || '—'}</span></td>
+                          <td className="max-w-[180px] px-4 py-3 text-muted-foreground"><span className="block truncate" title={scene.originalFilename}>{scene.originalFilename}</span><span className="mt-1 block text-[10px]">{Math.max(1, Math.round(scene.byteSize / 1024))} KB</span></td>
+                          <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{new Date(scene.updatedAt).toLocaleString('zh-CN')}</td>
+                          <td className="px-4 py-3"><div className="flex justify-end gap-1"><button type="button" onClick={() => startEditSceneAsset(scene)} className="rounded-md p-2 text-role-designer hover:bg-role-designer/10" aria-label={`编辑${scene.name}`}><Pencil className="h-3.5 w-3.5" /></button><button type="button" disabled={deletingSceneSlotKey !== null} onClick={() => void handleDeleteSceneAsset(scene)} className="rounded-md p-2 text-destructive hover:bg-destructive/10 disabled:opacity-40" aria-label={`删除${scene.name}`}><Trash2 className="h-3.5 w-3.5" /></button></div></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>
