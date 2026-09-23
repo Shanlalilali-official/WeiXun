@@ -3,6 +3,7 @@ import {
   JEV_DESIGNER_TASK_CATALOG,
   JEV_DESIGNER_TASK_IDS,
   applyJevDesignerConfig,
+  invokeSelectedDecisionProvider,
   parseJevDesignerConfig,
 } from '../src/lib/ai/jev-designer-config';
 import type { JevRequest } from '../src/lib/ai/jev-client';
@@ -62,11 +63,14 @@ const valid = parseJevDesignerConfig({
   },
 });
 assert.ok(valid);
+assert.equal(valid.decisionProvider, 'jev', 'legacy rows must default to Jev');
 assert.equal(valid.tasks.preview_message.stateGuidance, '优先根据当前渠道与已知事实判断。');
 assert.equal(valid.tasks.prompt_test_evaluator.questionInstructions.acceptClue4, '第 5 条候选仅在证据逐字可见时接受。');
 assert.equal(parseJevDesignerConfig({ tasks: { invented_task: { stateGuidance: 'x' } } }), null);
 assert.equal(parseJevDesignerConfig({ tasks: { preview_message: { questionInstructions: { invented_question: 'x' } } } }), null);
 assert.equal(parseJevDesignerConfig({ tasks: { preview_message: { stateGuidance: 'x'.repeat(8_001) } } }), null);
+assert.equal(parseJevDesignerConfig({ decisionProvider: 'unknown', tasks: {} }), null);
+assert.equal(parseJevDesignerConfig({ decisionProvider: 'llm', tasks: {} })?.decisionProvider, 'llm');
 
 const original: JevRequest = {
   state: 'original state is opaque and must be retained',
@@ -83,4 +87,22 @@ assert.deepEqual(applied.questions.responseAction.criteria, original.questions.r
 assert.deepEqual(original.state, 'original state is opaque and must be retained');
 assert.equal(original.questions.responseAction.instructions, 'baseline action');
 
-console.log('jev designer config tests passed');
+async function testProviderRouting() {
+  const config = valid!;
+  let jevCalls = 0;
+  let llmCalls = 0;
+  const response = { answers: {} };
+  const jevInvoker = async (request: JevRequest) => { jevCalls += 1; assert.deepEqual(request.state, applied.state); return response; };
+  const llmInvoker = async (request: JevRequest) => { llmCalls += 1; assert.deepEqual(request, original); return response; };
+  await invokeSelectedDecisionProvider('preview_message', original, config, jevInvoker, llmInvoker);
+  assert.deepEqual([jevCalls, llmCalls], [1, 0]);
+  await invokeSelectedDecisionProvider('preview_message', original, { ...config, decisionProvider: 'llm' }, jevInvoker, llmInvoker);
+  assert.deepEqual([jevCalls, llmCalls], [1, 1]);
+  for (const taskId of JEV_DESIGNER_TASK_IDS) {
+    await invokeSelectedDecisionProvider(taskId, original, { ...config, decisionProvider: 'llm' }, jevInvoker, llmInvoker);
+  }
+  assert.deepEqual([jevCalls, llmCalls], [1, JEV_DESIGNER_TASK_IDS.length + 1]);
+  console.log('jev designer config tests passed');
+}
+
+void testProviderRouting();

@@ -302,7 +302,8 @@ function previewTaskIdForRequest(request: PreviewJevRequest): JevDesignerTaskId 
 
 const invokeDefaultJev: PreviewJevInvoker = (request) => {
   const taskId = previewTaskIdForRequest(request);
-  return taskId ? invokeConfiguredJev(taskId, request, invokeJev) : invokeJev(request);
+  if (!taskId) throw new Error('PREVIEW_DECISION_TASK_UNKNOWN');
+  return invokeConfiguredJev(taskId, request, invokeJev);
 };
 
 const narrativeContentAiOutputSchema = z.object({

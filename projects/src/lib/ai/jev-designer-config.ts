@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { createServerClient } from '@/storage/database/supabase-client';
 import type { JevInvoker, JevQuestion, JevRequest } from '@/lib/ai/jev-client';
+import { invokeLlmDecision } from '@/lib/ai/llm-decision';
 import { PROJECT_ONE_FIVE_PERSON_NPCS } from '@/lib/designer/project-one-five-person';
 
 /** A separate row keeps decision guidance independent from NPC prose prompts. */
@@ -191,10 +192,12 @@ for (const npcId of ['P1-001', 'P1-002', 'P1-003', 'P1-004', 'P1-005']) {
 }
 
 export type JevDesignerTaskConfig = { stateGuidance: string; questionInstructions: Record<string, string> };
-export type JevDesignerConfig = { tasks: Record<JevDesignerTaskId, JevDesignerTaskConfig> };
+export type DecisionProvider = 'jev' | 'llm';
+export type JevDesignerConfig = { decisionProvider: DecisionProvider; tasks: Record<JevDesignerTaskId, JevDesignerTaskConfig> };
 
 function defaultConfig(): JevDesignerConfig {
   return {
+    decisionProvider: 'jev',
     tasks: Object.fromEntries(JEV_DESIGNER_TASK_IDS.map((taskId) => [taskId, { stateGuidance: '', questionInstructions: {} }])) as JevDesignerConfig['tasks'],
   };
 }
@@ -207,6 +210,7 @@ const instructionSchema = z.string().trim().max(4_000, '问题说明不能超过
 /** Validate an editor payload and materialize all ten task entries. */
 export function parseJevDesignerConfig(value: unknown): JevDesignerConfig | null {
   const parsed = z.object({
+    decisionProvider: z.enum(['jev', 'llm']).optional().default('jev'),
     tasks: z.record(z.string(), z.object({
       stateGuidance: guidanceSchema.optional().default(''),
       questionInstructions: z.record(z.string(), instructionSchema).optional().default({}),
@@ -214,6 +218,7 @@ export function parseJevDesignerConfig(value: unknown): JevDesignerConfig | null
   }).strict().safeParse(value);
   if (!parsed.success) return null;
   const normalized = defaultConfig();
+  normalized.decisionProvider = parsed.data.decisionProvider;
   for (const [taskId, taskConfig] of Object.entries(parsed.data.tasks)) {
     if (!taskIdSet.has(taskId)) return null;
     const typedTaskId = taskId as JevDesignerTaskId;
@@ -247,6 +252,18 @@ export function applyJevDesignerConfig(
       ? { state: { designerStateGuidance: taskConfig.stateGuidance, originalState: request.state } }
       : {}),
   };
+}
+
+/** Pure provider boundary, shared by production routing and injected tests. */
+export function invokeSelectedDecisionProvider(
+  taskId: JevDesignerTaskId,
+  request: JevRequest,
+  config: JevDesignerConfig,
+  jevInvoker: JevInvoker,
+  llmInvoker: JevInvoker = invokeLlmDecision,
+): ReturnType<JevInvoker> {
+  if (config.decisionProvider === 'llm') return llmInvoker(request);
+  return jevInvoker(applyJevDesignerConfig(taskId, request, config));
 }
 
 export interface StoredJevDesignerConfig {
@@ -308,16 +325,13 @@ export async function saveJevDesignerConfig(
 }
 
 /**
- * Production default only. A failed config read intentionally preserves the
- * Jev call and lets its existing deterministic fallback handle transport or
- * protocol failure; it never delegates the choice back to the prose LLM.
+ * Production default only. The designer explicitly selects one decision
+ * provider for all tasks. Failure of either provider is handled by the
+ * caller's deterministic fallback, never by silently switching providers.
  */
-export async function invokeConfiguredJev(taskId: JevDesignerTaskId, request: JevRequest, invoker: JevInvoker): ReturnType<JevInvoker> {
-  let config = DEFAULT_JEV_DESIGNER_CONFIG;
-  try {
-    config = (await loadJevDesignerConfig()).config;
-  } catch {
-    // Do not leak database/provider details into a game response or log.
-  }
-  return invoker(applyJevDesignerConfig(taskId, request, config));
+export async function invokeConfiguredJev(taskId: JevDesignerTaskId, request: JevRequest, invoker: JevInvoker, llmInvoker?: JevInvoker): ReturnType<JevInvoker> {
+  // An absent row means legacy Jev mode; a failed read is different. If we
+  // cannot determine the saved mode, callers must use their safe fallback.
+  const config = (await loadJevDesignerConfig()).config;
+  return invokeSelectedDecisionProvider(taskId, request, config, invoker, llmInvoker);
 }

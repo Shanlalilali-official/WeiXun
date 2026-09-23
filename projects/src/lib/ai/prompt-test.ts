@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { invokeLLM, type ChatMessage } from '@/lib/ai/client';
-import { invokeJev, type JevAnswer, type JevInvoker, type JevQuestions } from '@/lib/ai/jev-client';
+import { invokeJev, type JevAnswer, type JevInvoker, type JevQuestions, type JevRequest } from '@/lib/ai/jev-client';
 import { invokeConfiguredJev } from '@/lib/ai/jev-designer-config';
+import { invokeLlmDecision } from '@/lib/ai/llm-decision';
 import { buildJevNpcProfile } from '@/lib/ai/jev-npc-profile';
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
@@ -682,9 +683,7 @@ function repositoryPromptTestError(error: unknown): PromptTestError {
 
 export function createPromptTestService(deps: PromptTestServiceDeps = {}) {
   const invoker: PromptTestInvoker = deps.invoker ?? ((messages, options) => invokeLLM(messages, options));
-  // Preserve injection semantics for tests; default production calls reload
-  // the designer configuration before each Jev evaluation.
-  const jevInvoker = deps.jevInvoker ?? ((request) => invokeConfiguredJev('prompt_test_evaluator', request, invokeJev));
+  // Production selects the designer's global decision provider per turn.
   const store = deps.store ?? new PromptTestStore();
   const persistence = deps.persistence;
   const inFlight = new Set<string>();
@@ -772,16 +771,20 @@ export function createPromptTestService(deps: PromptTestServiceDeps = {}) {
         { role: 'user', content: serializeUntrustedPromptData('prompt_test_evaluator_input', evaluatorInput) },
       ], evaluatorOptions);
     } catch {
-      // Narrative text is non-authoritative. A provider failure must not stop a
-      // Jev decision or promote that provider into the decision path.
+      // Narrative text is non-authoritative; only the explicitly configured
+      // decision provider may choose structured state changes below.
     }
     const narrative = safeEvaluatorNarrative(evaluatorRaw);
     let evaluator: PromptTestEvaluator;
     try {
-      evaluator = await evaluateWithJev(jevInvoker, evaluatorInput, narrative);
+      const decisionInvoker = deps.jevInvoker ?? ((decisionRequest: JevRequest) => invokeConfiguredJev(
+        'prompt_test_evaluator', decisionRequest, invokeJev,
+        (llmRequest) => invokeLlmDecision(llmRequest, { provider: request.provider }),
+      ));
+      evaluator = await evaluateWithJev(decisionInvoker, evaluatorInput, narrative);
     } catch {
-      // Decisions must never silently move back to an LLM. A failed Jev call has
-      // a deterministic no-op result; hard compliance rules still apply below.
+      // A failed decision provider has a deterministic no-op result; never
+      // silently switch providers. Hard compliance rules still apply below.
       evaluator = fallbackEvaluator(narrative);
     }
     const applied = applyEvaluation(before, evaluator, request.text, npcText, conversationStage);

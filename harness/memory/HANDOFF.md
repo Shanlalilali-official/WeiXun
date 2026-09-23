@@ -1,5 +1,11 @@
 # 工作交接
 
+## 2026-09-23 全局结构化决策 Provider 开关
+
+- `/designer/jev-config` 的顶层 `config.decisionProvider` 为 `jev|llm`，既有 `project-one-jev` 记录无字段时归一到 Jev，保存仍受 revision CAS 控制。设计师编辑 Jev 指令在 LLM 模式暂停但不删除；重新切回 Jev 继续使用。
+- `jev-designer-config.ts` 的 `invokeConfiguredJev` 在默认业务调用读取配置后统一路由；LLM 由 `llm-decision.ts` 用现有 OpenAI-compatible 客户端回答相同 typed questions，简化 JSON 被严格转换并经 `validateJevResponse`。提示词测试在 LLM 模式使用本轨道的 named Provider，正式/预览使用默认 AI_*。测试注入式 invoker 不查询配置。
+- 配置读失败不是空记录，调用方应使用确定性兜底；不要改回“读失败默认 Jev”，否则保存 LLM 模式时可能无意跨 Provider。新增决策任务时需加入目录和统一路由。7 项专项、Jev Provider、正式五人后端契约、TypeScript、全量 ESLint、Next.js/服务端构建通过；60 轮 live NPC 测试因默认 AI Provider 网络错误未完成，未实查远程 DB 保存、真实模型效果和性能。下方 2026-09-23 旧 Jev 编辑章节关于读失败沿用 Jev 的文字已被本节替代。
+
 ## 2026-09-23 Jev 人物画像与值预览
 
 - `jev-npc-profile.ts` 从 `PROJECT_ONE_FIVE_PERSON_NPCS` 提取静态 Jev 决策画像；`buildJevNpcProfile` 给单人判断，`buildJevCandidateNpcSummaries` 给计划匹配。未知人物 ID 返回 `undefined`，正式状态省略该字段，不串用其他 NPC。
