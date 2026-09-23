@@ -6,6 +6,7 @@ import {
   parseJevDesignerConfig,
   saveJevDesignerConfig,
 } from '@/lib/ai/jev-designer-config';
+import { buildJevCandidateNpcProfiles, buildJevCandidateNpcSummaries } from '@/lib/ai/jev-npc-profile';
 
 export const runtime = 'nodejs';
 
@@ -14,7 +15,13 @@ export async function GET(request: NextRequest) {
   if (!guard.ok) return guard.response!;
   try {
     const stored = await loadJevDesignerConfig();
-    return NextResponse.json({ success: true, catalog: JEV_DESIGNER_TASK_CATALOG, ...stored });
+    return NextResponse.json({
+      success: true,
+      catalog: JEV_DESIGNER_TASK_CATALOG,
+      npcProfiles: buildJevCandidateNpcProfiles(),
+      candidateNpcProfiles: buildJevCandidateNpcSummaries(),
+      ...stored,
+    });
   } catch (error) {
     console.error('Jev designer config read failed', { code: error instanceof Error ? error.message.slice(0, 96) : 'unknown' });
     return NextResponse.json({ error: 'Jev 决策配置暂时无法读取。' }, { status: 503 });

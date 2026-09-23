@@ -1,5 +1,12 @@
 # 工作交接
 
+## 2026-09-23 Jev 人物画像与值预览
+
+- `jev-npc-profile.ts` 从 `PROJECT_ONE_FIVE_PERSON_NPCS` 提取静态 Jev 决策画像；`buildJevNpcProfile` 给单人判断，`buildJevCandidateNpcSummaries` 给计划匹配。未知人物 ID 返回 `undefined`，正式状态省略该字段，不串用其他 NPC。
+- 正式 NPC/礼品、固定张建国提示词测试及五人预览的 NPC 评估、消息/附件、微信、拜访准备/回合均带具体人物画像；计划匹配携带五人的紧凑摘要。`/api/designer/jev-config` 的 `npcProfiles` 和 `candidateNpcProfiles` 由同一 helper 输出，前端只读展示实际静态值。question 结构未动。
+- 当前页不提供某一局当轮完整 Jev 请求记录；玩家输入、关系数值、记忆等动态值需在具体请求生成时才确定。完整人物角色提示词仍供写话 LLM，不作为 Jev typed 协议指令。新人物或主档字段变更时需检查画像字段和 `test:jev-npc-profile`。
+- 逐人请求专项、Jev 配置、五人预览、提示词测试、NPC 态度/礼品与竞品回归、类型、全量 lint、Next.js 和服务端构建通过；真实 Jev 账号烟测仍未执行。
+
 ## 2026-09-23 Jev 决策配置编辑
 
 - 设计师入口 `/designer/jev-config` 位于素材库。`/api/designer/jev-config` 使用“工作流编辑”权限；GET 返回 task catalog、当前配置及 revision，PUT 携带 `expectedRevision` 与 `config.tasks`，冲突为 409。存储使用 `designer_prompt_configs` 的 `project-one-jev` 独立行，不需要新迁移。

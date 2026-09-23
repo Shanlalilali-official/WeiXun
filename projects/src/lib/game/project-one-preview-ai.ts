@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { invokeLLM, type ChatMessage } from '@/lib/ai/client';
 import { invokeJev, type JevInvoker, type JevRequest } from '@/lib/ai/jev-client';
 import { invokeConfiguredJev, type JevDesignerTaskId } from '@/lib/ai/jev-designer-config';
+import { buildJevCandidateNpcSummaries, buildJevNpcProfile } from '@/lib/ai/jev-npc-profile';
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import {
@@ -777,7 +778,7 @@ async function evaluateNpcTurn(
     ].join('\n'), promptConfig),
     { npcContext: layeredNpcContext(state, npcId, channel, promptConfig), playerMessage, responseAction, npcMessage, hardBlocker, instruction: '只输出 memorySuggestions，不要输出 pleasureDelta、supportDelta、dimensionDeltas、effectiveContact、memoryUpdates 或 blockerUpdates。' },
     narrativeEvaluationAiOutputSchema);
-  const evaluation = await askJevEvaluation(jevInvoker, {
+  const evaluation = await askJevEvaluation(jevInvoker, npcId, {
     npcContext: layeredNpcContext(state, npcId, channel, promptConfig),
     playerMessage,
     responseAction,
@@ -798,12 +799,13 @@ async function evaluateNpcTurn(
 
 async function askJevEvaluation(
   invoker: PreviewJevInvoker,
+  npcId: PreviewNpcId,
   context: unknown,
   fallback: () => Evaluation,
 ): Promise<Evaluation> {
   try {
     const request: PreviewJevRequest = {
-      state: jevState('project_one_preview_npc_evaluator', context),
+      state: jevState('project_one_preview_npc_evaluator', { ...(context as Record<string, unknown>), npcProfile: buildJevNpcProfile(npcId) }),
       questions: {
         pleasureDelta: choiceQuestion(
           Object.fromEntries(Array.from({ length: 15 }, (_, index) => [String(index - 8), `${index - 8} 点`])),
@@ -876,7 +878,7 @@ async function askPlanDecision(
   const fallback = planDecisionFallback(context.plan, context.scopeNpcId);
   try {
     const response = await invoker({
-      state: jevState('project_one_preview_plan', context),
+      state: jevState('project_one_preview_plan', { ...context, candidateNpcProfiles: buildJevCandidateNpcSummaries() }),
       questions: {
         needsDetail: noulQuestion('计划是否仍缺少足够具体的目标、证据或下一步。'),
         ...Object.fromEntries(PREVIEW_NPC_IDS.map((npcId) => [
@@ -898,11 +900,11 @@ async function askPlanDecision(
 
 async function askAttachmentDecision(
   invoker: PreviewJevInvoker,
-  context: { attachmentTitle: string; playerText: string; channel: string },
+  context: { npcId: PreviewNpcId; attachmentTitle: string; playerText: string; channel: string },
 ): Promise<{ viewed: boolean }> {
   try {
     const response = await invoker({
-      state: jevState('project_one_preview_attachment', context),
+      state: jevState('project_one_preview_attachment', { ...context, npcProfile: buildJevNpcProfile(context.npcId) }),
       questions: {
         viewed: noulQuestion('NPC 本轮是否查看附件正文。只根据附件标题和当前沟通场景判断，不能臆测正文内容。'),
       },
@@ -917,12 +919,12 @@ async function askAttachmentDecision(
 
 async function askMessageDecision(
   invoker: PreviewJevInvoker,
-  context: { playerText: string; channel: string; allowReadNoReply: boolean; hasAppointmentDraft: boolean },
+  context: { npcId: PreviewNpcId; playerText: string; channel: string; allowReadNoReply: boolean; hasAppointmentDraft: boolean },
 ): Promise<MessageDecision> {
   const fallback = messageDecisionFallback(context.playerText, context.channel, context.allowReadNoReply, context.hasAppointmentDraft);
   try {
     const response = await invoker({
-      state: jevState('project_one_preview_message', context),
+      state: jevState('project_one_preview_message', { ...context, npcProfile: buildJevNpcProfile(context.npcId) }),
       questions: {
         responseAction: choiceQuestion(
           context.allowReadNoReply ? { reply: '回复正文', read_no_reply: '已读但不回复' } : { reply: '回复正文' },
@@ -948,7 +950,7 @@ async function askMessageDecision(
 async function askWechatDecision(invoker: PreviewJevInvoker, context: { playerText: string; npcId: PreviewNpcId }): Promise<{ accepted: boolean }> {
   try {
     const response = await invoker({
-      state: jevState('project_one_preview_wechat_request', context),
+      state: jevState('project_one_preview_wechat_request', { ...context, npcProfile: buildJevNpcProfile(context.npcId) }),
       questions: { accepted: noulQuestion('是否接受玩家的工作微信申请。正式边界或合规红线下不得接受。') },
     });
     const accepted = extractJevAnswers(response).accepted;
@@ -962,7 +964,7 @@ async function askWechatDecision(invoker: PreviewJevInvoker, context: { playerTe
 async function askVisitPreparationDecision(invoker: PreviewJevInvoker, context: { text: string; npcId: PreviewNpcId }): Promise<{ needsDetail: boolean }> {
   try {
     const response = await invoker({
-      state: jevState('project_one_preview_visit_preparation', context),
+      state: jevState('project_one_preview_visit_preparation', { ...context, npcProfile: buildJevNpcProfile(context.npcId) }),
       questions: { needsDetail: noulQuestion('这次拜访准备是否仍缺少明确对象、问题、证据或下一步。') },
     });
     const needsDetail = extractJevAnswers(response).needsDetail;
@@ -975,7 +977,7 @@ async function askVisitPreparationDecision(invoker: PreviewJevInvoker, context: 
 
 async function askVisitDecision(
   invoker: PreviewJevInvoker,
-  context: { playerText: string; npcText: string; remaining: readonly VisitTask[]; turn: number },
+  context: { npcId: PreviewNpcId; playerText: string; npcText: string; remaining: readonly VisitTask[]; turn: number },
 ): Promise<{ completedTask: VisitTask | null; playerDialogueSignal: 'continue' | 'farewell'; npcDialogueSignal: 'continue' | 'farewell' | 'forced_exit' }> {
   const fallback = visitDecisionFallback(context.playerText, context.npcText, context.remaining);
   try {
@@ -984,7 +986,7 @@ async function askVisitDecision(
       ...context.remaining.map((task) => [task, '本轮确实完成该任务']),
     ]);
     const response = await invoker({
-      state: jevState('project_one_preview_visit_turn', context),
+      state: jevState('project_one_preview_visit_turn', { ...context, npcProfile: buildJevNpcProfile(context.npcId) }),
       questions: {
         completedTask: choiceQuestion(taskCriteria, '选择本轮确实完成的剩余拜访任务；没有完成则选择 none。'),
         playerDialogueSignal: choiceQuestion({ continue: '玩家没有明确告辞', farewell: '玩家明确告辞' }, '判断玩家本轮是否明确结束交流。'),
@@ -1199,7 +1201,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
       const attachment = request.action === 'message' ? request.attachment : undefined;
       let attachmentResult: SavedAttachment | undefined;
       if (attachment) {
-        const decision = await askAttachmentDecision(jevInvoker, { attachmentTitle: attachment.title, channel, playerText: request.text });
+        const decision = await askAttachmentDecision(jevInvoker, { npcId, attachmentTitle: attachment.title, channel, playerText: request.text });
         const impact = await callStructuredAi(invoker,
           layeredNpcPrompt(state, npcId, channel, '判断是否查看已收到的附件已由 Jev 完成；你只描述附件在本轮沟通中的可能影响，不得改变查看决定。输出 {impact:string}。', promptConfig),
           { npcContext: layeredNpcContext(state, npcId, channel, promptConfig), npc: { id: npc.id, name: npc.name, title: npc.title }, attachmentTitle: attachment.title, channel, playerText: request.text, viewed: decision.viewed }, narrativeAttachmentAiOutputSchema);
@@ -1211,7 +1213,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
       const hardBlocker = isHardBlockerText(request.text);
       const decision = hardBlocker
         ? { responseAction: 'reply' as const, invitationStatus: 'rejected' as const }
-        : await askMessageDecision(jevInvoker, { playerText: request.text, channel, allowReadNoReply, hasAppointmentDraft: false });
+        : await askMessageDecision(jevInvoker, { npcId, playerText: request.text, channel, allowReadNoReply, hasAppointmentDraft: false });
       let content: string | null = null;
       let appointmentDraft: AppointmentDraft | undefined;
       if (decision.responseAction === 'reply' && !hardBlocker) {
@@ -1298,7 +1300,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
       const content = hardBlocker ? COMPLIANCE_REFUSAL : narrative.content;
       const decision = hardBlocker
         ? { completedTask: null, playerDialogueSignal: 'continue' as const, npcDialogueSignal: 'continue' as const }
-        : await askVisitDecision(jevInvoker, { playerText: request.text, npcText: content, remaining, turn: nextTurn });
+        : await askVisitDecision(jevInvoker, { npcId, playerText: request.text, npcText: content, remaining, turn: nextTurn });
       const npcMessage = newMessage('npc', 'visit', content);
       await evaluateNpcTurn(invoker, jevInvoker, state, npcId, 'visit', playerMessage, npcMessage, 'reply', promptConfig);
       meeting.turn = nextTurn;

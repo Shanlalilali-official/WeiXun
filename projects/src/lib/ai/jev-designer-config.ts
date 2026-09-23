@@ -66,7 +66,7 @@ const previewDimensionQuestions = [
 export const JEV_DESIGNER_TASK_CATALOG: readonly JevDesignerTaskCatalog[] = [
   {
     taskId: 'live_npc_turn', label: '正式对局：NPC 回合评估',
-    state: { description: '本轮 NPC、态度、渠道、礼品上下文、玩家/NPC 原话、最近对话及已确认事实。', fields: ['npc', 'attitude', 'round', 'phaseName', 'channel', 'meetingType', 'giftContext', 'playerMessage', 'npcReply', 'recentConversation', 'confirmedFacts', 'commitments'] },
+    state: { description: '本轮 NPC、同源静态决策画像、态度、渠道、礼品上下文、玩家/NPC 原话、最近对话及已确认事实。', fields: ['npc', 'npcProfile', 'attitude', 'round', 'phaseName', 'channel', 'meetingType', 'giftContext', 'playerMessage', 'npcReply', 'recentConversation', 'confirmedFacts', 'commitments'] },
     questions: [
       choice('pleasureDelta', '即时愉悦变化', '选择本轮即时沟通体验变化。', '-12 至 12'),
       choice('supportDelta', '长期支持变化', '选择本轮长期项目支持变化。', '-10 至 10'),
@@ -88,7 +88,7 @@ export const JEV_DESIGNER_TASK_CATALOG: readonly JevDesignerTaskCatalog[] = [
   },
   {
     taskId: 'live_gift', label: '正式对局：礼品处置',
-    state: { description: '礼品、人物、合规敏感度、关系历史、场合、见证人与采购上下文。', fields: ['commandId', 'npc', 'complianceSensitivity', 'giftPreference', 'pleasure', 'support', 'attitudeHistory', 'giftType', 'giftDescription', 'setting', 'witnesses', 'priorBoundaryGiftCount', 'round', 'procurementSensitive', 'exchangeRequested'] },
+    state: { description: '礼品、人物、同源静态决策画像、合规敏感度、关系历史、场合、见证人与采购上下文。', fields: ['commandId', 'npc', 'npcProfile', 'complianceSensitivity', 'giftPreference', 'pleasure', 'support', 'attitudeHistory', 'giftType', 'giftDescription', 'setting', 'witnesses', 'priorBoundaryGiftCount', 'round', 'procurementSensitive', 'exchangeRequested'] },
     questions: [
       choice('disposition', '当场处置', '选择NPC对本次礼品的当场处置。', 'delighted_acceptance / cautious_acceptance / polite_decline / firm_rejection / reported'),
       choice('pleasureDelta', '即时愉悦变化', '选择即时愉悦变化。', '-12 至 12'),
@@ -106,7 +106,7 @@ export const JEV_DESIGNER_TASK_CATALOG: readonly JevDesignerTaskCatalog[] = [
   },
   {
     taskId: 'prompt_test_evaluator', label: '提示词测试：结构化评估',
-    state: { description: '张建国测试场景、回合前状态、最近记录、玩家话术、NPC 正文及候选线索。', fields: ['evaluatorInput', 'candidateClues', 'allowedBlockers', 'rule'] },
+    state: { description: '张建国测试场景、同源静态决策画像、回合前状态、最近记录、玩家话术、NPC 正文及候选线索。', fields: ['npcProfile', 'evaluatorInput', 'candidateClues', 'allowedBlockers', 'rule'] },
     questions: [
       choice('supportDelta', '长期支持变化', '选择本轮长期项目支持度变化。', '-8 至 6'),
       choice('pleasantnessDelta', '即时感受变化', '选择本轮即时沟通感受变化。', '-8 至 6'),
@@ -124,7 +124,7 @@ export const JEV_DESIGNER_TASK_CATALOG: readonly JevDesignerTaskCatalog[] = [
   },
   {
     taskId: 'preview_npc_evaluator', label: '五人预览：NPC 回合评估',
-    state: { description: '预览中的分层 NPC 上下文、玩家/NPC 消息、回复处理结果、合规标志及文字记忆建议。', fields: ['npcContext', 'playerMessage', 'responseAction', 'npcMessage', 'hardBlocker', 'suggestions'] },
+    state: { description: '预览中的分层 NPC 上下文、同源静态决策画像、玩家/NPC 消息、回复处理结果、合规标志及文字记忆建议。', fields: ['npcContext', 'npcProfile', 'playerMessage', 'responseAction', 'npcMessage', 'hardBlocker', 'suggestions'] },
     questions: [
       choice('pleasureDelta', '愉悦度变化', '选择本轮愉悦度变化，范围为 -8 到 6 的整数。', '-8 至 6'),
       choice('supportDelta', '支持度变化', '选择本轮支持度变化，范围为 -5 到 4 的整数。', '-5 至 4'),
@@ -138,7 +138,7 @@ export const JEV_DESIGNER_TASK_CATALOG: readonly JevDesignerTaskCatalog[] = [
   },
   {
     taskId: 'preview_plan', label: '五人预览：计划完整度与人物匹配',
-    state: { description: '玩家计划文本以及可选的当前联系人范围。', fields: ['plan', 'scopeNpcId'] },
+    state: { description: '玩家计划文本、可选的当前联系人范围及五位候选人的紧凑静态决策画像。', fields: ['plan', 'scopeNpcId', 'candidateNpcProfiles'] },
     questions: [
       noul('needsDetail', '是否需补充', '计划是否仍缺少足够具体的目标、证据或下一步。'),
       ...['P1-001', 'P1-002', 'P1-003', 'P1-004', 'P1-005'].map((npcId) => noul(
@@ -148,12 +148,12 @@ export const JEV_DESIGNER_TASK_CATALOG: readonly JevDesignerTaskCatalog[] = [
   },
   {
     taskId: 'preview_attachment', label: '五人预览：附件是否查看',
-    state: { description: '附件标题、玩家本轮话术与当前沟通渠道；正文不作为这个选择的输入。', fields: ['attachmentTitle', 'playerText', 'channel'] },
+    state: { description: '目标 NPC、同源静态决策画像、附件标题、玩家本轮话术与当前沟通渠道；正文不作为这个选择的输入。', fields: ['npcId', 'npcProfile', 'attachmentTitle', 'playerText', 'channel'] },
     questions: [noul('viewed', '是否查看正文', 'NPC 本轮是否查看附件正文。只根据附件标题和当前沟通场景判断，不能臆测正文内容。')],
   },
   {
     taskId: 'preview_message', label: '五人预览：消息处理与邀约',
-    state: { description: '玩家文本、沟通渠道、是否允许已读不回及预约草稿状态。', fields: ['playerText', 'channel', 'allowReadNoReply', 'hasAppointmentDraft'] },
+    state: { description: '目标 NPC、同源静态决策画像、玩家文本、沟通渠道、是否允许已读不回及预约草稿状态。', fields: ['npcId', 'npcProfile', 'playerText', 'channel', 'allowReadNoReply', 'hasAppointmentDraft'] },
     questions: [
       choice('responseAction', '回复方式', '决定本轮消息是回复还是已读不回。合规红线必须回复。', 'reply / read_no_reply', '是否允许 read_no_reply 由渠道代码决定'),
       choice('invitationStatus', '邀约状态', '决定邀约状态；只根据玩家本轮明确表达和上下文判断。', 'none / accepted / rejected / later'),
@@ -161,12 +161,12 @@ export const JEV_DESIGNER_TASK_CATALOG: readonly JevDesignerTaskCatalog[] = [
   },
   {
     taskId: 'preview_wechat_request', label: '五人预览：工作微信申请',
-    state: { description: '玩家申请文本和目标 NPC。', fields: ['playerText', 'npcId'] },
+    state: { description: '玩家申请文本、目标 NPC 与同源静态决策画像。', fields: ['playerText', 'npcId', 'npcProfile'] },
     questions: [noul('accepted', '是否接受', '是否接受玩家的工作微信申请。正式边界或合规红线下不得接受。')],
   },
   {
     taskId: 'preview_visit', label: '五人预览：拜访准备与回合结束',
-    state: { description: '拜访准备时包含文本与目标 NPC；实际回合包含双方文本、剩余任务和轮次。', fields: ['text', 'npcId', 'playerText', 'npcText', 'remaining', 'turn'] },
+    state: { description: '拜访准备时包含文本、目标 NPC 与同源静态决策画像；实际回合包含双方文本、剩余任务和轮次。', fields: ['text', 'npcId', 'npcProfile', 'playerText', 'npcText', 'remaining', 'turn'] },
     questions: [
       noul('needsDetail', '准备是否需补充', '这次拜访准备是否仍缺少明确对象、问题、证据或下一步。'),
       choice('completedTask', '完成的任务', '选择本轮确实完成的剩余拜访任务；没有完成则选择 none。', 'none / 提问 / 质疑 / 挖坑', '剩余候选由目标 NPC 和已完成任务动态收窄'),

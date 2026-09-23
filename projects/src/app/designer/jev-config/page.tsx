@@ -53,10 +53,18 @@ type JevTask = {
   questions: JevQuestion[];
 };
 
+type JevNpcProfile = {
+  id: string;
+  name: string;
+  [key: string]: unknown;
+};
+
 type JevConfigResponse = {
   revision: number;
   config: JevConfig;
   catalog: JevTask[];
+  npcProfiles?: JevNpcProfile[];
+  candidateNpcProfiles?: JevNpcProfile[];
 };
 
 function normalizeConfig(value: unknown): JevConfig {
@@ -91,9 +99,24 @@ function prettyValue(value: unknown): string {
   }
 }
 
+function normalizeNpcProfiles(value: unknown): JevNpcProfile[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((profile): profile is JevNpcProfile => (
+    Boolean(profile)
+    && typeof profile === 'object'
+    && typeof (profile as Partial<JevNpcProfile>).id === 'string'
+    && typeof (profile as Partial<JevNpcProfile>).name === 'string'
+  ));
+}
+
 function fieldLabel(field: JevStateField, index: number): string {
   if (typeof field === 'string') return field;
   return field.label || field.name || field.key || field.id || `字段 ${index + 1}`;
+}
+
+function fieldKey(field: JevStateField): string {
+  if (typeof field === 'string') return field;
+  return field.key || field.id || field.name || '';
 }
 
 function fieldDescription(field: JevStateField): string {
@@ -116,11 +139,14 @@ function sessionHeaders(): Record<string, string> {
 export default function JevConfigPage() {
   const router = useRouter();
   const [catalog, setCatalog] = useState<JevTask[]>([]);
+  const [npcProfiles, setNpcProfiles] = useState<JevNpcProfile[]>([]);
+  const [candidateNpcProfiles, setCandidateNpcProfiles] = useState<JevNpcProfile[]>([]);
   const [config, setConfig] = useState<JevConfig>({ tasks: {} });
   const [savedConfig, setSavedConfig] = useState<JevConfig>({ tasks: {} });
   const [revision, setRevision] = useState(0);
   const [selectedTaskId, setSelectedTaskId] = useState('');
   const [selectedQuestionId, setSelectedQuestionId] = useState('');
+  const [selectedNpcId, setSelectedNpcId] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
@@ -129,6 +155,10 @@ export default function JevConfigPage() {
   const dirty = useMemo(() => JSON.stringify(config) !== JSON.stringify(savedConfig), [config, savedConfig]);
   const selectedTask = catalog.find((task) => task.taskId === selectedTaskId) ?? catalog[0];
   const selectedQuestion = selectedTask?.questions.find((question) => question.id === selectedQuestionId) ?? selectedTask?.questions[0];
+  const selectedNpcProfile = npcProfiles.find((profile) => profile.id === selectedNpcId);
+  const selectedCandidateProfile = candidateNpcProfiles.find((profile) => profile.id === selectedNpcId);
+  const hasTaskNpcProfile = Boolean(selectedTask?.state.fields.some((field) => ['npcProfile', 'candidateNpcProfiles'].includes(fieldKey(field))));
+  const hasTaskCandidateProfiles = Boolean(selectedTask?.state.fields.some((field) => fieldKey(field) === 'candidateNpcProfiles'));
   const selectedTaskConfig = selectedTask ? config.tasks[selectedTask.taskId] : undefined;
   const stateGuidance = selectedTaskConfig?.stateGuidance ?? '';
   const questionInstruction = selectedTask && selectedQuestion
@@ -148,8 +178,12 @@ export default function JevConfigPage() {
       if (!response.ok) throw new Error(body.error || 'Jev 决策配置读取失败。');
       const result = body as JevConfigResponse;
       const nextCatalog = Array.isArray(result.catalog) ? result.catalog : [];
+      const nextNpcProfiles = normalizeNpcProfiles(result.npcProfiles);
+      const nextCandidateNpcProfiles = normalizeNpcProfiles(result.candidateNpcProfiles);
       const nextConfig = normalizeConfig(result.config);
       setCatalog(nextCatalog);
+      setNpcProfiles(nextNpcProfiles);
+      setCandidateNpcProfiles(nextCandidateNpcProfiles);
       setConfig(nextConfig);
       setSavedConfig(structuredClone(nextConfig));
       setRevision(Number.isInteger(result.revision) ? result.revision : 0);
@@ -157,6 +191,10 @@ export default function JevConfigPage() {
       setSelectedQuestionId((current) => {
         const task = nextCatalog.find((entry) => entry.taskId === selectedTaskId) ?? nextCatalog[0];
         return task?.questions.some((question) => question.id === current) ? current : task?.questions[0]?.id ?? '';
+      });
+      setSelectedNpcId((current) => {
+        if (nextNpcProfiles.some((profile) => profile.id === current)) return current;
+        return nextNpcProfiles[0]?.id ?? '';
       });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Jev 决策配置读取失败。');
@@ -393,7 +431,7 @@ export default function JevConfigPage() {
                     <div className="p-4">
                       <p className="mb-3 flex items-start gap-2 text-[11px] leading-5 text-slate-500">
                         <CircleHelp className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-500" />
-                        下列项目是传给 Jev 的状态字段说明。真实状态值会随每轮游戏变化，本页不展示固定快照。
+                        下列项目是传给 Jev 的状态字段说明。玩家输入、关系状态与记忆等动态值会随每轮变化，本页不展示单局快照；人物主档中的稳定画像会在下方单独展示。
                       </p>
                       {selectedTask.state.fields.length ? (
                         <ul className="grid gap-2 sm:grid-cols-2">
@@ -409,6 +447,68 @@ export default function JevConfigPage() {
                         </ul>
                       ) : (
                         <p className="rounded-lg bg-slate-50 px-3 py-4 text-xs text-slate-500">此任务没有单独列出的状态字段。</p>
+                      )}
+                      {hasTaskNpcProfile && (
+                        <div className="mt-4 overflow-hidden rounded-lg border border-indigo-200 bg-indigo-50/40">
+                          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-indigo-100 px-3 py-3">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h3 className="text-xs font-semibold text-slate-900">{hasTaskCandidateProfiles ? 'Jev 候选人物画像' : 'Jev 人物决策画像'}</h3>
+                                <span className="rounded bg-indigo-100 px-2 py-0.5 text-[9px] font-semibold text-indigo-800">静态值 · 只读</span>
+                              </div>
+                              <p className="mt-1 text-[10px] leading-5 text-slate-600">
+                                目录任务：<span className="font-mono">{selectedTask.taskId}</span>。{hasTaskCandidateProfiles
+                                  ? '下方完整静态决策画像是候选资料来源；同时展示本任务实际提供给 Jev 的精简候选值。'
+                                  : '下方静态决策画像会按目标 NPC 提供给 Jev。'}这不是某一局的完整请求快照；玩家本轮输入、关系数值和记忆等动态值仍按轮次传入，未在此显示。
+                              </p>
+                            </div>
+                            <LockKeyhole className="h-4 w-4 shrink-0 text-indigo-500" />
+                          </div>
+                          <div className="space-y-3 p-3">
+                            {npcProfiles.length > 0 ? (
+                              <div>
+                                <label htmlFor="jev-npc-profile" className="mb-1.5 block text-[10px] font-semibold text-slate-700">查看人物决策画像（{hasTaskCandidateProfiles ? '候选来源' : 'Jev 静态画像输入'}）</label>
+                                <select
+                                  id="jev-npc-profile"
+                                  value={selectedNpcProfile?.id ?? ''}
+                                  onChange={(event) => setSelectedNpcId(event.target.value)}
+                                  disabled={loading || npcProfiles.length === 0}
+                                  className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs text-slate-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 disabled:bg-slate-100"
+                                >
+                                  {npcProfiles.map((profile) => (
+                                    <option key={profile.id} value={profile.id}>{profile.name} · {profile.id}{typeof profile.title === 'string' ? ` · ${profile.title}` : ''}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            ) : (
+                              <p className="rounded-lg bg-white px-3 py-2 text-[10px] text-slate-600">服务端尚未返回人物主档画像。</p>
+                            )}
+                            {selectedNpcProfile && (
+                              <div className="rounded-lg border border-indigo-100 bg-white p-3">
+                                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                  <span className="text-[10px] font-semibold text-slate-700">当前查看：{selectedNpcProfile.name}{typeof selectedNpcProfile.title === 'string' ? ` · ${selectedNpcProfile.title}` : ''}{hasTaskCandidateProfiles ? ' · 完整静态画像来源' : ''}</span>
+                                  <span className="font-mono text-[9px] text-slate-400">{selectedNpcProfile.id} · {selectedTask.taskId}</span>
+                                </div>
+                                <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-3 font-mono text-[10px] leading-5 text-slate-700">{prettyValue(selectedNpcProfile)}</pre>
+                              </div>
+                            )}
+                            {hasTaskCandidateProfiles && (
+                              <div className="rounded-lg border border-indigo-100 bg-white p-3">
+                                {selectedCandidateProfile ? (
+                                  <>
+                                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                      <span className="text-[10px] font-semibold text-slate-700">Jev 实际接收的精简候选值：{selectedCandidateProfile.name}{typeof selectedCandidateProfile.title === 'string' ? ` · ${selectedCandidateProfile.title}` : ''}</span>
+                                      <span className="font-mono text-[9px] text-slate-400">{selectedCandidateProfile.id} · {selectedTask.taskId}</span>
+                                    </div>
+                                    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-slate-50 p-3 font-mono text-[10px] leading-5 text-slate-700">{prettyValue(selectedCandidateProfile)}</pre>
+                                  </>
+                                ) : (
+                                  <p className="text-[10px] leading-5 text-slate-600">服务端尚未返回此任务的精简候选人物值。</p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       )}
                     </div>
                     <div className="border-t border-slate-200 bg-amber-50/60 p-4">

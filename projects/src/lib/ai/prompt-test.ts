@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { invokeLLM, type ChatMessage } from '@/lib/ai/client';
 import { invokeJev, type JevAnswer, type JevInvoker, type JevQuestions } from '@/lib/ai/jev-client';
 import { invokeConfiguredJev } from '@/lib/ai/jev-designer-config';
+import { buildJevNpcProfile } from '@/lib/ai/jev-npc-profile';
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import {
@@ -448,6 +449,7 @@ async function evaluateWithJev(
   const candidates = narrative.newClues ?? [];
   const answers = (await jevInvoker({
     state: JSON.stringify({
+      npcProfile: buildJevNpcProfile('P1-001'),
       evaluatorInput,
       candidateClues: candidates,
       allowedBlockers: BLOCKER_IDS,

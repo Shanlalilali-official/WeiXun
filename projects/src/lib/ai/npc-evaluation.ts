@@ -1,6 +1,7 @@
 import { invokeLLM, type ChatMessage } from '@/lib/ai/client';
 import { invokeJev, type JevInvoker, type JevQuestions } from '@/lib/ai/jev-client';
 import { invokeConfiguredJev } from '@/lib/ai/jev-designer-config';
+import { buildJevNpcProfile } from '@/lib/ai/jev-npc-profile';
 import { z } from 'zod';
 import {
   giftCommandDecisionSchema,
@@ -550,8 +551,10 @@ function npcNarrativeMessages(ctx: NpcEvaluationContext, decision: NpcTurnEvalua
 }
 
 function npcDecisionState(ctx: NpcEvaluationContext) {
+  const npcProfile = buildJevNpcProfile(ctx.npcId);
   return {
     npc: { id: ctx.npcId, name: ctx.npcName, title: ctx.npcTitle, category: ctx.npcCategory ?? '', personality: ctx.npcPersonality ?? '', concern: ctx.npcConcern ?? '' },
+    ...(npcProfile ? { npcProfile } : {}),
     attitude: { affinity: ctx.affinity, pleasure: ctx.pleasure ?? 50, support: ctx.support ?? 35 },
     round: ctx.round,
     phaseName: ctx.phaseName ?? '',
@@ -822,8 +825,10 @@ function buildGiftNarrativeMessages(ctx: GiftDecisionContext, decision: GiftComm
 }
 
 function giftDecisionState(ctx: GiftDecisionContext) {
+  const npcProfile = buildJevNpcProfile(ctx.npcId);
   return {
     commandId: ctx.commandId, npc: { id: ctx.npcId, name: ctx.npcName, title: ctx.npcTitle, category: ctx.npcCategory, personality: ctx.npcPersonality, concern: ctx.npcConcern },
+    ...(npcProfile ? { npcProfile } : {}),
     complianceSensitivity: ctx.complianceSensitivity, giftPreference: ctx.giftPreference, pleasure: ctx.pleasure, support: ctx.support,
     attitudeHistory: ctx.attitudeHistory, giftType: ctx.giftType, giftDescription: ctx.giftDescription, setting: ctx.setting,
     witnesses: ctx.witnesses, priorBoundaryGiftCount: ctx.priorBoundaryGiftCount, round: ctx.round, phaseName: ctx.phaseName,

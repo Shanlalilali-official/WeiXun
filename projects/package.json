@@ -15,6 +15,7 @@
     "test:local-env": "tsx scripts/test-local-env.ts",
     "test:jev-provider": "tsx scripts/test-jev-provider.ts",
     "test:jev-designer-config": "tsx scripts/test-jev-designer-config.ts",
+    "test:jev-npc-profile": "tsx scripts/test-jev-npc-profile.ts",
     "start": "node dist/server.js",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",
