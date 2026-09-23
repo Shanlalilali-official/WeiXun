@@ -4,6 +4,7 @@ import {
   evaluateCompetitorStageAction,
   type CompetitorStageInvoker,
 } from '../src/lib/ai/competitor-stage';
+import type { JevInvoker } from '../src/lib/ai/jev-client';
 import {
   createProjectOneState,
   executeGameCommand,
@@ -22,6 +23,13 @@ const validCandidate: CompetitorStageActionCandidate = {
 };
 
 const json = (value: unknown) => JSON.stringify(value);
+const competitorJev: JevInvoker = async () => ({
+  answers: {
+    targetNpcId: { type: 'choice', choice: 'P1-004', probabilities: {}, confidence: 1 },
+    kind: { type: 'choice', choice: 'relationship', probabilities: {}, confidence: 1 },
+    pressureDelta: { type: 'choice', choice: '4', probabilities: {}, confidence: 1 },
+  },
+});
 const command = (commandId: string) => ({
   commandId,
   expectedVersion: 1,
@@ -34,7 +42,8 @@ async function main() {
   let invocations = 0;
   const validInvoker: CompetitorStageInvoker = async () => {
     invocations += 1;
-    return json(validCandidate);
+    // LLM may try to supply state fields, but only its prose is consumed.
+    return json({ ...validCandidate, targetNpcId: 'P1-001', kind: 'price', pressureDelta: 1 });
   };
 
   clearCompetitorStageDecisionCache();
@@ -42,14 +51,18 @@ async function main() {
   sessionId: 'competitor-ai-idempotent',
   state,
   invoker: validInvoker,
+  jevInvoker: competitorJev,
 });
   const cached = await evaluateCompetitorStageAction({
   sessionId: 'competitor-ai-idempotent',
   state,
   invoker: validInvoker,
+  jevInvoker: competitorJev,
 });
-  assert.equal(generated.source, 'model');
+assert.equal(generated.source, 'model');
 assert.deepEqual(generated.candidate, validCandidate);
+assert.equal(generated.candidate?.targetNpcId, 'P1-004', 'Jev decision wins over LLM-supplied target');
+assert.equal(generated.candidate?.pressureDelta, 4, 'Jev choice controls persisted pressure');
 assert.equal(cached.source, 'cached', 'the same session/stage reuses one decision');
 assert.equal(invocations, 1, 'same-stage retries do not invoke the model twice');
 assert.equal(isCompetitorStageActionCandidate(generated.candidate, 1), true);
@@ -77,10 +90,10 @@ assert.equal(applied.state.npcAttitudes[validCandidate.targetNpcId].support, 27,
   sessionId: 'competitor-ai-invalid',
   state,
   invoker: invalidInvoker,
+  jevInvoker: competitorJev,
 });
-assert.equal(invalid.candidate, undefined);
-assert.equal(invalid.source, 'fallback');
-assert.deepEqual(invalid.validationErrors, ['COMPETITOR_STAGE_SCHEMA_INVALID']);
+assert.deepEqual(invalid.candidate, validCandidate, 'invalid LLM prose falls back without replacing Jev choice');
+assert.equal(invalid.source, 'model');
 assert.equal(invalidInvocations, 1);
 const fallback = executeGameCommand(state, command('competitor-ai-fallback'));
 assert.equal(fallback.state.competitorState.actions[0]?.title, '竞品正在接触项目执行人员');
@@ -94,6 +107,7 @@ assert.equal(fallback.eventPayload.competitorActionSource, 'fallback');
     multiplayerInvocations += 1;
     return json(validCandidate);
   },
+  jevInvoker: competitorJev,
 });
 assert.equal(multiplayer.source, 'existing');
 assert.equal(multiplayer.validationErrors[0], 'MULTIPLAYER_DEFERRED');

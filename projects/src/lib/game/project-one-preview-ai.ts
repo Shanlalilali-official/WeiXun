@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { invokeLLM, type ChatMessage } from '@/lib/ai/client';
+import { invokeJev, type JevInvoker, type JevRequest } from '@/lib/ai/jev-client';
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import {
-  attachmentDecisionAiOutputSchema, briefVisitAiOutputSchema, messageAiOutputSchema, phoneMessageAiOutputSchema, planAiOutputSchema, previewAiResponseSchema,
-  previewAppointmentSchema, previewAppointmentStatusSchema, previewEndReasonSchema, previewNpcExpressionSchema, previewVisitTaskSchema, type PreviewAiRequest, type PreviewAiResponse,
-  previewNpcEvaluationAiOutputSchema, previewWorkingMemoryStatusSchema, previewWorkingMemoryTypeSchema,
-  type PreviewBlockerId, type PreviewNpcId, visitPreparationAiOutputSchema, visitTurnAiOutputSchema, wechatAiOutputSchema,
+  briefVisitAiOutputSchema, messageAiOutputSchema, previewAiResponseSchema,
+  previewAppointmentSchema, previewAppointmentStatusSchema, previewEndReasonSchema, previewInvitationStatusSchema, previewNpcExpressionSchema, previewNpcIdSchema, previewVisitTaskSchema, type PreviewAiRequest, type PreviewAiResponse,
+  previewNpcEvaluationAiOutputSchema, previewReadNoReplyReasonCodeSchema, previewWorkingMemoryStatusSchema, previewWorkingMemoryTypeSchema,
+  type PreviewBlockerId, type PreviewNpcId,
 } from '@/lib/contracts/project-one-preview-ai';
 import {
   PROJECT_ONE_FIVE_PERSON_NPCS,
@@ -268,6 +269,73 @@ export class PreviewSessionStore {
 }
 
 export type LlmInvoker = (messages: ChatMessage[], options?: { temperature?: number; maxTokens?: number; jsonMode?: boolean; thinking?: 'enabled' | 'disabled' }) => Promise<string>;
+
+/**
+ * Jev is deliberately kept behind a small application boundary.  The game
+ * service only sends typed questions and consumes typed answers; it never
+ * asks the prose model to choose a state transition.  The concrete transport
+ * lives in src/lib/ai/jev-client.ts and can therefore be replaced in tests.
+ */
+export type PreviewJevRequest = JevRequest;
+export type PreviewJevInvoker = JevInvoker;
+
+/**
+ * Keep the default lazy so unit tests can inject a deterministic Jev invoker
+ * without importing/configuring the external client.  The module is provided
+ * by the Jev integration and intentionally has no browser-facing dependency.
+ */
+const invokeDefaultJev: PreviewJevInvoker = invokeJev;
+
+const narrativeContentAiOutputSchema = z.object({
+  content: z.string().trim().min(1).max(2_000),
+  appointment: z.object({
+    timeWindow: z.string().min(1).max(120),
+    location: z.string().min(1).max(120),
+    agenda: z.string().min(1).max(300),
+  }).strict().optional(),
+});
+const narrativePlanAiOutputSchema = z.object({
+  recommendations: z.array(z.string().min(1).max(300)).max(5).default([]),
+});
+const narrativeVisitPreparationAiOutputSchema = z.object({
+  strengths: z.array(z.string().min(1).max(300)).max(4).default([]),
+  risks: z.array(z.string().min(1).max(300)).max(4).default([]),
+  nextStep: z.string().min(1).max(300).default('请补充可验证的目标、证据和下一步。'),
+});
+const narrativeBriefVisitAiOutputSchema = z.object({
+  content: z.string().trim().min(1).max(2_000),
+  strengths: z.array(z.string().min(1).max(300)).max(4).default([]),
+  risks: z.array(z.string().min(1).max(300)).max(4).default([]),
+  nextStep: z.string().min(1).max(300),
+});
+const narrativeVisitTurnAiOutputSchema = z.object({
+  content: z.string().trim().min(1).max(2_000),
+});
+const narrativeWechatAiOutputSchema = z.object({
+  content: z.string().trim().min(1).max(2_000),
+});
+const narrativeEvaluationAiOutputSchema = z.preprocess((value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  if ('memorySuggestions' in record || !Array.isArray(record.memoryUpdates)) return value;
+  return {
+    memorySuggestions: record.memoryUpdates.flatMap((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+      const update = item as Record<string, unknown>;
+      return typeof update.summary === 'string'
+        ? [{ summary: update.summary, tags: Array.isArray(update.tags) ? update.tags.filter((tag): tag is string => typeof tag === 'string') : [] }]
+        : [];
+    }),
+  };
+}, z.object({
+  memorySuggestions: z.array(z.object({
+    summary: z.string().trim().min(1).max(500),
+    tags: z.array(z.string().trim().min(1).max(80)).max(8).default([]),
+  }).strict()).max(6).default([]),
+}));
+const narrativeAttachmentAiOutputSchema = z.object({
+  impact: z.string().trim().min(1).max(400),
+});
 export class PreviewAiError extends Error {
   constructor(public readonly kind: 'protocol' | 'unavailable' | 'conflict' | 'not_found' | 'limit', message: string) { super(message); }
 }
@@ -451,6 +519,154 @@ async function callStructuredAi<T>(
   }
   throw new PreviewAiError('protocol', 'AI_PROTOCOL_INVALID:' + failure);
 }
+
+function extractJevAnswers(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object') return {};
+  if (Array.isArray(value)) {
+    return Object.fromEntries(value.flatMap((item) => {
+      if (!item || typeof item !== 'object') return [];
+      const record = item as Record<string, unknown>;
+      const id = typeof record.id === 'string' ? record.id : typeof record.key === 'string' ? record.key : undefined;
+      if (!id) return [];
+      return [[id, record.value ?? record.answer]] as const;
+    }));
+  }
+  const record = value as Record<string, unknown>;
+  for (const key of ['answers', 'result', 'data']) {
+    const nested = record[key];
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      const nestedRecord = nested as Record<string, unknown>;
+      if (nestedRecord.answers && typeof nestedRecord.answers === 'object' && !Array.isArray(nestedRecord.answers)) {
+        return extractJevAnswers(nestedRecord.answers);
+      }
+      if (key !== 'result' || !('content' in nestedRecord)) return Object.fromEntries(Object.entries(nestedRecord).map(([id, answer]) => [id, unwrapJevAnswer(answer)]));
+    }
+  }
+  return Object.fromEntries(Object.entries(record).map(([id, answer]) => [id, unwrapJevAnswer(answer)]));
+}
+
+function unwrapJevAnswer(answer: unknown): unknown {
+  if (!answer || typeof answer !== 'object' || Array.isArray(answer)) return answer;
+  const record = answer as Record<string, unknown>;
+  if (record.type === 'choice' && typeof record.choice === 'string') return record.choice;
+  if (record.type === 'score' && typeof record.score === 'number') return record.score;
+  if (record.type === 'noul' && typeof record.noul === 'number') return record.noul >= 0.5;
+  return answer;
+}
+
+function jevState(task: string, context: unknown): string {
+  return serializeUntrustedPromptData(task, context, { maxStringLength: 2_000, maxTotalLength: 30_000 });
+}
+
+function choiceQuestion(criteria: Record<string, string | null>, instructions: string) {
+  return { type: 'choice' as const, criteria, instructions };
+}
+function noulQuestion(instructions: string) {
+  return { type: 'noul' as const, criteria: { true: '是', false: '否' }, instructions };
+}
+
+async function askJev<T>(
+  invoker: PreviewJevInvoker,
+  request: PreviewJevRequest,
+  schema: z.ZodType<T>,
+  fallback: () => T,
+): Promise<T> {
+  try {
+    const answer = schema.safeParse(extractJevAnswers(await invoker(request)));
+    if (answer.success) return answer.data;
+  } catch {
+    // Jev is an experiment. A missing key, network error, or malformed typed
+    // answer must never make the game consult the prose LLM for a choice.
+  }
+  return fallback();
+}
+
+function planDecisionFallback(plan: string, scopeNpcId?: PreviewNpcId): { needsDetail: boolean; matchedNpcIds: PreviewNpcId[] } {
+  const normalized = plan.toLowerCase();
+  const matchedNpcIds = PREVIEW_NPC_IDS.filter((npcId) => {
+    const npc = PREVIEW_NPCS[npcId];
+    return [npcId, npc.name, npc.title].some((value) => normalized.includes(value.toLowerCase()));
+  });
+  const scoped = matchedNpcIds.length > 0 ? matchedNpcIds : (scopeNpcId ? [scopeNpcId] : []);
+  const hasConcreteIntent = /(?:目标|验收|里程碑|证据|下一步|决策链|预算|风险|时间|安排|确认)/i.test(plan);
+  return { needsDetail: plan.trim().length < 16 || !hasConcreteIntent, matchedNpcIds: scoped.slice(0, 5) };
+}
+
+function visitPreparationDecisionFallback(text: string): { needsDetail: boolean } {
+  return {
+    needsDetail: text.trim().length < 24
+      || !/(?:目标|问题|证据|验收|下一步|议题|对象|风险)/i.test(text),
+  };
+}
+
+function attachmentDecisionFallback(title: string, playerText: string): { viewed: boolean } {
+  // Safe fallback: only open a document when the player explicitly asks to
+  // inspect/review it.  In particular, never expose the body merely because
+  // an attachment exists.
+  return { viewed: /(?:查看|阅读|核验|审阅|确认)/i.test(playerText) && /(?:材料|记录|方案|报价|合同|附件)/i.test(title) };
+}
+
+type MessageDecision = {
+  responseAction: 'reply' | 'read_no_reply';
+  invitationStatus: z.infer<typeof previewInvitationStatusSchema>;
+  reasonCode?: z.infer<typeof previewReadNoReplyReasonCodeSchema>;
+};
+
+function messageDecisionFallback(
+  playerText: string,
+  channel: string,
+  allowReadNoReply: boolean,
+  hasAppointmentDraft: boolean,
+): MessageDecision {
+  const hardBlocker = isHardBlockerText(playerText);
+  const invitation = /(?:方便|见面|拜访|预约|安排|明天|后天|下周|会议)/i.test(playerText);
+  const rejected = /(?:不方便|拒绝|不能接受|暂不|不考虑)/i.test(playerText);
+  const naturalClosure = /^(?:收到|好的|好|谢谢|感谢|明白|了解)[，。！!、\s]*(?:谢谢|感谢)?[。！!]?$/i.test(playerText.trim());
+  if (hardBlocker) return { responseAction: 'reply', invitationStatus: 'rejected' };
+  if (allowReadNoReply && naturalClosure) {
+    return { responseAction: 'read_no_reply', invitationStatus: 'none', reasonCode: 'natural_closure' };
+  }
+  if (rejected) return { responseAction: 'reply', invitationStatus: 'rejected' };
+  if (invitation && (hasAppointmentDraft || /(?:方便|见面|拜访|预约)/i.test(playerText))) {
+    return { responseAction: 'reply', invitationStatus: 'accepted' };
+  }
+  // Work phone has always been synchronous/reply-only in the public contract.
+  // Its invitation status is still a Jev decision when Jev is available.
+  void channel;
+  return { responseAction: 'reply', invitationStatus: 'none' };
+}
+
+function wechatDecisionFallback(playerText: string): { accepted: boolean } {
+  return { accepted: !isHardBlockerText(playerText) && /(?:工作微信|加个微信|微信)/i.test(playerText) };
+}
+
+function visitDecisionFallback(playerText: string, npcText: string, remaining: readonly VisitTask[]): {
+  completedTask: VisitTask | null;
+  playerDialogueSignal: 'continue' | 'farewell';
+  npcDialogueSignal: 'continue' | 'farewell' | 'forced_exit';
+} {
+  void remaining;
+  const playerFarewell = FAREWELL_PATTERN.test(playerText);
+  const npcForcedExit = npcHasImmediateTimeConstraint(npcText);
+  const npcFarewell = !npcForcedExit && FAREWELL_PATTERN.test(npcText);
+  return {
+    completedTask: null,
+    playerDialogueSignal: playerFarewell ? 'farewell' : 'continue',
+    npcDialogueSignal: npcForcedExit ? 'forced_exit' : npcFarewell ? 'farewell' : 'continue',
+  };
+}
+
+type Evaluation = z.infer<typeof previewNpcEvaluationAiOutputSchema>;
+function evaluationFallback(hardBlocker: boolean): Evaluation {
+  return {
+    pleasureDelta: hardBlocker ? -8 : 0,
+    supportDelta: hardBlocker ? -5 : 0,
+    dimensionDeltas: { decisionAnalysis: 0, relationshipBuilding: 0, valuePresentation: 0, objectionHandling: 0, informationDiscovery: 0 },
+    effectiveContact: false,
+    memoryUpdates: [],
+    blockerUpdates: [],
+  };
+}
 function applyEvaluation(
   npcState: PreviewNpcRuntimeState,
   evaluation: z.infer<typeof previewNpcEvaluationAiOutputSchema>,
@@ -524,22 +740,33 @@ function sanitizeReadNoReplyEvaluation(
   };
 }
 async function evaluateNpcTurn(
-  invoker: LlmInvoker, state: PreviewServerState, npcId: PreviewNpcId, channel: string,
-  playerMessage: ConversationMessage, npcMessage: ConversationMessage | null, responseAction: 'reply' | 'read_no_reply', promptConfig: ProjectOnePromptConfig,
+  invoker: LlmInvoker,
+  jevInvoker: PreviewJevInvoker,
+  state: PreviewServerState,
+  npcId: PreviewNpcId,
+  channel: string,
+  playerMessage: ConversationMessage,
+  npcMessage: ConversationMessage | null,
+  responseAction: 'reply' | 'read_no_reply',
+  promptConfig: ProjectOnePromptConfig,
 ): Promise<z.infer<typeof previewNpcEvaluationAiOutputSchema>> {
   const hardBlocker = isHardBlockerText(playerMessage.text);
-  const evaluation = await callStructuredAi(invoker,
+  const suggestions = await callStructuredAi(invoker,
     layeredNpcPrompt(state, npcId, channel, [
-      '独立评估刚刚完成的 NPC 正文或一次 NPC 沟通处理。只输出评分对象，不续写 NPC 正文。严格按 playerMessage、responseAction 和可空 npcMessage 判断。已读不回不代表同意、拒绝、承诺或负面反馈；评分只评估玩家本轮内容及其历史语境。',
-      '固定 JSON 契约：{"pleasureDelta":0,"supportDelta":0,"dimensionDeltas":{"decisionAnalysis":0,"relationshipBuilding":0,"valuePresentation":0,"objectionHandling":0,"informationDiscovery":0},"effectiveContact":false,"memoryUpdates":[],"blockerUpdates":[]}。',
-      '评分锚点：只有礼貌问候、感谢、自然收尾、宣传口号或宽泛询问时，supportDelta 通常为 0，effectiveContact 可为 false；已读不回本身不能令这些内容扣分。玩家提出与该人物核心诉求直接相关的具体里程碑、可量化验收口径、书面风险闭环或可复核证据，并且为合规、本轮新增且能推进下一步时，supportDelta 应在 1..4，effectiveContact 应为 true，对应的分析决策或价值呈现维度应为 1..3。即使 responseAction 为 read_no_reply，也要按内容独立评估有效性；不得因 NPC 未回复或仍然追问细节就把玩家已经提供的具体价值证据评为 0。',
-      '合规锚点：现金、回扣、利益交换、规避采购或保证中标时，pleasureDelta 和 supportDelta 必须为负，effectiveContact 必须为 false，并建议添加 compliance_redline。解除只可建议 remove compliance_redline；服务端会独立核验玩家是否明确撤回不合规提议并回到正式、可留痕流程。',
-      'memoryUpdates 每项必须是 {"type":"fact|commitment|evidence|blocker|preference|relationship_event|other","summary":"摘要","status":"active|fulfilled|superseded|resolved","tags":["标签"],"mustMention":false}。玩家的自述只能记录为其报告或待核验证据，不得写成 NPC 已确认事实。',
-      'blockerUpdates 每项必须是 {"action":"add|remove","value":"compliance_redline"}。没有更新时必须输出空数组，不得省略字段。',
+      '独立评估刚刚完成的 NPC 正文或一次 NPC 沟通处理，但只生成供 Jev 参考的记忆摘要建议，不输出评分、状态、枚举或布尔判断。严格按 playerMessage、responseAction 和可空 npcMessage 整理。已读不回不代表同意、拒绝、承诺或负面反馈；只记录本轮玩家实际提供、仍需核验的内容。',
+      '固定 JSON 契约：{"memorySuggestions":[{"summary":"摘要","tags":["标签"]}]}。memorySuggestions 只用于提供文字摘要，后续所有分数、布尔值、枚举和是否写入均由 Jev typed questions 决定。',
       '设计师评估补充提示：' + promptConfig.previewEvaluatorPrompt,
     ].join('\n'), promptConfig),
-    { npcContext: layeredNpcContext(state, npcId, channel, promptConfig), playerMessage, responseAction, npcMessage, hardBlocker, instruction: '输出 pleasureDelta(-8..6)、supportDelta(-5..4)、五维 dimensionDeltas(-3..3 整数)、effectiveContact、memoryUpdates、blockerUpdates。blockerUpdates 仅能使用 compliance_redline；红线状态由服务端确定性规则处理。' },
-    previewNpcEvaluationAiOutputSchema);
+    { npcContext: layeredNpcContext(state, npcId, channel, promptConfig), playerMessage, responseAction, npcMessage, hardBlocker, instruction: '只输出 memorySuggestions，不要输出 pleasureDelta、supportDelta、dimensionDeltas、effectiveContact、memoryUpdates 或 blockerUpdates。' },
+    narrativeEvaluationAiOutputSchema);
+  const evaluation = await askJevEvaluation(jevInvoker, {
+    npcContext: layeredNpcContext(state, npcId, channel, promptConfig),
+    playerMessage,
+    responseAction,
+    npcMessage,
+    hardBlocker,
+    suggestions,
+  }, () => evaluationFallback(hardBlocker));
   const normalizedText = playerMessage.text.trim().replace(/\s+/g, ' ');
   const repeated = state.conversations[npcId].some((message) => message.role === 'player' && message.text.trim().replace(/\s+/g, ' ') === normalizedText);
   const eligibleEffectiveContact = normalizedText.length >= 8 && !repeated && !FAREWELL_PATTERN.test(normalizedText) && !hardBlocker;
@@ -549,6 +776,214 @@ async function evaluateNpcTurn(
     : { ...evaluatedForOutcome, effectiveContact: evaluatedForOutcome.effectiveContact && eligibleEffectiveContact };
   applyEvaluation(state.npcStates[npcId], enforcedEvaluation, [playerMessage.messageId, ...(npcMessage ? [npcMessage.messageId] : [])], hardBlocker, playerMessage.text);
   return enforcedEvaluation;
+}
+
+async function askJevEvaluation(
+  invoker: PreviewJevInvoker,
+  context: unknown,
+  fallback: () => Evaluation,
+): Promise<Evaluation> {
+  try {
+    const request: PreviewJevRequest = {
+      state: jevState('project_one_preview_npc_evaluator', context),
+      questions: {
+        pleasureDelta: choiceQuestion(
+          Object.fromEntries(Array.from({ length: 15 }, (_, index) => [String(index - 8), `${index - 8} 点`])),
+          '选择本轮愉悦度变化，范围为 -8 到 6 的整数。',
+        ),
+        supportDelta: choiceQuestion(
+          Object.fromEntries(Array.from({ length: 10 }, (_, index) => [String(index - 5), `${index - 5} 点`])),
+          '选择本轮支持度变化，范围为 -5 到 4 的整数。',
+        ),
+        ...Object.fromEntries((['decisionAnalysis', 'relationshipBuilding', 'valuePresentation', 'objectionHandling', 'informationDiscovery'] as const)
+          .map((id) => [id, choiceQuestion(
+            Object.fromEntries(['-3', '-2', '-1', '0', '1', '2', '3'].map((value) => [value, `${value} 点`])),
+            id + ' 维度变化，选择 -3 到 3 的整数。',
+          )])),
+        effectiveContact: noulQuestion('本轮是否构成有效接触。'),
+        memoryType: choiceQuestion({
+          none: '不写入工作记忆', fact: '事实或玩家报告', commitment: '承诺', evidence: '证据',
+          preference: '偏好', relationship_event: '关系事件', other: '其他',
+        }, '选择是否以及以何种类型写入一条工作记忆。'),
+        memoryStatus: choiceQuestion({ active: '有效', fulfilled: '已履行', superseded: '已被替代', resolved: '已解决' }, '选择工作记忆状态。'),
+        memoryMustMention: noulQuestion('下一轮是否必须提及该工作记忆。'),
+        blockerAction: choiceQuestion({ none: '不改变合规阻断', add: '添加合规阻断', remove: '建议解除合规阻断' }, '选择合规阻断变化；服务端仍会独立校验红线。'),
+      },
+    };
+    const response = await invoker(request);
+    const raw = extractJevAnswers(response);
+    const candidate = raw.evaluation && typeof raw.evaluation === 'object' ? raw.evaluation : raw;
+    const parsed = previewNpcEvaluationAiOutputSchema.safeParse(candidate);
+    if (parsed.success) return parsed.data;
+    const discrete = (id: string, minimum: number, maximum: number): number | undefined => {
+      const value = typeof raw[id] === 'string' ? Number(raw[id]) : raw[id];
+      return typeof value === 'number' && Number.isInteger(value) && value >= minimum && value <= maximum ? value : undefined;
+    };
+    const pleasureDelta = discrete('pleasureDelta', -8, 6);
+    const supportDelta = discrete('supportDelta', -5, 4);
+    const dimensions = Object.fromEntries((['decisionAnalysis', 'relationshipBuilding', 'valuePresentation', 'objectionHandling', 'informationDiscovery'] as const)
+      .map((id) => [id, discrete(id, -3, 3)])) as Record<string, number | undefined>;
+    if (pleasureDelta === undefined || supportDelta === undefined || Object.values(dimensions).some((value) => value === undefined)) return fallback();
+    const memoryType = typeof raw.memoryType === 'string' ? raw.memoryType : 'none';
+    const suggestion = (context && typeof context === 'object' && 'suggestions' in context)
+      ? (context as { suggestions?: z.infer<typeof narrativeEvaluationAiOutputSchema> }).suggestions?.memorySuggestions[0]
+      : undefined;
+    const memoryUpdates = memoryType === 'none' || !suggestion ? [] : [{
+      type: memoryType as z.infer<typeof previewWorkingMemoryTypeSchema>,
+      summary: suggestion.summary,
+      status: (typeof raw.memoryStatus === 'string' ? raw.memoryStatus : 'active') as z.infer<typeof previewWorkingMemoryStatusSchema>,
+      tags: suggestion.tags,
+      mustMention: raw.memoryMustMention === true,
+    }];
+    const blockerAction = raw.blockerAction === 'add' || raw.blockerAction === 'remove' ? raw.blockerAction : 'none';
+    return previewNpcEvaluationAiOutputSchema.parse({
+      pleasureDelta,
+      supportDelta,
+      dimensionDeltas: dimensions,
+      effectiveContact: raw.effectiveContact === true,
+      memoryUpdates,
+      blockerUpdates: blockerAction === 'none' ? [] : [{ action: blockerAction, value: 'compliance_redline' }],
+    });
+  } catch {
+    // Fall through to a deterministic no-op/negative safety result.  Never
+    // ask the prose model to fill in an evaluator answer after Jev fails.
+  }
+  return fallback();
+}
+
+async function askPlanDecision(
+  invoker: PreviewJevInvoker,
+  context: { plan: string; scopeNpcId?: PreviewNpcId },
+): Promise<{ needsDetail: boolean; matchedNpcIds: PreviewNpcId[] }> {
+  const fallback = planDecisionFallback(context.plan, context.scopeNpcId);
+  try {
+    const response = await invoker({
+      state: jevState('project_one_preview_plan', context),
+      questions: {
+        needsDetail: noulQuestion('计划是否仍缺少足够具体的目标、证据或下一步。'),
+        ...Object.fromEntries(PREVIEW_NPC_IDS.map((npcId) => [
+          'match_' + npcId,
+          noulQuestion('计划是否明确涉及人物 ' + npcId + '（' + PREVIEW_NPCS[npcId].name + '）。'),
+        ])),
+      },
+    });
+    const answers = extractJevAnswers(response);
+    const direct = z.object({ needsDetail: z.boolean(), matchedNpcIds: z.array(previewNpcIdSchema).max(5) }).safeParse(answers);
+    if (direct.success) return { needsDetail: direct.data.needsDetail, matchedNpcIds: [...new Set(direct.data.matchedNpcIds)] };
+    if (typeof answers.needsDetail !== 'boolean') return fallback;
+    const matchedNpcIds = PREVIEW_NPC_IDS.filter((npcId) => answers['match_' + npcId] === true);
+    return { needsDetail: answers.needsDetail, matchedNpcIds };
+  } catch {
+    return fallback;
+  }
+}
+
+async function askAttachmentDecision(
+  invoker: PreviewJevInvoker,
+  context: { attachmentTitle: string; playerText: string; channel: string },
+): Promise<{ viewed: boolean }> {
+  try {
+    const response = await invoker({
+      state: jevState('project_one_preview_attachment', context),
+      questions: {
+        viewed: noulQuestion('NPC 本轮是否查看附件正文。只根据附件标题和当前沟通场景判断，不能臆测正文内容。'),
+      },
+    });
+    const viewed = extractJevAnswers(response).viewed;
+    if (typeof viewed === 'boolean') return { viewed };
+  } catch {
+    // deterministic fallback below
+  }
+  return attachmentDecisionFallback(context.attachmentTitle, context.playerText);
+}
+
+async function askMessageDecision(
+  invoker: PreviewJevInvoker,
+  context: { playerText: string; channel: string; allowReadNoReply: boolean; hasAppointmentDraft: boolean },
+): Promise<MessageDecision> {
+  const fallback = messageDecisionFallback(context.playerText, context.channel, context.allowReadNoReply, context.hasAppointmentDraft);
+  try {
+    const response = await invoker({
+      state: jevState('project_one_preview_message', context),
+      questions: {
+        responseAction: choiceQuestion(
+          context.allowReadNoReply ? { reply: '回复正文', read_no_reply: '已读但不回复' } : { reply: '回复正文' },
+          '决定本轮消息是回复还是已读不回。合规红线必须回复。',
+        ),
+        invitationStatus: choiceQuestion({ none: '不涉及邀约', accepted: '接受邀约', rejected: '拒绝邀约', later: '稍后或改期' }, '决定邀约状态；只根据玩家本轮明确表达和上下文判断。'),
+      },
+    });
+    const answers = extractJevAnswers(response);
+    const responseAction = answers.responseAction;
+    const invitationStatus = answers.invitationStatus;
+    if ((responseAction === 'reply' || (responseAction === 'read_no_reply' && context.allowReadNoReply))
+      && (invitationStatus === 'none' || invitationStatus === 'accepted' || invitationStatus === 'rejected' || invitationStatus === 'later')) {
+      if (responseAction === 'read_no_reply') return { responseAction, invitationStatus: 'none', reasonCode: 'current_priority_low' };
+      return { responseAction: 'reply', invitationStatus };
+    }
+  } catch {
+    // deterministic fallback below
+  }
+  return fallback;
+}
+
+async function askWechatDecision(invoker: PreviewJevInvoker, context: { playerText: string; npcId: PreviewNpcId }): Promise<{ accepted: boolean }> {
+  try {
+    const response = await invoker({
+      state: jevState('project_one_preview_wechat_request', context),
+      questions: { accepted: noulQuestion('是否接受玩家的工作微信申请。正式边界或合规红线下不得接受。') },
+    });
+    const accepted = extractJevAnswers(response).accepted;
+    if (typeof accepted === 'boolean') return { accepted };
+  } catch {
+    // deterministic fallback below
+  }
+  return wechatDecisionFallback(context.playerText);
+}
+
+async function askVisitPreparationDecision(invoker: PreviewJevInvoker, context: { text: string; npcId: PreviewNpcId }): Promise<{ needsDetail: boolean }> {
+  try {
+    const response = await invoker({
+      state: jevState('project_one_preview_visit_preparation', context),
+      questions: { needsDetail: noulQuestion('这次拜访准备是否仍缺少明确对象、问题、证据或下一步。') },
+    });
+    const needsDetail = extractJevAnswers(response).needsDetail;
+    if (typeof needsDetail === 'boolean') return { needsDetail };
+  } catch {
+    // deterministic fallback below
+  }
+  return visitPreparationDecisionFallback(context.text);
+}
+
+async function askVisitDecision(
+  invoker: PreviewJevInvoker,
+  context: { playerText: string; npcText: string; remaining: readonly VisitTask[]; turn: number },
+): Promise<{ completedTask: VisitTask | null; playerDialogueSignal: 'continue' | 'farewell'; npcDialogueSignal: 'continue' | 'farewell' | 'forced_exit' }> {
+  const fallback = visitDecisionFallback(context.playerText, context.npcText, context.remaining);
+  try {
+    const taskCriteria = Object.fromEntries([
+      ['none', '本轮未完成拜访任务'],
+      ...context.remaining.map((task) => [task, '本轮确实完成该任务']),
+    ]);
+    const response = await invoker({
+      state: jevState('project_one_preview_visit_turn', context),
+      questions: {
+        completedTask: choiceQuestion(taskCriteria, '选择本轮确实完成的剩余拜访任务；没有完成则选择 none。'),
+        playerDialogueSignal: choiceQuestion({ continue: '玩家没有明确告辞', farewell: '玩家明确告辞' }, '判断玩家本轮是否明确结束交流。'),
+        npcDialogueSignal: choiceQuestion({ continue: 'NPC 继续交流', farewell: 'NPC 礼貌告辞', forced_exit: 'NPC 因当前时间约束必须结束' }, '判断 NPC 生成正文表达的结束信号。'),
+      },
+    });
+    const answers = extractJevAnswers(response);
+    const completedTask = answers.completedTask === 'none' ? null : answers.completedTask;
+    if ((completedTask === null || context.remaining.includes(completedTask as VisitTask))
+      && (answers.playerDialogueSignal === 'continue' || answers.playerDialogueSignal === 'farewell')
+      && (answers.npcDialogueSignal === 'continue' || answers.npcDialogueSignal === 'farewell' || answers.npcDialogueSignal === 'forced_exit')) {
+      return { completedTask: completedTask as VisitTask | null, playerDialogueSignal: answers.playerDialogueSignal, npcDialogueSignal: answers.npcDialogueSignal };
+    }
+  } catch {
+    // deterministic fallback below
+  }
+  return fallback;
 }
 function disclosedFor(ids: PreviewNpcId[], plan: string) {
   const normalizedPlan = plan.toLowerCase();
@@ -669,8 +1104,9 @@ function messagePurpose(channel: string, hasAttachment: boolean, allowReadNoRepl
     + (hasAttachment ? '玩家附带了材料。若上下文说明未查看，只能知道已收到，不能假设或引用材料正文。' : '没有附件。');
 }
 
-export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: PreviewSessionStore; leaseRenewIntervalMs?: number } = {}) {
+export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?: PreviewJevInvoker; store?: PreviewSessionStore; leaseRenewIntervalMs?: number } = {}) {
   const invoker = deps.invoker ?? invokeLLM;
+  const jevInvoker = deps.jevInvoker ?? invokeDefaultJev;
   const store = deps.store ?? new PreviewSessionStore();
   const leaseRenewIntervalMs = deps.leaseRenewIntervalMs ?? 30_000;
   const inFlightSessions = new Set<string>();
@@ -689,11 +1125,14 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
     }
 
     if (request.action === 'plan') {
-      const system = '你是项目一五人版的工作计划判断器。判断计划是否足够具体；只可从人物 ID ' + PREVIEW_NPC_IDS.join('、') + ' 中选择匹配人物。不得生成或改写人物主档事实。输出 {needsDetail:boolean,matchedNpcIds:string[],recommendations:string[]}。';
-      const output = await callStructuredAi(invoker, system,
-        { scopeNpcId: request.npcId ?? null, plan: request.text, people: PREVIEW_NPC_IDS.map((id) => ({ id, name: PREVIEW_NPCS[id].name, title: PREVIEW_NPCS[id].title })), phase: request.phase ?? 1 }, planAiOutputSchema);
-      const disclosed = output.needsDetail ? [] : disclosedFor([...new Set(output.matchedNpcIds)], request.text);
-      return previewAiResponseSchema.parse({ ...base, ...output, disclosureKeys: disclosed.map((item) => item.npcId), disclosed });
+      const narrative = await callStructuredAi(invoker,
+        '你是项目一五人版的工作计划建议撰写器。只生成给玩家看的具体建议，不判断计划是否充分，也不选择人物。输出 {recommendations:string[]}。',
+        { scopeNpcId: request.npcId ?? null, plan: request.text, people: PREVIEW_NPC_IDS.map((id) => ({ id, name: PREVIEW_NPCS[id].name, title: PREVIEW_NPCS[id].title })), phase: request.phase ?? 1 },
+        narrativePlanAiOutputSchema,
+      );
+      const decision = await askPlanDecision(jevInvoker, { scopeNpcId: request.npcId, plan: request.text });
+      const disclosed = decision.needsDetail ? [] : disclosedFor(decision.matchedNpcIds, request.text);
+      return previewAiResponseSchema.parse({ ...base, ...decision, ...narrative, disclosureKeys: disclosed.map((item) => item.npcId), disclosed });
     }
     if (request.action === 'test_adjust_npcs' || request.action === 'test_adjust_appointments') {
       const npcAdjustments = request.action === 'test_adjust_npcs' ? request.adjustments : undefined;
@@ -742,28 +1181,34 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
       const attachment = request.action === 'message' ? request.attachment : undefined;
       let attachmentResult: SavedAttachment | undefined;
       if (attachment) {
-        const decision = await callStructuredAi(invoker,
-          layeredNpcPrompt(state, npcId, channel, '判断是否查看已收到的附件。只根据附件标题和当前沟通场景判断，不得臆测正文。输出 {viewed:boolean,impact:string}。', promptConfig),
-          { npcContext: layeredNpcContext(state, npcId, channel, promptConfig), npc: { id: npc.id, name: npc.name, title: npc.title }, attachmentTitle: attachment.title, channel, playerText: request.text }, attachmentDecisionAiOutputSchema);
-        attachmentResult = { title: attachment.title, viewed: decision.viewed, impact: decision.impact, ...(decision.viewed ? { content: attachment.content } : {}) };
+        const decision = await askAttachmentDecision(jevInvoker, { attachmentTitle: attachment.title, channel, playerText: request.text });
+        const impact = await callStructuredAi(invoker,
+          layeredNpcPrompt(state, npcId, channel, '判断是否查看已收到的附件已由 Jev 完成；你只描述附件在本轮沟通中的可能影响，不得改变查看决定。输出 {impact:string}。', promptConfig),
+          { npcContext: layeredNpcContext(state, npcId, channel, promptConfig), npc: { id: npc.id, name: npc.name, title: npc.title }, attachmentTitle: attachment.title, channel, playerText: request.text, viewed: decision.viewed }, narrativeAttachmentAiOutputSchema);
+        attachmentResult = { title: attachment.title, viewed: decision.viewed, impact: impact.impact, ...(decision.viewed ? { content: attachment.content } : {}) };
       }
       const playerMessage = newMessage('player', channel, request.text, attachmentResult);
       const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, channel, promptConfig), recentHistory: [...historyFor(state, npcId), { ...playerMessage, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : undefined }] }, npc: { id: npc.id, name: npc.name, title: npc.title }, channel, playerText: request.text, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : null, phase: request.phase ?? 1 };
       type MessageOutput = z.infer<typeof messageAiOutputSchema>;
-      let output: MessageOutput;
-      if (allowReadNoReply) {
-        output = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, channel, messagePurpose(channel, Boolean(attachment), true), promptConfig),
-          promptPayload, messageAiOutputSchema,
-          (value) => value.responseAction !== 'reply' || (value.invitationStatus !== 'accepted' || Boolean(value.appointment)));
-      } else {
-        const phoneOutput = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, channel, messagePurpose(channel, Boolean(attachment), false), promptConfig),
-          promptPayload, phoneMessageAiOutputSchema,
-          (value) => value.invitationStatus !== 'accepted' || Boolean(value.appointment));
-        output = { responseAction: 'reply', ...phoneOutput };
+      const hardBlocker = isHardBlockerText(request.text);
+      const decision = hardBlocker
+        ? { responseAction: 'reply' as const, invitationStatus: 'rejected' as const }
+        : await askMessageDecision(jevInvoker, { playerText: request.text, channel, allowReadNoReply, hasAppointmentDraft: false });
+      let content: string | null = null;
+      let appointmentDraft: AppointmentDraft | undefined;
+      if (decision.responseAction === 'reply' && !hardBlocker) {
+        const messageOutput = await callStructuredAi(invoker,
+          layeredNpcPrompt(state, npcId, channel, messagePurpose(channel, Boolean(attachment), false) + ' 只输出正文及可选的预约具体安排，不得输出 responseAction 或 invitationStatus 等决定字段。', promptConfig),
+          promptPayload, narrativeContentAiOutputSchema);
+        content = messageOutput.content;
+        appointmentDraft = messageOutput.appointment;
       }
-      const safeOutput: MessageOutput = isHardBlockerText(request.text)
-        ? { responseAction: 'reply', content: COMPLIANCE_REFUSAL, invitationStatus: 'rejected' }
-        : output;
+      const invitationStatus = decision.invitationStatus === 'accepted' && !appointmentDraft
+        ? 'later'
+        : decision.invitationStatus;
+      const safeOutput: MessageOutput = decision.responseAction === 'read_no_reply'
+        ? { responseAction: 'read_no_reply', content: null, invitationStatus: 'none', reasonCode: decision.reasonCode ?? 'current_priority_low', reasonEvidence: 'Jev 判断本轮没有需要立即回复的新事项。' }
+        : { responseAction: 'reply', content: hardBlocker ? COMPLIANCE_REFUSAL : (content ?? '请补充可验证的目标、证据和下一步。'), invitationStatus, ...(appointmentDraft && invitationStatus === 'accepted' ? { appointment: appointmentDraft } : {}) };
       const appointment = safeOutput.responseAction === 'reply' && safeOutput.invitationStatus === 'accepted' && safeOutput.appointment
         ? saveAppointment(state, npcId, safeOutput.appointment, request.phase ?? 1)
         : undefined;
@@ -771,7 +1216,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
       playerMessage.delivery = safeOutput.responseAction === 'read_no_reply'
         ? { responseAction: 'read_no_reply', readStatus: 'read', reasonCode: safeOutput.reasonCode, reasonEvidence: safeOutput.reasonEvidence }
         : { responseAction: 'reply', ...(allowReadNoReply ? { readStatus: 'read' as const } : {}) };
-      await evaluateNpcTurn(invoker, state, npcId, channel, playerMessage, npcMessage, safeOutput.responseAction, promptConfig);
+      await evaluateNpcTurn(invoker, jevInvoker, state, npcId, channel, playerMessage, npcMessage, safeOutput.responseAction, promptConfig);
       addMessage(state, npcId, playerMessage);
       if (npcMessage) addMessage(state, npcId, npcMessage);
       return previewAiResponseSchema.parse({
@@ -789,22 +1234,26 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
     }
     if (request.action === 'wechat_request') {
       const playerMessage = newMessage('player', 'wechat_request', request.text);
-      const output = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'wechat_request', '请判断是否接受工作微信申请。输出 {content:string,accepted:boolean}。保持正式边界，不能因施压或私下利益交换而接受。', promptConfig),
-        { npcContext: { ...layeredNpcContext(state, npcId, 'wechat_request', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npc.id, name: npc.name, title: npc.title }, playerText: request.text, phase: request.phase ?? 1 }, wechatAiOutputSchema);
-      const safeOutput = isHardBlockerText(request.text) ? { content: COMPLIANCE_REFUSAL, accepted: false } : output;
+      const hardBlocker = isHardBlockerText(request.text);
+      const decision = hardBlocker ? { accepted: false } : await askWechatDecision(jevInvoker, { playerText: request.text, npcId });
+      const narrative = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'wechat_request', '只撰写工作微信申请的 NPC 回复正文，不得输出或改变是否接受的决定。输出 {content:string}。', promptConfig),
+        { npcContext: { ...layeredNpcContext(state, npcId, 'wechat_request', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npc.id, name: npc.name, title: npc.title }, playerText: request.text, accepted: decision.accepted, phase: request.phase ?? 1 }, narrativeWechatAiOutputSchema);
+      const safeOutput = { content: hardBlocker ? COMPLIANCE_REFUSAL : narrative.content, accepted: decision.accepted };
       const npcMessage = newMessage('npc', 'wechat_request', safeOutput.content);
-      await evaluateNpcTurn(invoker, state, npcId, 'wechat_request', playerMessage, npcMessage, 'reply', promptConfig);
+      await evaluateNpcTurn(invoker, jevInvoker, state, npcId, 'wechat_request', playerMessage, npcMessage, 'reply', promptConfig);
       state.wechat[npcId] = safeOutput.accepted ? 'accepted' : 'rejected';
       addMessage(state, npcId, playerMessage);
       addMessage(state, npcId, npcMessage);
       return previewAiResponseSchema.parse({ ...base, content: safeOutput.content, wechatAccepted: safeOutput.accepted });
     }
     if (request.action === 'visit_preparation') {
-      const output = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', '请独立评估这一次具体拜访准备，不要把总体工作计划当作已完成准备。输出 {needsDetail:boolean,strengths:string[],risks:string[],nextStep:string}。', promptConfig),
-        { npcContext: layeredNpcContext(state, npcId, 'visit', promptConfig), npc: { id: npc.id, name: npc.name, title: npc.title }, visitPreparation: request.text, phase: request.phase ?? 1 }, visitPreparationAiOutputSchema);
-      if (output.needsDetail) delete state.approvedVisitPreparations[npcId];
+      const context = { npcContext: layeredNpcContext(state, npcId, 'visit', promptConfig), npc: { id: npc.id, name: npc.name, title: npc.title }, visitPreparation: request.text, phase: request.phase ?? 1 };
+      const narrative = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', '只撰写本次拜访准备的优点、风险和下一步建议，不判断是否足够具体。输出 {strengths:string[],risks:string[],nextStep:string}。', promptConfig),
+        context, narrativeVisitPreparationAiOutputSchema);
+      const decision = await askVisitPreparationDecision(jevInvoker, { text: request.text, npcId });
+      if (decision.needsDetail) delete state.approvedVisitPreparations[npcId];
       else state.approvedVisitPreparations[npcId] = request.text;
-      return previewAiResponseSchema.parse({ ...base, ...output });
+      return previewAiResponseSchema.parse({ ...base, ...decision, ...narrative });
     }
     if (request.action === 'brief_visit') {
       const output = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', '请作为拜访方案评估者评估该次拜访简述，不续写固定话术。输出 {content,strengths:string[],risks:string[],nextStep:string}。', promptConfig),
@@ -824,35 +1273,29 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; store?: Pre
         return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state), npcExpression: resolvePreviewNpcExpression(state.npcStates[npcId].pleasantness), ...(appointment ? { appointment } : {}) });
       }
       const remaining = npc.allowedTasks.filter((task) => !meeting.completedTasks.includes(task));
-      const purpose = '这是实际拜访第 ' + nextTurn + ' 轮。自然回复，并仅在本轮确实完成任务时填写 completedTask。剩余允许任务：' + (remaining.join('、') || '无') + '。'
-        + '同时识别双方本轮是否结束交流：playerDialogueSignal 只在玩家明确表达告辞、今天到此、再见等结束意图时填 farewell；npcDialogueSignal 根据你实际生成的 NPC 台词填写 continue、farewell 或 forced_exit。NPC 只要表示自己今天/现在很忙、马上或随后还有会、需要去开会等无法继续的时间约束，就必须填 forced_exit；明确告辞填 farewell。引用、假设、询问对方是否忙或是否告辞不算说话者自己的结束意图。玩家明确告辞时，只回复一句简短告别，不开启新话题。'
-        + '输出 {content,completedTask:null|任务名,playerDialogueSignal:"continue"|"farewell",npcDialogueSignal:"continue"|"farewell"|"forced_exit"}。';
-      let output: z.infer<typeof visitTurnAiOutputSchema>;
-      try {
-        output = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', purpose, promptConfig),
-          { npcContext: { ...layeredNpcContext(state, npcId, 'visit', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npc.id, name: npc.name, title: npc.title }, playerText: request.text, visit: { turn: nextTurn, completedTasks: meeting.completedTasks, remainingTasks: remaining } },
-          visitTurnAiOutputSchema, (value) => value.completedTask === null || remaining.includes(value.completedTask));
-      } catch (error) {
-        throw error;
-      }
-      if (isHardBlockerText(request.text)) {
-        output = { content: COMPLIANCE_REFUSAL, completedTask: null, playerDialogueSignal: 'continue', npcDialogueSignal: 'continue' };
-      }
-      const npcMessage = newMessage('npc', 'visit', output.content);
-      await evaluateNpcTurn(invoker, state, npcId, 'visit', playerMessage, npcMessage, 'reply', promptConfig);
+      const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, 'visit', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npc.id, name: npc.name, title: npc.title }, playerText: request.text, visit: { turn: nextTurn, completedTasks: meeting.completedTasks, remainingTasks: remaining } };
+      const narrative = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', '这是实际拜访第 ' + nextTurn + ' 轮。只生成符合人物和当前语境的 NPC 回复正文；不输出任务完成、告辞或强制结束的决定字段。玩家明确告辞时只写一句简短告别。输出 {content:string}。', promptConfig),
+        promptPayload, narrativeVisitTurnAiOutputSchema);
+      const hardBlocker = isHardBlockerText(request.text);
+      const content = hardBlocker ? COMPLIANCE_REFUSAL : narrative.content;
+      const decision = hardBlocker
+        ? { completedTask: null, playerDialogueSignal: 'continue' as const, npcDialogueSignal: 'continue' as const }
+        : await askVisitDecision(jevInvoker, { playerText: request.text, npcText: content, remaining, turn: nextTurn });
+      const npcMessage = newMessage('npc', 'visit', content);
+      await evaluateNpcTurn(invoker, jevInvoker, state, npcId, 'visit', playerMessage, npcMessage, 'reply', promptConfig);
       meeting.turn = nextTurn;
       addMessage(state, npcId, playerMessage);
       addMessage(state, npcId, npcMessage);
-      if (output.completedTask) meeting.completedTasks.push(output.completedTask);
-      const playerFarewell = output.playerDialogueSignal === 'farewell' || FAREWELL_PATTERN.test(request.text);
-      const npcForcedExit = npcHasImmediateTimeConstraint(output.content, output.npcDialogueSignal);
-      const npcFarewell = output.npcDialogueSignal === 'farewell' || FAREWELL_PATTERN.test(output.content);
+      if (decision.completedTask) meeting.completedTasks.push(decision.completedTask);
+      const playerFarewell = decision.playerDialogueSignal === 'farewell' || FAREWELL_PATTERN.test(request.text);
+      const npcForcedExit = npcHasImmediateTimeConstraint(content, decision.npcDialogueSignal);
+      const npcFarewell = decision.npcDialogueSignal === 'farewell' || FAREWELL_PATTERN.test(content);
       if (playerFarewell) endMeeting(meeting, 'player_farewell');
       else if (npcForcedExit) endMeeting(meeting, 'npc_time_constraint');
       else if (npcFarewell) meeting.awaitingFinalReplyFrom = 'player';
       else resolveMeetingEnd(meeting);
       const appointment = meeting.ended ? completeAppointment(state, npcId) : undefined;
-      return previewAiResponseSchema.parse({ ...base, content: output.content, meeting: meetingResponse(state), npcExpression: resolvePreviewNpcExpression(state.npcStates[npcId].pleasantness), ...(appointment ? { appointment } : {}) });
+      return previewAiResponseSchema.parse({ ...base, content, meeting: meetingResponse(state), npcExpression: resolvePreviewNpcExpression(state.npcStates[npcId].pleasantness), ...(appointment ? { appointment } : {}) });
     }
     throw new PreviewAiError('protocol', 'UNSUPPORTED_PREVIEW_ACTION');
   }

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { invokeLLM, type ChatMessage } from '@/lib/ai/client';
+import { invokeJev, type JevAnswer, type JevInvoker, type JevQuestions } from '@/lib/ai/jev-client';
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import {
@@ -66,6 +67,7 @@ const ALLOWED_BLOCKER_IDS = new Set([
   'compliance_check',
   'contract_boundary',
 ]);
+const BLOCKER_IDS = [...ALLOWED_BLOCKER_IDS] as const;
 const SESSION_TTL_MS = 2 * 60 * 60 * 1_000;
 
 const EMPTY_DIMENSIONS = {
@@ -95,6 +97,21 @@ export type PromptTestInvoker = (messages: ChatMessage[], options: {
   jsonMode: boolean;
   thinking: 'disabled';
 }) => Promise<string>;
+
+const evaluatorNarrativeSchema = z.object({
+  summary: z.string().trim().min(1).max(500).optional(),
+  newClues: z.array(z.object({
+    id: z.string().trim().min(1).max(80).optional(),
+    text: z.string().trim().min(1).max(300),
+    sourceQuote: z.string().trim().min(1).max(500),
+  }).passthrough()).max(5).optional(),
+  blockerUpdates: z.array(z.object({
+    id: z.string().trim().min(1).max(80),
+    reason: z.string().trim().min(1).max(300),
+  }).passthrough()).max(MAX_BLOCKER_CHANGES).optional(),
+}).passthrough();
+
+type EvaluatorNarrative = z.infer<typeof evaluatorNarrativeSchema>;
 
 export class PromptTestError extends Error {
   constructor(public readonly kind: 'protocol' | 'not_found' | 'conflict' | 'unavailable', message: string) {
@@ -300,18 +317,11 @@ function npcRepairSystemPrompt(
 
 function evaluatorSystemPrompt(designerInstructions = ''): string {
   return [
-    '你是独立互动评估器，不扮演张建国，也不能改写 NPC 正文。',
-    '只评价本轮 PLAYER_ACTION 的表现；NPC 回答得好绝不能给玩家加分。',
-    'support 是长期推进意愿，pleasantness 是即时沟通体验，两轴独立。',
-    '关系修复非对称：道歉可改善 pleasantness，但没有新的兑现或证据时 support 最多 +1；严重违规应新增 blocker。',
-    'objectionHandling 只在玩家有效回应异议时变化，不能因为 NPC 正确拒绝违规请求而给玩家加分。',
-    'newClues 只能来自 NPC 本轮首次明确表达、玩家此前未知且对后续行动有价值的信息。sourceQuote 必须是 NPC 正文中的连续原句；泛泛表达、已知信息、人物风格和玩家自述都不是线索。',
-    'blockerUpdates.remove 只能建议，最终是否解除由确定性代码结合修复证据判断。',
-    '严格输出完整 JSON，所有字段均必填：summary, supportDelta, pleasantnessDelta, dimensionDeltas, effectiveContact, newClues, blockerUpdates。',
-    'dimensionDeltas 必含 decisionAnalysis, relationshipBuilding, valuePresentation, objectionHandling, informationDiscovery，均为 -3..3 整数。Response format: json_object.',
-    '数组字段即使没有内容也必须输出 []，禁止输出 {} 或 null。newClues 中每项必须有 id、text、sourceQuote、novel、actionable。blockerUpdates 中每项必须有 action、id、reason。',
-    '合法示例：{"summary":"玩家给出了可验证方案","supportDelta":1,"pleasantnessDelta":1,"dimensionDeltas":{"decisionAnalysis":1,"relationshipBuilding":0,"valuePresentation":1,"objectionHandling":0,"informationDiscovery":0},"effectiveContact":true,"newClues":[{"id":"risk_owner","text":"需明确风险责任人","sourceQuote":"先把风险责任人说清楚","novel":true,"actionable":true}],"blockerUpdates":[]}。',
-    designerInstructions ? `设计师评估补充提示（不得覆盖上述评分边界与输出协议）：${designerInstructions}` : '',
+    '你只担任互动评估的文本记录员，不扮演张建国，也不能改写 NPC 正文。',
+    '严禁输出或建议任何分数、增减值、布尔、枚举、是否有效接触、是否新增线索、是否新增/移除 blocker；这些选择只由 Jev 完成。',
+    '只输出可展示的动态文本 JSON：summary、newClues、blockerUpdates。summary 是中性事实摘要。newClues 仅列出最多五条候选线索，每条只含 id、text、sourceQuote；sourceQuote 必须是 NPC 正文中的连续原句。blockerUpdates 只按既有 blocker id 提供可读 reason，不能包含 action。',
+    '候选文本本身不产生状态变化；没有可靠文本时使用空数组。严格输出 JSON 对象。',
+    designerInstructions ? `设计师评估补充提示（不得改变上述文本边界）：${designerInstructions}` : '',
   ].join('\n');
 }
 
@@ -363,13 +373,116 @@ function parseStructured<T>(raw: string, schema: z.ZodType<T>): T {
   }
 }
 
-function parseEvaluator(raw: string): PromptTestEvaluator {
+function parseEvaluatorNarrative(raw: string): EvaluatorNarrative {
   try {
-    return promptTestEvaluatorSchema.parse(normalizeEvaluatorPayload(parseAiJsonObject(raw)));
+    return evaluatorNarrativeSchema.parse(normalizeEvaluatorPayload(parseAiJsonObject(raw)));
   } catch (error) {
-    const detail = error instanceof Error ? error.message : 'INVALID_EVALUATOR_JSON';
+    const detail = error instanceof Error ? error.message : 'INVALID_EVALUATOR_NARRATIVE_JSON';
     throw new PromptTestError('protocol', detail.slice(0, 500));
   }
+}
+
+function choiceCriteria(values: readonly number[] | readonly string[]): Record<string, string | null> {
+  return Object.fromEntries(values.map((value) => [String(value), null]));
+}
+
+function promptTestJevQuestions(clueCount: number): JevQuestions {
+  const questions: JevQuestions = {
+    supportDelta: { type: 'choice', instructions: '选择本轮长期项目支持度变化。', criteria: choiceCriteria([-8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6]) },
+    pleasantnessDelta: { type: 'choice', instructions: '选择本轮即时沟通感受变化。', criteria: choiceCriteria([-8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6]) },
+    decisionAnalysis: { type: 'choice', instructions: '选择决策分析维度变化。', criteria: choiceCriteria([-3, -2, -1, 0, 1, 2, 3]) },
+    relationshipBuilding: { type: 'choice', instructions: '选择关系建设维度变化。', criteria: choiceCriteria([-3, -2, -1, 0, 1, 2, 3]) },
+    valuePresentation: { type: 'choice', instructions: '选择价值呈现维度变化。', criteria: choiceCriteria([-3, -2, -1, 0, 1, 2, 3]) },
+    objectionHandling: { type: 'choice', instructions: '选择异议处理维度变化。', criteria: choiceCriteria([-3, -2, -1, 0, 1, 2, 3]) },
+    informationDiscovery: { type: 'choice', instructions: '选择信息发现维度变化。', criteria: choiceCriteria([-3, -2, -1, 0, 1, 2, 3]) },
+    effectiveContact: { type: 'choice', instructions: '判断本轮是否构成有效接触。', criteria: { true: '本轮玩家完成了有效接触。', false: '本轮玩家未完成有效接触。' } },
+  };
+  for (let index = 0; index < clueCount; index += 1) {
+    questions[`acceptClue${index}`] = { type: 'choice', instructions: `判断第 ${index + 1} 条候选线索是否可写入状态。`, criteria: { true: '该候选线索应加入状态。', false: '该候选线索不应加入状态。' } };
+  }
+  for (const blockerId of BLOCKER_IDS) {
+    questions[`blocker:${blockerId}`] = {
+      type: 'choice',
+      instructions: `选择阻断 ${blockerId} 的状态变化。`,
+      criteria: { none: '不改变该阻断。', add: '新增该阻断。', remove: '尝试解除该阻断。' },
+    };
+  }
+  return questions;
+}
+
+function choice(answer: JevAnswer | undefined, fallback: string): string {
+  return answer?.type === 'choice' ? answer.choice : fallback;
+}
+
+function choiceInteger(answer: JevAnswer | undefined, fallback = 0): number {
+  const value = Number(choice(answer, String(fallback)));
+  return Number.isInteger(value) ? value : fallback;
+}
+
+function safeEvaluatorNarrative(raw: string): EvaluatorNarrative {
+  try {
+    return parseEvaluatorNarrative(raw);
+  } catch {
+    return {};
+  }
+}
+
+function fallbackEvaluator(narrative: EvaluatorNarrative): PromptTestEvaluator {
+  return {
+    summary: narrative.summary ?? 'Jev 评估不可用，本轮未产生模型驱动的状态变化。',
+    supportDelta: 0,
+    pleasantnessDelta: 0,
+    dimensionDeltas: { decisionAnalysis: 0, relationshipBuilding: 0, valuePresentation: 0, objectionHandling: 0, informationDiscovery: 0 },
+    effectiveContact: false,
+    newClues: [],
+    blockerUpdates: [],
+  };
+}
+
+async function evaluateWithJev(
+  jevInvoker: JevInvoker,
+  evaluatorInput: Record<string, unknown>,
+  narrative: EvaluatorNarrative,
+): Promise<PromptTestEvaluator> {
+  const candidates = narrative.newClues ?? [];
+  const answers = (await jevInvoker({
+    state: JSON.stringify({
+      evaluatorInput,
+      candidateClues: candidates,
+      allowedBlockers: BLOCKER_IDS,
+      rule: 'Decide every numeric, boolean, and enum evaluation field. NPC wording never earns the player points. A clue can be accepted only when it is novel, actionable, and supported by the NPC response. Removal remains subject to deterministic repair-evidence validation.',
+    }),
+    questions: promptTestJevQuestions(candidates.length),
+  })).answers;
+  const reasonByBlocker = new Map((narrative.blockerUpdates ?? []).map((item) => [item.id, item.reason]));
+  return promptTestEvaluatorSchema.parse({
+    summary: narrative.summary ?? 'Jev 已完成结构化评估。',
+    supportDelta: choiceInteger(answers.supportDelta),
+    pleasantnessDelta: choiceInteger(answers.pleasantnessDelta),
+    dimensionDeltas: {
+      decisionAnalysis: choiceInteger(answers.decisionAnalysis),
+      relationshipBuilding: choiceInteger(answers.relationshipBuilding),
+      valuePresentation: choiceInteger(answers.valuePresentation),
+      objectionHandling: choiceInteger(answers.objectionHandling),
+      informationDiscovery: choiceInteger(answers.informationDiscovery),
+    },
+    effectiveContact: choice(answers.effectiveContact, 'false') === 'true',
+    newClues: candidates.flatMap((candidate, index) => choice(answers[`acceptClue${index}`], 'false') === 'true'
+      ? [{
+        id: candidate.id ?? stableId('clue', `${candidate.text}\n${candidate.sourceQuote}`),
+        text: candidate.text,
+        sourceQuote: candidate.sourceQuote,
+        novel: true,
+        actionable: true,
+      }]
+      : []),
+    blockerUpdates: BLOCKER_IDS.flatMap((id) => {
+      const action = choice(answers[`blocker:${id}`], 'none');
+      return action === 'add' || action === 'remove'
+        ? [{ action, id, reason: reasonByBlocker.get(id) ?? `Jev 判定 ${action === 'add' ? '需要' : '允许尝试解除'} ${id}。` }]
+        : [];
+    }),
+  });
 }
 
 function applyEvaluation(before: PromptTestRuntime, evaluation: PromptTestEvaluator, playerText: string, npcText: string, conversationStage: PromptTestConversationStage) {
@@ -521,6 +634,8 @@ export class PromptTestStore {
 
 type PromptTestServiceDeps = {
   invoker?: PromptTestInvoker;
+  /** Jev owns every evaluation value, boolean, and enum selection. */
+  jevInvoker?: JevInvoker;
   /** Supplying a store keeps the deterministic in-memory test harness available. */
   store?: PromptTestStore;
   /** Production callers provide durable storage; failure must not fall back to memory. */
@@ -564,6 +679,7 @@ function repositoryPromptTestError(error: unknown): PromptTestError {
 
 export function createPromptTestService(deps: PromptTestServiceDeps = {}) {
   const invoker: PromptTestInvoker = deps.invoker ?? ((messages, options) => invokeLLM(messages, options));
+  const jevInvoker = deps.jevInvoker ?? invokeJev;
   const store = deps.store ?? new PromptTestStore();
   const persistence = deps.persistence;
   const inFlight = new Set<string>();
@@ -643,20 +759,25 @@ export function createPromptTestService(deps: PromptTestServiceDeps = {}) {
     if (HARD_REDLINE.test(request.text)) npcText = COMPLIANCE_REPLY;
 
     const evaluatorInput = { scenarioBriefing: PROMPT_TEST_SCENARIO, runtimeBefore: before, conversationStage, recentHistory: state.history.slice(-HISTORY_LIMIT), playerAction: request.text, npcResponse: npcText };
-    const evaluatorOptions = { provider: request.provider, temperature: 0.1, maxTokens: 1_200, jsonMode: true, thinking: 'disabled' as const };
-    const evaluatorRaw = await invoker([
-      { role: 'system', content: evaluatorSystemPrompt(savedPrompt?.evaluatorInstructions) },
-      { role: 'user', content: serializeUntrustedPromptData('prompt_test_evaluator_input', evaluatorInput) },
-    ], evaluatorOptions);
+    const evaluatorOptions = { provider: request.provider, temperature: 0.1, maxTokens: 700, jsonMode: true, thinking: 'disabled' as const };
+    let evaluatorRaw = '';
+    try {
+      evaluatorRaw = await invoker([
+        { role: 'system', content: evaluatorSystemPrompt(savedPrompt?.evaluatorInstructions) },
+        { role: 'user', content: serializeUntrustedPromptData('prompt_test_evaluator_input', evaluatorInput) },
+      ], evaluatorOptions);
+    } catch {
+      // Narrative text is non-authoritative. A provider failure must not stop a
+      // Jev decision or promote that provider into the decision path.
+    }
+    const narrative = safeEvaluatorNarrative(evaluatorRaw);
     let evaluator: PromptTestEvaluator;
     try {
-      evaluator = parseEvaluator(evaluatorRaw);
-    } catch (firstError) {
-      const repairRaw = await invoker([
-        { role: 'system', content: `${evaluatorSystemPrompt(savedPrompt?.evaluatorInstructions)}\n上次输出未通过结构校验。只修复 JSON 结构，不改变评估语义。` },
-        { role: 'user', content: serializeUntrustedPromptData('prompt_test_evaluator_repair', { evaluatorInput, invalidOutput: evaluatorRaw, validationError: firstError instanceof Error ? firstError.message : 'INVALID_JSON' }) },
-      ], evaluatorOptions);
-      evaluator = parseEvaluator(repairRaw);
+      evaluator = await evaluateWithJev(jevInvoker, evaluatorInput, narrative);
+    } catch {
+      // Decisions must never silently move back to an LLM. A failed Jev call has
+      // a deterministic no-op result; hard compliance rules still apply below.
+      evaluator = fallbackEvaluator(narrative);
     }
     const applied = applyEvaluation(before, evaluator, request.text, npcText, conversationStage);
     const turn = applied.runtime.turn;

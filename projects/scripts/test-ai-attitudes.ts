@@ -1,15 +1,19 @@
 import assert from 'node:assert/strict';
 import {
   createFallbackGiftDecision,
+  evaluateGiftDecision,
+  evaluateNpcTurn,
   parseNpcTurnEvaluation,
   verifyNpcEvaluationSources,
   type GiftDecisionContext,
   type NpcEvaluationContext,
 } from '../src/lib/ai/npc-evaluation';
+import type { JevInvoker } from '../src/lib/ai/jev-client';
 import { CUSTOMER_CONTEXT, CUSTOMER_PROMPT } from '../src/lib/ai/prompts/customer';
 import { serializeUntrustedPromptData } from '../src/lib/ai/prompt-data';
 import { npcChatRequestSchema } from '../src/lib/contracts/ai';
 
+async function main() {
 const baseContext: GiftDecisionContext = {
   commandId: 'gift-case-0',
   npcId: 'P1-001',
@@ -76,6 +80,21 @@ const bribe = createFallbackGiftDecision({
 assert.equal(bribe.disposition, 'reported');
 assert.ok(bribe.pleasureDelta <= -10 && bribe.supportDelta <= -8);
 
+const giftJev: JevInvoker = async () => ({ answers: {
+  disposition: { type: 'choice', choice: 'polite_decline' },
+  pleasureDelta: { type: 'choice', choice: '-2' },
+  supportDelta: { type: 'choice', choice: '-1' },
+} } as unknown as Awaited<ReturnType<JevInvoker>>);
+const giftFromJev = await evaluateGiftDecision({ ...baseContext, commandId: 'jev-gift-state' }, {
+  jevInvoker: giftJev,
+  invoker: async () => JSON.stringify({
+    disposition: 'delighted_acceptance', pleasureDelta: 12, supportDelta: 7,
+    reason: 'LLM cannot choose this', riskReason: 'LLM cannot choose this', npcResponse: 'LLM cannot choose this',
+  }),
+});
+assert.equal(giftFromJev.decision.disposition, 'polite_decline', 'Jev controls the persisted gift disposition');
+assert.equal(giftFromJev.decision.pleasureDelta, -2, 'LLM-supplied gift score is ignored');
+
 const evaluationContext: NpcEvaluationContext = {
   npcId: 'P1-004',
   npcName: '赵晓晨',
@@ -133,6 +152,23 @@ const validEvaluation = JSON.stringify({
   handoff: null,
   emotion: 'thinking',
 });
+
+const npcJev: JevInvoker = async () => ({ answers: Object.fromEntries([
+  ['pleasureDelta', '2'], ['supportDelta', '3'], ['decisionAnalysis', '1'], ['relationshipBuilding', '1'],
+  ['valuePresentation', '1'], ['objectionHandling', '0'], ['informationDiscovery', '0'], ['clue', 'none'],
+  ['workTopicOpenedBy', 'player'], ['negativeInformation', 'false'], ['negativeInformationType', 'none'],
+  ['riskyConduct', 'false'], ['giftMentioned', 'false'], ['explicitQuidProQuo', 'false'], ['repeatedPressure', 'false'],
+  ['giftType', 'none'], ['giftOutcome', 'not_applicable'], ['giftRiskLevel', 'none'], ['handoffTarget', 'none'], ['emotion', 'excited'],
+].map(([key, choice]) => [key, { type: 'choice', choice }])) } as unknown as Awaited<ReturnType<JevInvoker>>);
+const npcFromJev = await evaluateNpcTurn(evaluationContext, '', {
+  jevInvoker: npcJev,
+  invoker: async () => JSON.stringify({
+    ...JSON.parse(validEvaluation), pleasureDelta: -12, supportDelta: -10, emotion: 'annoyed',
+  }),
+});
+assert.equal(npcFromJev.evaluation.pleasureDelta, 2, 'Jev controls NPC deltas even when LLM returns conflicting JSON');
+assert.equal(npcFromJev.evaluation.supportDelta, 3, 'LLM cannot select NPC support');
+assert.equal(npcFromJev.evaluation.emotion, 'excited', 'Jev controls NPC enum state');
 const parsedValid = parseNpcTurnEvaluation(validEvaluation, evaluationContext);
 assert.ok(parsedValid.evaluation);
 assert.deepEqual(parsedValid.errors, []);
@@ -278,3 +314,9 @@ assert.throws(() => npcChatRequestSchema.parse({
 }), 'email attachment requires both a file name and a natural-language description');
 
 console.log('AI attitude and high-volatility gift tests passed');
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

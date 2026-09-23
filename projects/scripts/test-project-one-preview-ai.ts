@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import {
-  PREVIEW_NPC_IDS, PREVIEW_NPCS, PreviewAiError, PreviewSessionStore, createPreviewAiService, createPreviewServerState, fromPersistedPreviewServerState,
+  PREVIEW_NPC_IDS, PREVIEW_NPCS, PreviewAiError, PreviewSessionStore, createPreviewAiService as createPreviewAiServiceBase, createPreviewServerState, fromPersistedPreviewServerState,
   getAllowedTasks, resolvePreviewNpcExpression, resolvePreviewNode, toPersistedPreviewServerState, toPreviewRecoveryDto, type PreviewSessionPersistence,
 } from '../src/lib/game/project-one-preview-ai';
 import { previewAiRequestSchema, previewAiResponseSchema, previewNpcEvaluationAiOutputSchema } from '../src/lib/contracts/project-one-preview-ai';
 import { PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS } from '../src/lib/designer/project-one-five-person';
 import { getPreviewRequestHash } from '../src/lib/game/project-one-preview-session-repository';
+import type { JevInvoker, JevQuestion } from '../src/lib/ai/jev-client';
 
 const json = (value: unknown) => JSON.stringify(value);
 let commandIndex = 0;
@@ -22,6 +23,46 @@ const reply = (content: string, invitationStatus: 'none' | 'accepted' | 'rejecte
 const readNoReply = (reasonCode: 'natural_closure' | 'no_new_value' | 'repeated_follow_up' | 'not_responsible' | 'current_priority_low' | 'unwilling_to_advance' = 'natural_closure') => ({
   responseAction: 'read_no_reply' as const, content: null, invitationStatus: 'none' as const, reasonCode, reasonEvidence: '当前消息没有需要立即答复的新事项。',
 });
+
+function choiceFor(id: string, question: Extract<JevQuestion, { type: 'choice' }>, state: string): string {
+  const keys = Object.keys(question.criteria);
+  if (id === 'responseAction') return /TEST_READ_NO_REPLY|"playerText":"(?:验收记录已补齐|补充同一份验收记录|收到，谢谢)|不需要立即答复/.test(state) && keys.includes('read_no_reply') ? 'read_no_reply' : 'reply';
+  if (id === 'invitationStatus') return /(?:邀请|拜访|见面|明天|下周)/.test(state) && keys.includes('accepted') ? 'accepted' : 'none';
+  if (id === 'completedTask') return 'none';
+  if (id === 'playerDialogueSignal') return /"playerText":"[^"]*(?:告辞|再见|今天先到这)/.test(state) ? 'farewell' : 'continue';
+  if (id === 'npcDialogueSignal') return /(?:马上还有会|我得赶会)/.test(state) ? 'forced_exit'
+    : /(?:今天先这样|再见|改天再聊)/.test(state) ? 'farewell' : 'continue';
+  if (id === 'memoryType') return /last_commitment_or_feedback/.test(state) ? 'commitment' : /verified_improvement|key_fulfillment|player_report/.test(state) ? 'evidence' : 'none';
+  if (id === 'memoryStatus') return 'active';
+  if (id === 'blockerAction') return 'none';
+  if (id === 'supportDelta') return '2';
+  if (id === 'pleasureDelta' || id === 'decisionAnalysis') return '1';
+  if (['relationshipBuilding', 'valuePresentation', 'objectionHandling', 'informationDiscovery'].includes(id)) return '0';
+  return keys.includes('none') ? 'none' : keys[0];
+}
+
+const testJevInvoker: JevInvoker = async (request) => {
+  const state = typeof request.state === 'string' ? request.state : JSON.stringify(request.state);
+  const answers = Object.fromEntries(Object.entries(request.questions).map(([id, question]) => {
+    if (question.type === 'choice') {
+      const choice = choiceFor(id, question, state);
+      return [id, { type: 'choice' as const, choice, probabilities: Object.fromEntries(Object.keys(question.criteria).map((key) => [key, key === choice ? 1 : 0])), confidence: 1 }];
+    }
+    if (question.type === 'noul') {
+      const yes = id === 'effectiveContact' || id === 'accepted'
+        || (id === 'viewed' && /验收记录/.test(state))
+        || (id.startsWith('match_') && state.includes(id.slice('match_'.length)));
+      return [id, { type: 'noul' as const, noul: yes ? 1 : 0 }];
+    }
+    const wanted = id === 'supportDelta' ? '2' : id === 'pleasureDelta' || id === 'decisionAnalysis' ? '1' : '0';
+    const index = Math.max(0, question.criteria.findIndex((item) => item === wanted));
+    return [id, { type: 'score' as const, score: index, legend: Object.fromEntries(question.criteria.map((item, itemIndex) => [String(itemIndex), item])), probabilities: Object.fromEntries(question.criteria.map((_, itemIndex) => [String(itemIndex), itemIndex === index ? 1 : 0])), confidence: 1 }];
+  }));
+  return { answers };
+};
+
+const createPreviewAiService = (deps: Parameters<typeof createPreviewAiServiceBase>[0] = {}) =>
+  createPreviewAiServiceBase({ ...deps, jevInvoker: deps.jevInvoker ?? testJevInvoker });
 
 async function main() {
   assert.deepEqual(PREVIEW_NPC_IDS, ['P1-001', 'P1-002', 'P1-003', 'P1-004', 'P1-005']);
@@ -129,11 +170,9 @@ async function main() {
     ? json(emptyEvaluation)
     : json({ responseAction: 'read_no_reply', content: null, invitationStatus: 'none' }) });
   const badReadState = badReadService.store.create('user-bad-read');
-  await assert.rejects(
-    badReadService.execute('user-bad-read', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '收到，谢谢。' }, 0, badReadState.previewSessionId)),
-    (error: unknown) => error instanceof PreviewAiError && error.kind === 'protocol',
-  );
-  assert.equal(badReadState.conversations['P1-001'].length, 0, 'invalid read_no_reply output cannot leave a partial message');
+  const badRead = await badReadService.execute('user-bad-read', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '收到，谢谢。' }, 0, badReadState.previewSessionId));
+  assert.equal(badRead.responseAction, 'read_no_reply', 'LLM responseAction fields are ignored because Jev owns the silence decision');
+  assert.equal(badReadState.conversations['P1-001'].length, 1, 'the Jev decision commits exactly the real player message');
 
   const whitespaceReplyService = createPreviewAiService({ invoker: async () => json({ responseAction: 'reply', content: '   ', invitationStatus: 'none' }) });
   const whitespaceReplyState = whitespaceReplyService.store.create('user-whitespace-reply');
@@ -155,13 +194,11 @@ async function main() {
     ? json({ pleasureDelta: 99 })
     : json(readNoReply()) });
   const silentEvaluationFailureState = silentEvaluationFailureService.store.create('user-silent-evaluation-failure');
-  await assert.rejects(
-    silentEvaluationFailureService.execute('user-silent-evaluation-failure', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '验收记录已补齐。' }, 0, silentEvaluationFailureState.previewSessionId)),
-    (error: unknown) => error instanceof PreviewAiError && error.kind === 'protocol',
-  );
-  assert.equal(silentEvaluationFailureState.version, 0, 'failed silent evaluation cannot increment the version');
-  assert.equal(silentEvaluationFailureState.conversations['P1-001'].length, 0, 'failed silent evaluation cannot store a read receipt');
-  assert.equal(silentEvaluationFailureState.npcStates['P1-001'].support, 0, 'failed silent evaluation cannot apply scoring');
+  const silentEvaluationResult = await silentEvaluationFailureService.execute('user-silent-evaluation-failure', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '验收记录已补齐。' }, 0, silentEvaluationFailureState.previewSessionId));
+  assert.equal(silentEvaluationResult.responseAction, 'read_no_reply');
+  assert.equal(silentEvaluationFailureState.version, 1, 'malformed non-authoritative prose cannot block a valid Jev evaluation');
+  assert.equal(silentEvaluationFailureState.conversations['P1-001'].length, 1, 'the Jev-controlled read receipt is committed');
+  assert.equal(silentEvaluationFailureState.npcStates['P1-001'].support, 2, 'Jev scoring remains authoritative when prose suggestions are malformed');
 
   const emailSilencePrompts: string[] = [];
   const emailSilenceService = createPreviewAiService({ invoker: async (messages) => {
@@ -374,12 +411,10 @@ async function main() {
     return prompt.includes('独立评估刚刚完成的 NPC 正文') ? json({ pleasureDelta: 99 }) : json(reply('请说明。'));
   } });
   const failedState = failedService.store.create('user-failure');
-  await assert.rejects(
-    failedService.execute('user-failure', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '请确认下一步。' }, 0, failedState.previewSessionId)),
-    (error: unknown) => error instanceof PreviewAiError && error.kind === 'protocol',
-  );
-  assert.equal(failedState.conversations['P1-001'].length, 0, 'protocol failure leaves messages unchanged');
-  assert.equal(failedState.npcStates['P1-001'].support, 0, 'protocol failure leaves scoring state unchanged');
+  const ignoredDecisionFields = await failedService.execute('user-failure', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '请确认下一步。' }, 0, failedState.previewSessionId));
+  assert.equal(ignoredDecisionFields.content, '请说明。');
+  assert.equal(failedState.conversations['P1-001'].length, 2, 'valid prose is committed even when its legacy decision fields are malformed');
+  assert.equal(failedState.npcStates['P1-001'].support, 2, 'Jev scoring replaces malformed LLM decision fields');
 
   const modelBlockerMemoryService = createPreviewAiService({ invoker: async (messages) => {
     const prompt = messages.map((message) => message.content).join('\n');

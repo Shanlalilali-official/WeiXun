@@ -1,5 +1,13 @@
 # 工作交接
 
+## 2026-09-23 Jev 决策层
+
+- Jev 客户端位于 `projects/src/lib/ai/jev-client.ts`，与 OpenAI-compatible `client.ts` 完全分离。部署至少设置 `JEV_API_KEY`；默认 endpoint 为 `https://api.typesafe.ai/v1/systemone`、模型为 `jev-latest`，其余 `JEV_*` 变量见 `.env.example`。不要把 key 加到 `NEXT_PUBLIC_*` 或提交 `.env.local`。
+- 结构化选择已覆盖 `npc-evaluation.ts`、`competitor-stage.ts`、`prompt-test.ts` 和 `project-one-preview-ai.ts`。扩展新流程时先区分“改变状态的有限选择”和“只供人阅读的文字”：前者给 Jev，后者给现有 LLM；合并时逐字段挑选，禁止 spread 未验证的 LLM JSON。
+- Jev 错误只允许确定性兜底，禁止为了可用性调用原 LLM 代替判断。离散整数状态用 `choice`；只有允许连续/加权结果时才使用 `score`。任何结果仍须经过业务 schema、硬规则和 reducer。
+- 验证入口：`test:jev-provider`、`test:competitor-ai`、`test:ai-attitudes`、`test:project-one-preview-ai`、`test:prompt-test`、`test:formal-five-person`。配置真实密钥后先运行 `local:check:jev`，再执行人工真实场景烟测；本批未使用或记录用户密钥。
+- `test-wechat-expressions` 当前有一个与本批无关的基线静态断言：它要求 HTML 包含“NPC 已明确结束交流。你可以最后回应一次”，但 `511cde8` 已无该字面量，本批也未修改该 HTML。后续应按当前 UI 契约单独处理，不要误归因于 Jev 分层。
+
 ## 2026-09-22 张建国办公室沉浸式拜访样板
 
 - 五人预览的 `state.meeting` 存在时，`render()` 会跳过顶栏和三栏工作台，直接渲染 `visit-immersive`。`refreshWorkspaceBody()` 在会面期间改为完整重渲染，不要再假定存在 `.workspace-body`。

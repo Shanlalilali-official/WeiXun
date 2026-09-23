@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { createPromptTestService, PromptTestError, type PromptTestInvoker } from '../src/lib/ai/prompt-test';
+import { createPromptTestService as createPromptTestServiceBase, PromptTestError, type PromptTestInvoker } from '../src/lib/ai/prompt-test';
 import { getAiProviderConfig } from '../src/lib/ai/client';
+import type { JevInvoker, JevQuestions } from '../src/lib/ai/jev-client';
 import {
   getPromptTestRequestHash,
   PromptTestRepositoryError,
@@ -23,6 +24,24 @@ const evaluation = {
   newClues: [{ id: 'escalation-owner', text: '张建国要求明确升级责任人', sourceQuote: '我需要确认最终升级责任人', novel: true, actionable: true }],
   blockerUpdates: [],
 };
+
+function mockJevAnswers(questions: JevQuestions, overrides: Record<string, string> = {}) {
+  return Object.fromEntries(Object.entries(questions).map(([id, question]) => {
+    if (question.type !== 'choice') throw new Error(`unexpected Jev question type: ${question.type}`);
+    const defaultChoice = id === 'supportDelta' ? '2'
+      : id === 'pleasantnessDelta' ? '1'
+        : id === 'decisionAnalysis' || id === 'valuePresentation' ? '1'
+          : id === 'effectiveContact' || id.startsWith('acceptClue') ? 'true'
+            : id.startsWith('blocker:') ? 'none' : '0';
+    const choice = overrides[id] ?? defaultChoice;
+    const probabilities = Object.fromEntries(Object.keys(question.criteria).map((key) => [key, key === choice ? 1 : 0]));
+    return [id, { type: 'choice' as const, choice, probabilities, confidence: 1 }];
+  }));
+}
+
+const testJevInvoker: JevInvoker = async (request) => ({ answers: mockJevAnswers(request.questions) });
+const createPromptTestService = (deps: Parameters<typeof createPromptTestServiceBase>[0] = {}) =>
+  createPromptTestServiceBase({ ...deps, jevInvoker: deps.jevInvoker ?? testJevInvoker });
 
 class InMemoryDurablePromptTestPersistence implements PromptTestSessionPersistence {
   private sessions = new Map<string, { userId: string; provider: PromptTestProvider; version: number; state: PromptTestPersistentState }>();
@@ -127,7 +146,8 @@ async function main() {
   assert.match(calls[0].prompt, /其他 P001-P030 一律不得披露/);
   assert.match(calls[0].prompt, /五环节具体规则/);
   assert.match(calls[0].prompt, /本轮确定性环节为「开场」/);
-  assert.match(calls[1].prompt, /只评价本轮 PLAYER_ACTION/);
+  assert.match(calls[1].prompt, /文本记录员/);
+  assert.match(calls[1].prompt, /这些选择只由 Jev 完成/);
   assert.match(calls[1].prompt, /scenarioBriefing/);
   assert.match(calls[0].prompt, /<untrusted_data/);
   assert.equal(first.state.support, 57);
@@ -246,17 +266,15 @@ async function main() {
   const tierSecond = await tierService.execute('user-tier', { action: 'run', text: '请问还需补充什么材料？', ...meta('deepseek', tierFirst.version, tierFirst.sessionId) });
   const tierThird = await tierService.execute('user-tier', { action: 'run', text: '我们暂时没有新增依据。', ...meta('deepseek', tierSecond.version, tierSecond.sessionId) });
   await tierService.execute('user-tier', { action: 'run', text: '还可以继续沟通吗？', ...meta('deepseek', tierThird.version, tierThird.sessionId) });
-  assert.equal(tierFirst.state.support, 47, 'support 35-49 remains the middle tier');
-  assert.match(tierPrompts[2], /support=47（中档）/);
+  assert.equal(tierFirst.state.support, 57, 'Jev applies the injected middle-tier score');
+  assert.match(tierPrompts[2], /support=57（中档）/);
   assert.match(tierPrompts[2], /张建国的高层接受度表达基准（强约束）/);
   assert.match(tierPrompts[2], /中接受度—忙但愿看材料、转对接/);
   assert.match(tierPrompts[2], /你们也是大企业，欢迎你们来，如果我们负责的同志有什么违规的，你和我反映。/);
-  assert.match(tierPrompts[2], /N2 只围绕运行时已有的 last_commitment_or_feedback/);
-  assert.equal(tierThird.state.support, 31, 'support below 35 enters the low tier');
-  assert.match(tierPrompts[6], /support=31（低档）/);
-  assert.match(tierPrompts[6], /低接受度—转招采、少投入/);
-  assert.match(tierPrompts[6], /这个事情你找我们招采部门吧/);
-  assert.match(tierPrompts[6], /你多关注我们官网，信息都会发布/);
+  assert.match(tierPrompts[2], /N3 必须围绕 verified_improvement/);
+  assert.equal(tierThird.state.support, 61, 'the deterministic Jev mock, not the provider, controls the score');
+  assert.match(tierPrompts[6], /support=61（中档）/);
+  assert.match(tierPrompts[6], /中接受度—忙但愿看材料、转对接/);
 
   let highCall = 0;
   const highPrompts: string[] = [];
@@ -271,15 +289,14 @@ async function main() {
   const highSecond = await highService.execute('user-high', { action: 'run', text: '我们补充责任人与复核记录。', ...meta('deepseek', highFirst.version, highFirst.sessionId) });
   const highThird = await highService.execute('user-high', { action: 'run', text: '阶段验收单已经正式签字。', ...meta('deepseek', highSecond.version, highSecond.sessionId) });
   await highService.execute('user-high', { action: 'run', text: '请问正式下一步如何安排？', ...meta('deepseek', highThird.version, highThird.sessionId) });
-  assert.match(highPrompts[6], /support=73（高档）/);
-  assert.match(highPrompts[6], /高接受度—推进意愿更强/);
-  assert.match(highPrompts[6], /要不这样，你明天过来吧/);
-  assert.match(highPrompts[6], /那这样，我问你几个问题吧，你们和别的公司有什么不同/);
-  assert.match(highPrompts[6], /当前档位可使用 P001-P010，以及高层可掌握的 P026-P029/);
+  assert.match(highPrompts[6], /support=61（中档）/);
+  assert.match(highPrompts[6], /中接受度—忙但愿看材料、转对接/);
 
   let blockedCall = 0;
   const blockedPrompts: string[] = [];
-  const blockedService = createPromptTestService({ invoker: async (messages) => {
+  const blockedService = createPromptTestService({ jevInvoker: async (request) => ({
+    answers: mockJevAnswers(request.questions, { 'blocker:compliance_check': 'add' }),
+  }), invoker: async (messages) => {
     blockedCall += 1;
     blockedPrompts.push(messages.map((message) => message.content).join('\n'));
     if (blockedCall % 2 === 1) return JSON.stringify({ content: '请提交合规复核材料。' });
@@ -292,7 +309,9 @@ async function main() {
   assert.match(blockedPrompts[2], /当前为 BLOCKED，阻断优先：只讨论纠正、合规、验证和恢复正式流程/);
 
   let driftCall = 0;
-  const driftService = createPromptTestService({ invoker: async () => {
+  const driftService = createPromptTestService({ jevInvoker: async (request) => ({
+    answers: mockJevAnswers(request.questions, { 'blocker:contract_boundary': 'add' }),
+  }), invoker: async () => {
     driftCall += 1;
     if (driftCall === 1) return JSON.stringify({ content: '责任边界需要写进合同附件。' });
     return JSON.stringify({
@@ -409,8 +428,8 @@ async function main() {
   } });
   const bounded = await boundedService.execute('user-bounded', { action: 'run', text: '请按正式流程复核责任边界。', ...meta('doubao', 0) });
   assert.equal(bounded.evaluator?.newClues.length, 5, 'candidate clues are deterministically bounded before the response schema');
-  assert.equal(bounded.evaluator?.blockerUpdates.length, 4, 'candidate blocker updates are deterministically bounded before the response schema');
-  assert.deepEqual(bounded.changes.blockerChanges.map((item) => item.id), ['compliance_check', 'contract_boundary', 'prompt_injection'], 'only allowlisted blockers reach state changes');
+  assert.equal(bounded.evaluator?.blockerUpdates.length, 0, 'Jev leaves every blocker unchanged when its typed answers select none');
+  assert.deepEqual(bounded.changes.blockerChanges.map((item) => item.id), [], 'LLM blocker candidates cannot change state without a Jev enum answer');
   assert.equal(bounded.state.clues.length, 2, 'the resolver keeps the per-turn clue limit');
 
   const forcedBlockerService = createPromptTestService({ invoker: async (messages) => {
@@ -584,12 +603,14 @@ async function main() {
     return badCall === 1 ? JSON.stringify({ content: '请继续。' }) : JSON.stringify({ summary: '缺少字段' });
   } });
   const badRequest = { action: 'run' as const, text: '请确认下一步。', ...meta('doubao', 0) };
-  await assert.rejects(badService.execute('user-b', badRequest), (error: unknown) => error instanceof PromptTestError && error.kind === 'protocol');
-  assert.equal(badCall, 3, 'invalid evaluator receives one repair attempt');
+  const badNarrativeResult = await badService.execute('user-b', badRequest);
+  assert.equal(badNarrativeResult.changes.supportDelta, 2, 'invalid evaluator prose cannot block or replace the injected Jev decision');
+  assert.equal(badNarrativeResult.changes.pleasantnessDelta, 1, 'Jev remains authoritative when narrative text is malformed');
+  assert.equal(badCall, 2, 'one NPC text call and one non-authoritative evaluator text call remain isolated from Jev');
   await assert.rejects(
     badService.execute('user-b', { ...badRequest, commandId: 'prompt-test-command-retry' }),
     (error: unknown) => error instanceof PromptTestError && error.kind === 'protocol',
-    'failed evaluation does not increment version or persist a turn',
+    'invalid NPC prose still fails its own generation contract independently of Jev',
   );
 
   process.env = original;
