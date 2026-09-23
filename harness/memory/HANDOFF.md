@@ -1,5 +1,12 @@
 # 工作交接
 
+## 2026-09-23 五人预览账号切换修复
+
+- `projects/public/project1-prototype-v9.html` 的 `STORAGE_KEY` 与 `PREVIEW_SESSION_STORAGE_KEY` 现在按 `weixun_identity.userId` 派生专属键，并在 JSON 中再次保存 owner；读取时双重校验。账号变化通过 storage/focus/pageshow/visibility 事件或请求前检查切换完整快照；身份与 token 不同步时暂停请求，旧请求的返回、流式片段和调用方后续写入由代次/取消结果隔离。新增异步 UI 动作时，若 await 后会写 `state`，也应检查用户代次。
+- 旧固定键无 owner，页面首次加载会清除旧 `project1_interactive_prototype_v9`、`v10` 和 `weixun_project1_preview_session_v1` 三份当前标签页缓存。无法安全判断其账号，不可直接迁入新用户；服务端数据库会话不受影响。404/410 只重置当前登录用户的本地完整预览态，401 保留其本地缓存等待重新登录。
+- `project-one-preview-session-repository.ts` 的 `toPreviewPersistenceError` 只读取 PostgREST 普通对象的 `message`，精确 SQL token `PREVIEW_SESSION_NOT_FOUND` 与 session mismatch 返回通用 404；其他数据库故障返回 503。数据库 acquire/commit/load 的 `id + user_id` 条件和 RLS 未改变。
+- 验证入口：`test:preview-account-isolation`、`test:preview-session-errors`、`test:project-one-preview-ai`、`test:preview-test-controls`、`test:legacy-ui-contracts`；另检查 TypeScript、全量 ESLint 与生产构建。行为测试使用浏览器存储/请求的 VM 模拟，真实双账号浏览器人工验收可在下一次现场测试补做。
+
 ## 2026-09-23 Jev 决策层
 
 - Jev 客户端位于 `projects/src/lib/ai/jev-client.ts`，与 OpenAI-compatible `client.ts` 完全分离。部署至少设置 `JEV_API_KEY`；默认 endpoint 为 `https://api.typesafe.ai/v1/systemone`、模型为 `jev-latest`，其余 `JEV_*` 变量见 `.env.example`。不要把 key 加到 `NEXT_PUBLIC_*` 或提交 `.env.local`。

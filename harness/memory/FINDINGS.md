@@ -1,5 +1,12 @@
 # 调查发现
 
+## 2026-09-23 五人预览跨账号缓存实查
+
+- `projects/public/project1-prototype-v9.html` 的页面状态键 `project1_interactive_prototype_v10` 和服务端会话键 `weixun_project1_preview_session_v1` 均为固定标签页键，没有用户归属；切换账号后 `loadState()` 和 `restorePreviewSession()` 仍会读取前一账号内容。
+- 登录与退出仅更新 cookie 和 `localStorage` 身份/会话字段，未触碰五人预览的 `sessionStorage`。服务端 `project_one_preview_sessions` 按 `user_id` 查询，数据库层已拒绝新账号取得旧账号会话；缺口是浏览器提前展示旧内容并继续提交其 ID。
+- 先前页面的“AI 服务暂时不可用”同时覆盖 502/503 多类异常，仅凭横幅无法证明模型故障；本次真实最小 LLM、Jev 和数据库连通探测均通过。跨账号会话错误应由明确的会话失效路径处理。
+- `@supabase/postgrest-js` 的普通 `.rpc()` 错误会以含 `message` 的普通对象返回；原 `persistenceError` 仅对 `Error` 实例取 `message`，对普通对象得到 `[object Object]`，从而错把 SQL 的 `PREVIEW_SESSION_NOT_FOUND` 当成 503。SQL 中获取/提交均按会话 ID 与用户 ID 查找，不能据 404 区分“不存在”与“归属别的账号”。
+
 ## 2026-09-23 Jev 决策分层实查
 
 - 决策/表达混合不只存在于正式 NPC 评分：礼品处置、竞品动作、五人预览的沉默/邀约/拜访信号与 Prompt 测试 evaluator 都会把可改变状态的字段交给原 LLM。普通聊天正文、场景创作、记忆摘要和复盘叙述属于自由文本，不应为追求“全迁移”而改成 typed choice。

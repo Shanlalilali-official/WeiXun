@@ -25,6 +25,8 @@
     "test:competitor-ai": "tsx scripts/test-competitor-ai.ts",
     "test:email-attachments": "tsx scripts/test-email-attachments.ts",
     "test:project-one-preview-ai": "tsx scripts/test-project-one-preview-ai.ts",
+    "test:preview-account-isolation": "tsx scripts/test-preview-account-isolation.ts",
+    "test:preview-session-errors": "tsx scripts/test-preview-session-errors.ts",
     "test:npc-silence-live": "tsx scripts/test-npc-silence-live.ts",
     "test:wechat-expressions": "tsx scripts/test-wechat-expressions.ts",
     "test:preview-test-controls": "tsx scripts/test-preview-test-controls.ts",

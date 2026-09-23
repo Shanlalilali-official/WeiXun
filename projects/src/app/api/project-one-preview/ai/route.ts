@@ -15,7 +15,7 @@ const RATE_WINDOW_MS = 60_000;
 const MAX_REQUESTS_PER_WINDOW = 60;
 const rateBuckets = new Map<string, { startedAt: number; count: number }>();
 
-function previewErrorResponse(error: unknown): { status: number; message: string } | null {
+export function previewErrorResponse(error: unknown): { status: number; message: string } | null {
   if (!(error instanceof PreviewAiError || (error instanceof Error && ['protocol', 'unavailable', 'conflict', 'not_found', 'limit'].includes(String((error as PreviewAiError).kind))))) return null;
   const previewError = error as PreviewAiError;
   const status = previewError.kind === 'unavailable' ? 503 : previewError.kind === 'conflict' ? 409 : previewError.kind === 'not_found' ? 404 : previewError.kind === 'limit' ? 429 : 502;

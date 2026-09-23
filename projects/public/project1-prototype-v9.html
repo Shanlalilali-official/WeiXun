@@ -449,6 +449,25 @@ const DemoOnlyApi = {
 (() => {
  const STORAGE_KEY='project1_interactive_prototype_v10';
  const LEGACY_STORAGE_KEY='project1_interactive_prototype_v9';
+ const PREVIEW_SESSION_STORAGE_KEY='weixun_project1_preview_session_v1';
+ const INVALIDATED_REQUEST=Symbol('invalidated-preview-request');
+ const AUTH_STORAGE_KEYS=new Set(['weixun_identity','weixun_session']);
+ function readIdentityUserId(){
+  try{const raw=localStorage.getItem('weixun_identity');if(!raw)return null;const identity=JSON.parse(raw);return typeof identity?.userId==='string'&&identity.userId.trim()?identity.userId.trim():null}catch{return null}
+ }
+ function getSessionToken(){
+  const raw=localStorage.getItem('weixun_session');
+  if(!raw)return '';
+  try{const parsed=JSON.parse(raw);if(typeof parsed==='string')return parsed;return parsed?.token||parsed?.access_token||parsed?.session?.access_token||parsed?.sessionToken||''}catch{return raw}
+ }
+ function scopedStorageKey(base,userId){return typeof userId==='string'&&userId?`${base}:user:${encodeURIComponent(userId)}`:null}
+ function removeUnscopedLegacyCaches(){
+  try{[STORAGE_KEY,LEGACY_STORAGE_KEY,PREVIEW_SESSION_STORAGE_KEY].forEach(key=>sessionStorage.removeItem(key))}catch{}
+ }
+ removeUnscopedLegacyCaches();
+ let activeUserId=readIdentityUserId(),boundSessionToken=getSessionToken(),identityGeneration=0;
+ let authTransitionPending=false,authTransitionOldToken='';
+ let activeRequestSerial=0,activeRequestController=null;
  const app=document.getElementById('app'),modalRoot=document.getElementById('modal-root'),toastRoot=document.getElementById('toast-root');
  const npcIds=new Set(MockData.npcs.map(n=>n.id));
  const COMMON_WECHAT_EMOJIS=Object.freeze(['😀','🙂','😊','👍','👏','🙏','🎉','💡','✅','🙌','🤝','⏳','✨','💪','😄','📌']);
@@ -487,7 +506,8 @@ const initialState=()=>({
   notifications:[],competitorEventsSeen:[],result:null,
   coachForceSimulation:false,lastBriefResult:null,npcTestStates:blankNpcTestStates(),previewSessionId:null,previewVersion:0,aiStatus:'',aiError:'',aiErrorCanRefresh:false,aiRetry:null
 });
-let state=loadState();
+let stateOwnerUserId=activeUserId;
+let state=loadState(activeUserId);
 function normalizeConversations(value){
  const raw=value&&typeof value==='object'?value:{};
  const result=blankConversations();
@@ -546,54 +566,102 @@ function normalizeState(saved){
  if(next.result&&!Array.isArray(next.result.attitudes)||next.result?.attitudes?.some(a=>!npcIds.has(a.id)))next.result=null;
  return next;
 }
-function loadState(){
+function loadState(userId){
+ if(!userId)return initialState();
  try{
-  const current=JSON.parse(sessionStorage.getItem(STORAGE_KEY)||'null');
-  const legacy=current||JSON.parse(sessionStorage.getItem(LEGACY_STORAGE_KEY)||'null');
-  const normalized=legacy?normalizeState(legacy):initialState();
-  if(!current&&legacy)sessionStorage.setItem(STORAGE_KEY,JSON.stringify(normalized));
+  const key=scopedStorageKey(STORAGE_KEY,userId),saved=key?JSON.parse(sessionStorage.getItem(key)||'null'):null;
+  if(saved?.ownerId!==userId||!saved?.state||typeof saved.state!=='object')return initialState();
+  const normalized=normalizeState(saved.state);
+  normalized.previewSessionId=null;normalized.previewVersion=0;
   return normalized;
  }catch{return initialState()}
 }
-const PREVIEW_SESSION_STORAGE_KEY='weixun_project1_preview_session_v1';
-function restorePreviewSession(){
+function restorePreviewSession(userId=activeUserId){
+ state.previewSessionId=null;state.previewVersion=0;
+ if(!userId)return;
  try{
-  const saved=JSON.parse(sessionStorage.getItem(PREVIEW_SESSION_STORAGE_KEY)||'null');
-  state.previewSessionId=typeof saved?.id==='string'?saved.id:null;
-  state.previewVersion=Number.isFinite(saved?.version)?saved.version:0;
+  const key=scopedStorageKey(PREVIEW_SESSION_STORAGE_KEY,userId),saved=key?JSON.parse(sessionStorage.getItem(key)||'null'):null;
+  if(saved?.ownerId!==userId)return;
+  state.previewSessionId=typeof saved.id==='string'?saved.id:null;
+  state.previewVersion=Number.isFinite(saved.version)?saved.version:0;
  }catch{state.previewSessionId=null;state.previewVersion=0}
 }
-function savePreviewSession(){
- if(!state.previewSessionId){sessionStorage.removeItem(PREVIEW_SESSION_STORAGE_KEY);return}
- sessionStorage.setItem(PREVIEW_SESSION_STORAGE_KEY,JSON.stringify({id:state.previewSessionId,version:state.previewVersion}));
+function persistStateForUser(userId){
+ if(!userId||stateOwnerUserId!==userId)return;
+ try{
+  const key=scopedStorageKey(STORAGE_KEY,userId);
+  if(key)sessionStorage.setItem(key,JSON.stringify({ownerId:userId,state:{...state,previewSessionId:null,previewVersion:0}}));
+  const sessionKey=scopedStorageKey(PREVIEW_SESSION_STORAGE_KEY,userId);
+  if(!sessionKey)return;
+  if(!state.previewSessionId)sessionStorage.removeItem(sessionKey);
+  else sessionStorage.setItem(sessionKey,JSON.stringify({ownerId:userId,id:state.previewSessionId,version:state.previewVersion}));
+ }catch{}
 }
-function clearPreviewSession(){state.previewSessionId=null;state.previewVersion=0;sessionStorage.removeItem(PREVIEW_SESSION_STORAGE_KEY)}
+function invalidateActiveRequest(){
+ identityGeneration++;activeRequestSerial++;
+ if(activeRequestController){try{activeRequestController.abort()}catch{}activeRequestController=null}
+ requestBusy=false;
+}
+function syncIdentitySnapshot(){
+ const nextUserId=readIdentityUserId(),nextToken=getSessionToken();
+ let changed=false;
+ if(nextUserId!==activeUserId){
+  persistStateForUser(stateOwnerUserId);
+  const oldToken=boundSessionToken;
+  invalidateActiveRequest();
+  activeUserId=nextUserId;stateOwnerUserId=nextUserId;boundSessionToken=nextToken;
+  authTransitionOldToken=oldToken;authTransitionPending=Boolean(nextUserId&&(!nextToken||nextToken===oldToken));
+  state=loadState(nextUserId);restorePreviewSession(nextUserId);pendingConversation=null;
+  if(toastRoot)toastRoot.innerHTML='';
+  changed=true;
+ }else if(nextToken!==boundSessionToken){
+  const oldToken=boundSessionToken;
+  invalidateActiveRequest();boundSessionToken=nextToken;
+  if(authTransitionPending&&nextToken&&nextToken!==authTransitionOldToken)authTransitionPending=false;
+  else if(!nextToken)authTransitionPending=true;
+  else if(!oldToken&&nextToken&&authTransitionPending&&nextToken!==authTransitionOldToken)authTransitionPending=false;
+  changed=true;
+ }else if(authTransitionPending&&nextUserId&&nextToken&&nextToken!==authTransitionOldToken){
+  authTransitionPending=false;changed=true;
+ }
+ return changed;
+}
+function requestContextIsCurrent(context){
+ const changed=syncIdentitySnapshot();
+ if(changed){closeModal();render()}
+ return Boolean(context&&context.userId&&context.token&&!authTransitionPending&&context.userId===activeUserId&&context.token===boundSessionToken&&context.generation===identityGeneration&&context.serial===activeRequestSerial);
+}
+function userContextIsCurrent(context){
+ const changed=syncIdentitySnapshot();
+ if(changed){closeModal();render()}
+ return Boolean(context?.userId&&context.userId===activeUserId&&context.userId===stateOwnerUserId&&context.generation===identityGeneration);
+}
+async function accountScopedApiCall(action,payload={},options={}){
+ const context={userId:stateOwnerUserId,generation:identityGeneration};
+ const result=await apiCall(action,payload,options);
+ return result===INVALIDATED_REQUEST||!userContextIsCurrent(context)?INVALIDATED_REQUEST:result;
+}
+function clearPreviewSession(){
+ state.previewSessionId=null;state.previewVersion=0;
+ const key=scopedStorageKey(PREVIEW_SESSION_STORAGE_KEY,stateOwnerUserId);
+ if(key)try{sessionStorage.removeItem(key)}catch{}
+}
 function clearAiRuntimeState(){
- const clean=initialState();
- state.conversations=clean.conversations;state.wechat=clean.wechat;state.phoneAttempts=clean.phoneAttempts;
- state.appointments=[];state.meeting=null;state.completedVisits=[];
- state.visitPreparations=clean.visitPreparations;state.visitPreparationFeedback=clean.visitPreparationFeedback;
- state.npcTestStates=clean.npcTestStates;
- state.aiError='';state.aiErrorCanRefresh=false;state.aiRetry=null;clearPreviewSession();save();
+ state=initialState();stateOwnerUserId=activeUserId;pendingConversation=null;clearPreviewSession();save();
 }
-restorePreviewSession();
-function save(){sessionStorage.setItem(STORAGE_KEY,JSON.stringify(state));savePreviewSession()}
+restorePreviewSession(activeUserId);
+function save(){
+ if(!activeUserId||stateOwnerUserId!==activeUserId)return;
+ persistStateForUser(activeUserId);
+}
 function patch(x,renderNow=true){state={...state,...x};save();if(renderNow)render()}
 let requestBusy=false;
 let pendingConversation=null;
-function getSessionToken(){
- const raw=localStorage.getItem('weixun_session');
- if(!raw)return '';
- try{
-  const parsed=JSON.parse(raw);
-  if(typeof parsed==='string')return parsed;
-  return parsed?.token||parsed?.access_token||parsed?.session?.access_token||parsed?.sessionToken||'';
- }catch{return raw}
-}
 function apiErrorMessage(status,message){
  if(status===401)return '登录会话已失效，请重新登录后再试。';
  if(status===400)return message||'本次操作参数不完整，请检查后重试。';
  if(status===409)return '预览会话已在其他操作中更新，请刷新预览会话后重试。';
+ if(status===404||status===410)return '预览会话已失效，本地进度已重置，请重试。';
  if(status===502||status===503)return 'AI 服务暂时不可用，请稍后重试。';
  return message||'网络请求失败，请检查网络后重试。';
 }
@@ -641,27 +709,34 @@ async function readPreviewStream(response,onDelta){
  return result;
 }
 async function apiCall(action,payload={},options={}){
+ const initiatingUserId=stateOwnerUserId,changed=syncIdentitySnapshot();
+ if(changed||initiatingUserId!==activeUserId||stateOwnerUserId!==activeUserId){closeModal();render();return INVALIDATED_REQUEST}
  if(requestBusy){toast('AI 正在处理中，请稍候。','warn');return null}
+ if(!initiatingUserId){state.aiError=apiErrorMessage(401);state.aiErrorCanRefresh=false;toast(state.aiError,'error');save();render();return null}
+ const token=boundSessionToken;
+ if(!token||authTransitionPending){state.aiError=apiErrorMessage(401);state.aiErrorCanRefresh=false;toast(state.aiError,'error');save();render();return authTransitionPending?INVALIDATED_REQUEST:null}
  const commandId=options.commandId||newPreviewCommandId();
+ const context={userId:activeUserId,token,generation:identityGeneration,serial:++activeRequestSerial};
+ const controller=new AbortController();activeRequestController=controller;
  state.aiRetry={action,commandId,payload,kind:options.retryKind||action,meta:options.retryMeta||null};
  requestBusy=true;
  state.aiStatus='AI 思考中…';state.aiError='';state.aiErrorCanRefresh=false;save();
  if(options.renderPending!==false)render();
  try{
-  const token=getSessionToken();
-  if(!token)throw {status:401};
   const request={action,commandId,...payload};
   if(state.previewSessionId)request.previewSessionId=state.previewSessionId;
   if(Number.isFinite(state.previewVersion))request.expectedVersion=state.previewVersion;
    const response=await fetch('/api/project-one-preview/ai',{
     method:'POST',credentials:'same-origin',
     headers:{'content-type':'application/json','x-session':token,...(options.stream?{accept:'text/event-stream'}:{})},
-    body:JSON.stringify(request)
+    body:JSON.stringify(request),signal:controller.signal
    });
+   if(!requestContextIsCurrent(context))return INVALIDATED_REQUEST;
    if(!response.ok){let failed={};try{failed=await response.json()}catch{}throw {status:response.status,message:failed?.error||failed?.message}}
    let body;
-   if(options.stream){const data=await readPreviewStream(response,options.onDelta);body={success:true,previewSessionId:data?.previewSessionId,version:data?.version,data}}
+   if(options.stream){const data=await readPreviewStream(response,content=>{if(requestContextIsCurrent(context))options.onDelta?.(content)});body={success:true,previewSessionId:data?.previewSessionId,version:data?.version,data}}
    else{body={};try{body=await response.json()}catch{}}
+  if(!requestContextIsCurrent(context))return INVALIDATED_REQUEST;
   if(body?.previewSessionId)state.previewSessionId=body.previewSessionId;
   if(Number.isFinite(body?.version))state.previewVersion=body.version;
   if(Number.isFinite(body?.data?.version))state.previewVersion=body.data.version;
@@ -677,11 +752,12 @@ async function apiCall(action,payload={},options={}){
   if(options.retainRetryUntilCommit!==true)state.aiRetry=null;
   return data;
  }catch(error){
+  if(!requestContextIsCurrent(context))return INVALIDATED_REQUEST;
   const message=apiErrorMessage(error?.status,error?.message);
-  if([401,404,410].includes(error?.status))clearAiRuntimeState();
+  if([404,410].includes(error?.status))clearAiRuntimeState();
   state.aiError=message;state.aiErrorCanRefresh=error?.status===409;toast(message,'error');return null;
  }finally{
-  requestBusy=false;state.aiStatus='';save();
+  if(requestContextIsCurrent(context)){requestBusy=false;activeRequestController=null;state.aiStatus='';save()}
  }
 }
  function npc(id=state.selectedNpcId){return MockData.npcs.find(n=>n.id===id)}
@@ -834,6 +910,7 @@ function topbar(){
  return `<header class="topbar"><div class="brand"><div class="brand-icon">▦</div><div><h1>项目一 · 单单位内部竞标</h1><p>销售作战台 · AI 预览会话</p></div></div><div class="stage-pill" aria-label="当前阶段进度"><div class="stage-copy"><span>当前阶段</span><strong>第 ${state.phase} 阶段 · ${phaseMeta().name}</strong></div><div class="phase-track" aria-hidden="true"><span class="phase-fill" style="width:${progress}%"></span>${[1,2,3,4,5].map(i=>`<i class="phase-mark ${i<state.phase?'done':i===state.phase?'cur':''}" style="left:${((i-1)/4)*100}%"></i>`).join('')}</div><span class="stage-index">${state.phase} / 5</span></div><div class="top-ap" id="ap-badge"><span class="ap-symbol">✦</span><span>行动点</span><strong>${state.actionPoints}</strong><em>/ 28</em></div><div class="top-actions"><button class="btn" data-action="test-controls">测试调节</button><button class="btn" data-action="reset">重置预览</button>${state.screen==='game'?`<button class="btn" data-action="end-phase">${state.phase===5?'进入提交检查':'结束本阶段'}</button><button class="btn btn-primary" data-action="submit">提交项目</button>`:''}</div></header><div id="ai-feedback">${renderAiFeedback()}</div>`
 }
 function render(){
+ if(syncIdentitySnapshot())closeModal();
  const immersive=Boolean(state.meeting);
  app.innerHTML=immersive?`<div class="app visit-app"><div class="shell visit-shell">${renderMeeting()}</div></div>`:`<div class="app"><div class="shell">${topbar()}${state.screen==='projects'?renderProjects():state.screen==='result'?renderResult():renderGame()}</div></div>`;
  bind();
@@ -960,7 +1037,7 @@ function bind(){
  document.querySelectorAll('[data-expression-emoji]').forEach(button=>button.addEventListener('click',()=>insertEmoji(button.dataset.expressionEmoji)));
  document.querySelectorAll('[data-sticker-id]').forEach(button=>button.addEventListener('click',()=>sendSticker(button.dataset.stickerId)));
  const entry=document.querySelector('[data-visit-entry-until]'),entryUntil=Number(entry?.dataset.visitEntryUntil);
- if(entry&&entryUntil>Date.now())setTimeout(()=>{if(state.meeting&&Number(state.meeting.entryTransitionUntil)===entryUntil){delete state.meeting.entryTransitionUntil;save();render()}},entryUntil-Date.now()+20);
+ if(entry&&entryUntil>Date.now()){const context={userId:stateOwnerUserId,generation:identityGeneration};setTimeout(()=>{if(!userContextIsCurrent(context))return;if(state.meeting&&Number(state.meeting.entryTransitionUntil)===entryUntil){delete state.meeting.entryTransitionUntil;save();render()}},entryUntil-Date.now()+20)}
  if(state.screen==='result'){
   const el=document.querySelector('.score-box strong');
   if(el){const target=parseInt(el.textContent,10)||0,t0=performance.now();
@@ -1020,7 +1097,8 @@ async function analyzePlan(scope){
  if(!text){toast('工作计划可以不填；如果要提交，请先输入一些内容。','warn');return}
  if(scope==='global')state.workPlans.global=text;else state.workPlans.byNpc[id]=text;
 
- const rawRes=await apiCall('plan',{npcId:id||undefined,text,phase:state.phase});
+ const rawRes=await accountScopedApiCall('plan',{npcId:id||undefined,text,phase:state.phase});
+ if(rawRes===INVALIDATED_REQUEST)return;
  const res=rawRes?{...rawRes,revealDetails:rawRes.disclosed||[],matched:(rawRes.matchedNpcIds||[]).map(npcId=>({npcId,name:npc(npcId)?.name||npcId,matchedKeywords:[]}))}:null;
  if(!res){render();return}
 
@@ -1076,7 +1154,9 @@ async function analyzePlan(scope){
 }
 async function research(){
  const n=npc();if(!n||!spend(2,'搜索公开信息'))return;
+ const context={userId:stateOwnerUserId,generation:identityGeneration};
  toast('正在搜索公开信息…');const data=await DemoOnlyApi.researchPublicInfo(n);
+ if(!userContextIsCurrent(context))return;
  const old=state.publicIntel[n.id]||[];state.publicIntel[n.id]=[...new Set([...old,...data.facts])];
  addUpdate(`获得 ${n.name} 的公开信息 ${data.facts.length} 条，已显示在人物结构图旁。`);
  save();render();openModal(`${n.name} · 公开信息`,`<div class="notice">来源：${esc(data.source)}。这些只是公开可获得的信息，不代表隐藏态度。</div>${data.facts.map(x=>`<div class="info-block" style="margin-top:8px">${esc(x)}</div>`).join('')}<div class="notice amber" style="margin-top:8px"><strong>可匹配线索</strong><br>${data.clues.map(x=>esc(x)).join('<br>')}<br><span class="tiny">线索只有在工作计划关键词命中时才会持续写入人物信息。</span></div>`);
@@ -1132,7 +1212,8 @@ function applyInvitationResult(n,data){
   const messageInput=document.getElementById('message-text'),attachmentInput=document.getElementById('attachment-text');
   if(messageInput)messageInput.value='';if(attachmentInput)attachmentInput.value='';
   save();refreshMessageThread(ch,n);setMessageComposerBusy(true,ch);
-  const res=await apiCall('message',payload,{commandId,retryKind:'message',retainRetryUntilCommit:true,renderPending:false});
+  const res=await accountScopedApiCall('message',payload,{commandId,retryKind:'message',retainRetryUntilCommit:true,renderPending:false});
+  if(res===INVALIDATED_REQUEST)return;
   if(!res){
    optimistic.pending=false;optimistic.failed=true;optimistic.error=state.aiError;pendingConversation=null;save();refreshMessageThread(ch,n);setMessageComposerBusy(false,ch);
    refreshAiFeedback();
@@ -1153,7 +1234,8 @@ function applyInvitationResult(n,data){
   if(!canAfford(1,'发送微信表情包'))return;
   const text=retryPayload?.text||`[表情包：${sticker.name}]`;
   const payload=retryPayload||{npcId:n.id,channel:'wechat',text,phase:state.phase};
-  const res=await apiCall('message',payload,{commandId:options.commandId,retryKind:'sticker',retryMeta:{stickerId:sticker.id},retainRetryUntilCommit:true});
+  const res=await accountScopedApiCall('message',payload,{commandId:options.commandId,retryKind:'sticker',retryMeta:{stickerId:sticker.id},retainRetryUntilCommit:true});
+  if(res===INVALIDATED_REQUEST)return;
   if(!res){render();return}
   const commandId=options.commandId||state.aiRetry?.commandId;
   const committed=appendMessageResult(n,'wechat',text,'',res,{messageType:'sticker',stickerId:sticker.id,...(commandId?{commandId}:{})},commandId?`local-${commandId}`:undefined);
@@ -1181,7 +1263,8 @@ function applyInvitationResult(n,data){
  const n=npc(),reason=document.getElementById('wechat-reason')?.value.trim()||'';
  if(reason.length<8){toast('请用自然语言说明添加工作微信的原因','warn');return}
  if(!canAfford(1,'申请工作微信'))return;
- const res=await apiCall('wechat_request',{npcId:n.id,text:reason,phase:state.phase});
+ const res=await accountScopedApiCall('wechat_request',{npcId:n.id,text:reason,phase:state.phase});
+ if(res===INVALIDATED_REQUEST)return;
  if(!res){render();return}
  spend(1,'申请工作微信');
  const status=res.wechatStatus||res.status||(res.wechatAccepted===true?'accepted':res.wechatAccepted===false?'rejected':'pending');
@@ -1196,7 +1279,8 @@ function directVisitConfirm(){
 }
 async function saveVisitPrep(){
  const n=npc(),text=document.getElementById('visit-prep-text')?.value.trim()||'';if(text.length<12){toast('请至少简述一下拜访准备，再继续。','warn');return}
- const feedback=await apiCall('visit_preparation',{npcId:n.id,text,phase:state.phase});
+ const feedback=await accountScopedApiCall('visit_preparation',{npcId:n.id,text,phase:state.phase});
+ if(feedback===INVALIDATED_REQUEST)return;
  if(!feedback){render();return}
  state.visitPreparationFeedback[n.id]=feedback;
  const adequate=feedback.needsDetail!==true;
@@ -1216,10 +1300,11 @@ async function startVisitSimulation({skipPreparation=false}={}){
  const n=npc(),appt=state.appointments.find(a=>a.npcId===n.id&&a.status==='accepted');
  if(!appt&&!hasDirectVisitIntent(n.id)){toast('当前没有可执行的拜访','warn');return}
  if(!canAfford(3,'实际拜访'))return;
- const pending=apiCall('start_visit',{npcId:n.id,phase:state.phase,...(skipPreparation?{skipPreparation:true}:{})},{renderPending:false});
+ const pending=accountScopedApiCall('start_visit',{npcId:n.id,phase:state.phase,...(skipPreparation?{skipPreparation:true}:{})},{renderPending:false});
  const startButton=document.querySelector('[data-action="visit-sim"], [data-action="skip-visit-prep"]');if(startButton){startButton.disabled=true;startButton.setAttribute('aria-busy','true');startButton.innerHTML='正在进入现场…'}
  document.querySelector('[data-action="visit-brief"]')?.setAttribute('disabled','');
  const res=await pending;
+ if(res===INVALIDATED_REQUEST)return;
  if(!res){refreshWorkspaceBody();refreshAiFeedback();return}
  const remote=res.meeting;
  if(!remote){state.aiError='服务端未返回会面状态，请重试。';save();render();return}
@@ -1234,14 +1319,15 @@ async function startVisitSimulation({skipPreparation=false}={}){
 async function submitBriefVisit(){
  const n=npc(),text=document.getElementById('brief-visit-text')?.value.trim()||'';if(text.length<30){toast('拜访方案过于简单，请再细化一些。','warn');return}
  if(!canAfford(2,'简述拜访方案'))return;
- const r=await apiCall('brief_visit',{npcId:n.id,text,phase:state.phase});
+ const r=await accountScopedApiCall('brief_visit',{npcId:n.id,text,phase:state.phase});
+ if(r===INVALIDATED_REQUEST)return;
  if(!r){render();return}
  spend(2,'简述拜访方案');state.lastBriefResult={summary:r.summary||r.content||r.nextStep||'AI 已完成本次拜访方案评估。',strengths:Array.isArray(r.strengths)?r.strengths:[],risks:Array.isArray(r.risks)?r.risks:[]};state.workspaceMode='briefResult';state.completedVisits.push({npcId:n.id,type:'brief',phase:state.phase});if(r.appointment)upsertAppointment(r.appointment,n.id);addUpdate(`已获得与 ${n.name} 的真实 AI 拜访方案评估。`);save();render();toast('AI 拜访方案评估已完成','success')
 }
 async function sendPostal(){
  const n=npc(),text=document.getElementById('postal-text')?.value.trim()||'';if(text.length<8){toast('请描述要邮寄的材料','warn');return}
  if(!spend(2,'邮寄材料'))return;
- const item=await DemoOnlyApi.sendPostal({npcId:n.id,text,phase:state.phase});state.postal.push(item);state.conversations[n.id].postal.push({role:'player',channel:'邮寄',text});addUpdate(`已向 ${n.name} 邮寄材料：${text.slice(0,24)}${text.length>24?'…':''}`);save();render();toast('邮寄前端结果样例已创建（2 行动点）','success')
+ const context={userId:stateOwnerUserId,generation:identityGeneration},item=await DemoOnlyApi.sendPostal({npcId:n.id,text,phase:state.phase});if(!userContextIsCurrent(context))return;state.postal.push(item);state.conversations[n.id].postal.push({role:'player',channel:'邮寄',text});addUpdate(`已向 ${n.name} 邮寄材料：${text.slice(0,24)}${text.length>24?'…':''}`);save();render();toast('邮寄前端结果样例已创建（2 行动点）','success')
 }
 async function callNpc(options={}){
  if(requestBusy){toast('AI 正在处理中，请稍候。','warn');return}
@@ -1252,9 +1338,10 @@ async function callNpc(options={}){
  let reply=arr.find(message=>message.role==='npc'&&message.commandId===commandId);
  if(reply){reply.pending=true;reply.failed=false;reply.text=''}else{reply={role:'npc',channel:'电话',text:'',messageId:`phone-${commandId}`,commandId,pending:true,charged:false};arr.push(reply)}
  state.phoneActive=true;save();
- const pending=apiCall('phone_connect',payload,{commandId,retryKind:'phone_connect',retainRetryUntilCommit:true,renderPending:false,stream:true,onDelta:content=>appendStreamDelta(reply,content)});
+ const pending=accountScopedApiCall('phone_connect',payload,{commandId,retryKind:'phone_connect',retainRetryUntilCommit:true,renderPending:false,stream:true,onDelta:content=>appendStreamDelta(reply,content)});
  clearAiFeedback();refreshWorkspaceBody();
  const res=await pending;
+ if(res===INVALIDATED_REQUEST)return;
  if(!res){reply.pending=false;reply.failed=true;reply.text=reply.text||'本次连接失败，请重试。';state.phoneActive=false;save();refreshWorkspaceBody();refreshAiFeedback();return}
  reply.pending=false;reply.failed=false;reply.text=res.content||reply.text;if(!reply.charged){spend(1,'拨打电话',false);reply.charged=true}
  state.phoneAttempts[n.id]=(state.phoneAttempts[n.id]||0)+1;state.phoneActive=res.connected!==false;state.aiRetry=null;
@@ -1268,9 +1355,10 @@ async function phoneSay(options={}){
  let player=arr.find(message=>message.role==='player'&&message.commandId===commandId),reply=arr.find(message=>message.role==='npc'&&message.commandId===commandId);
  if(player){player.pending=true;player.failed=false}else{player={role:'player',channel:'电话',text,messageId:`phone-player-${commandId}`,commandId,pending:true};arr.push(player)}
  if(reply){reply.pending=true;reply.failed=false;reply.text=''}else{reply={role:'npc',channel:'电话',text:'',messageId:`phone-reply-${commandId}`,commandId,pending:true};arr.push(reply)}
- const pending=apiCall('message',payload,{commandId,retryKind:'phone_message',retainRetryUntilCommit:true,renderPending:false,stream:true,onDelta:content=>appendStreamDelta(reply,content)});
+ const pending=accountScopedApiCall('message',payload,{commandId,retryKind:'phone_message',retainRetryUntilCommit:true,renderPending:false,stream:true,onDelta:content=>appendStreamDelta(reply,content)});
  clearAiFeedback();refreshWorkspaceBody();
  const res=await pending;
+ if(res===INVALIDATED_REQUEST)return;
  if(!res){player.pending=false;player.failed=true;reply.pending=false;reply.failed=true;reply.text=reply.text||'本次通话未完成，请重试。';save();refreshWorkspaceBody();refreshAiFeedback();return}
  player.pending=false;player.failed=false;reply.pending=false;reply.failed=false;reply.text=res.content||reply.text;state.aiRetry=null;applyInvitationResult(n,res);save();refreshWorkspaceBody()
 }
@@ -1282,9 +1370,10 @@ async function meetingSend(options={}){
  let player=arr.find(message=>message.role==='player'&&message.commandId===commandId),reply=arr.find(message=>message.role==='npc'&&message.commandId===commandId);
  if(player){player.pending=true;player.failed=false}else{player={role:'player',channel:'拜访',text,messageId:`visit-player-${commandId}`,commandId,pending:true};arr.push(player)}
  if(reply){reply.pending=true;reply.failed=false;reply.text=''}else{reply={role:'npc',channel:'拜访',text:'',messageId:`visit-reply-${commandId}`,commandId,pending:true};arr.push(reply)}
- const pending=apiCall('visit_turn',payload,{commandId,retryKind:'visit_turn',retainRetryUntilCommit:true,renderPending:false,stream:true,onDelta:content=>appendStreamDelta(reply,content)});
+ const pending=accountScopedApiCall('visit_turn',payload,{commandId,retryKind:'visit_turn',retainRetryUntilCommit:true,renderPending:false,stream:true,onDelta:content=>appendStreamDelta(reply,content)});
  clearAiFeedback();refreshWorkspaceBody();
  const res=await pending;
+ if(res===INVALIDATED_REQUEST)return;
  if(!res){player.pending=false;player.failed=true;reply.pending=false;reply.failed=true;reply.text=reply.text||'本轮回应失败，请重试。';save();refreshWorkspaceBody();refreshAiFeedback();return}
  player.pending=false;player.failed=false;reply.pending=false;reply.failed=false;reply.text=res.content||reply.text;reply.taskType=res.taskType||null;state.aiRetry=null;
   const remote=res.meeting;
@@ -1292,7 +1381,7 @@ async function meetingSend(options={}){
   m.turn=Number(remote.turn??m.turn??0);m.completedTasks=Array.isArray(remote.completedTasks)?remote.completedTasks:(m.completedTasks||[]);m.awaitingFinalReplyFrom=remote.awaitingFinalReplyFrom||null;
   if(['angry','serious','calm','pleasant','very_happy'].includes(res.npcExpression))state.npcExpressions[n.id]=res.npcExpression;
  if(!res.content){const index=arr.indexOf(reply);if(index>=0)arr.splice(index,1)}
-  if(remote.meetingEnded){save();refreshWorkspaceBody();await new Promise(resolve=>setTimeout(resolve,650));return finishVisitFromServer({...res,...remote})}
+  if(remote.meetingEnded){const context={userId:stateOwnerUserId,generation:identityGeneration};save();refreshWorkspaceBody();await new Promise(resolve=>setTimeout(resolve,650));if(!userContextIsCurrent(context))return;return finishVisitFromServer({...res,...remote})}
  save();refreshWorkspaceBody();
 }
 function endReasonLabel(endReason){
@@ -1326,9 +1415,10 @@ function showSubmission(){
  openModal('项目提交检查',`${state.phase<5?'<div class="notice red">当前未到第 5 阶段；原型仍允许查看提交体验。</div>':'<div class="notice green">已进入最终阶段。</div>'}<div class="check-list"><div class="check-item"><span>已形成沟通记录的联系人</span><strong>${contacted} / ${MockData.npcs.length}</strong></div><div class="check-item"><span>已完成拜访 / 拜访方案</span><strong>${visits} 次</strong></div><div class="check-item"><span>已输入并分析的工作计划</span><strong>${plans} 份</strong></div><div class="check-item"><span>已获得公开信息的人物</span><strong>${Object.entries(state.publicIntel).filter(([id,items])=>npcIds.has(id)&&items.length).length} 人</strong></div><div class="check-item"><span>累计消耗行动点</span><strong>${state.totalSpent}</strong></div></div>`,`<button class="btn" data-modal-close>继续行动</button><button class="btn btn-primary" id="confirm-submit">确认提交项目</button>`);
  document.getElementById('confirm-submit').onclick=submitProject
 }
-async function submitProject(){const r=await DemoOnlyApi.submitProject();state.result=r;state.screen='result';save();closeModal();render();toast('前端结果样例已生成','success')}
+async function submitProject(){const context={userId:stateOwnerUserId,generation:identityGeneration},r=await DemoOnlyApi.submitProject();if(!userContextIsCurrent(context))return;state.result=r;state.screen='result';save();closeModal();render();toast('前端结果样例已生成','success')}
 async function resetPreview(){
- const res=await apiCall('reset',{});
+ const res=await accountScopedApiCall('reset',{});
+ if(res===INVALIDATED_REQUEST)return;
  if(!res){render();return}
  const next=initialState();
  next.previewSessionId=state.previewSessionId;next.previewVersion=state.previewVersion;
@@ -1368,7 +1458,8 @@ async function applyTestControls(){
   return {npcId:person.id,...appointmentId,status:TEST_APPOINTMENT_STATUSES.includes(status)?status:'none',phase:clampTestInteger(field('phase'),1,5,current?.phase??phase),timeWindow:(field('timeWindow')||current?.timeWindow||'待设置时间').trim(),location:(field('location')||current?.location||'待设置地点').trim(),agenda:(field('agenda')||current?.agenda||'待设置议题').trim()};
  });
  const action=adjustments.length?'test_adjust_npcs':'test_adjust_appointments';
- const response=adjustments.length||appointmentAdjustments.length?await apiCall(action,{...(adjustments.length?{adjustments}:{}),...(appointmentAdjustments.length?{appointments:appointmentAdjustments}:{}),phase}):{npcTestStates:[]};
+ const response=adjustments.length||appointmentAdjustments.length?await accountScopedApiCall(action,{...(adjustments.length?{adjustments}:{}),...(appointmentAdjustments.length?{appointments:appointmentAdjustments}:{}),phase}):{npcTestStates:[]};
+ if(response===INVALIDATED_REQUEST)return;
  if(!response)return;
  state.phase=phase;state.actionPoints=actionPoints;state.totalSpent=totalSpent;
  (response.npcTestStates||[]).forEach(item=>{if(npcIds.has(item.npcId))state.npcTestStates[item.npcId]={support:item.support,pleasantness:item.pleasantness,effectiveContactCount:item.effectiveContactCount,node:item.node}});
@@ -1382,6 +1473,7 @@ async function applyTestControls(){
 }
 
 async function handleAction(e){
+ if(syncIdentitySnapshot()){closeModal();render();return}
  const a=e.currentTarget.dataset.action;
  if(requestBusy&&a!=='refresh-preview'){toast('AI 正在处理中，请稍候。','warn');return}
  if(a==='select-project')document.querySelector('.project-detail')?.scrollIntoView({behavior:'smooth'});
@@ -1418,6 +1510,14 @@ async function handleAction(e){
 function openModal(title,body,footer='<button class="btn btn-primary" data-modal-close>知道了</button>'){modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal"><div class="modal-head"><h3>${title}</h3><button class="modal-close" data-modal-close>×</button></div><div class="modal-body">${body}</div><div class="modal-footer">${footer}</div></div></div>`;modalRoot.querySelectorAll('[data-modal-close]').forEach(x=>x.onclick=closeModal);modalRoot.querySelector('.modal-backdrop')?.addEventListener('click',e=>{if(e.target.classList.contains('modal-backdrop'))closeModal()})}
 function closeModal(){modalRoot.innerHTML=''}
 function openConfirm(title,text,fn){openModal(title,`<div class="notice red">${text}</div>`,`<button class="btn" data-modal-close>取消</button><button class="btn btn-danger" id="generic-confirm">确认</button>`);document.getElementById('generic-confirm').onclick=fn}
+function handleIdentityStorageChange(event){
+ if(event&&event.key!==null&&!AUTH_STORAGE_KEYS.has(event.key))return;
+ if(syncIdentitySnapshot()){closeModal();render()}
+}
+window.addEventListener('storage',handleIdentityStorageChange);
+window.addEventListener('focus',()=>{if(syncIdentitySnapshot()){closeModal();render()}});
+window.addEventListener('pageshow',()=>{if(syncIdentitySnapshot()){closeModal();render()}});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&syncIdentitySnapshot()){closeModal();render()}});
 document.addEventListener('keydown',e=>{
  if(e.key==='Escape' && closeExpressionPanels()){
    e.preventDefault();

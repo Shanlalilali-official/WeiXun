@@ -44,13 +44,29 @@ export function getPreviewRequestHash(request: PreviewAiRequest): string {
   return createHash('sha256').update(JSON.stringify(canonicalRequestValue(command))).digest('hex');
 }
 
-function persistenceError(error: unknown): PreviewAiError {
-  const message = error instanceof Error ? error.message : String(error ?? 'PREVIEW_PERSISTENCE_FAILED');
-  if (/PREVIEW_SESSION_NOT_FOUND|PREVIEW_COMMAND_SESSION_MISMATCH|invalid input syntax for type uuid/i.test(message)) {
+export function toPreviewPersistenceError(error: unknown): PreviewAiError {
+  // Supabase/PostgREST returns RPC failures as a plain { code, message, details,
+  // hint } object unless throwOnError() is enabled. Reading only its message
+  // preserves the SQL error token without exposing database details to callers.
+  const message = isRecord(error) && typeof error.message === 'string'
+    ? error.message
+    : error instanceof Error
+      ? error.message
+      : typeof error === 'string'
+        ? error
+        : 'PREVIEW_PERSISTENCE_FAILED';
+  if (message === 'PREVIEW_SESSION_NOT_FOUND'
+    || message === 'PREVIEW_COMMAND_SESSION_MISMATCH'
+    || /^invalid input syntax for type uuid(?:: .*)?$/i.test(message)) {
     return new PreviewAiError('not_found', 'PREVIEW_SESSION_NOT_FOUND');
   }
-  if (/PREVIEW_SESSION_VERSION_CONFLICT|PREVIEW_COMMAND_BUSY|PREVIEW_COMMAND_LEASE_LOST/i.test(message)) {
-    return new PreviewAiError('conflict', /BUSY|LEASE_LOST/i.test(message) ? 'PREVIEW_SESSION_BUSY' : 'PREVIEW_SESSION_VERSION_CONFLICT');
+  if (message === 'PREVIEW_SESSION_VERSION_CONFLICT'
+    || message === 'PREVIEW_COMMAND_BUSY'
+    || message === 'PREVIEW_COMMAND_LEASE_LOST') {
+    return new PreviewAiError(
+      'conflict',
+      message === 'PREVIEW_SESSION_VERSION_CONFLICT' ? 'PREVIEW_SESSION_VERSION_CONFLICT' : 'PREVIEW_SESSION_BUSY',
+    );
   }
   return new PreviewAiError('unavailable', 'PREVIEW_PERSISTENCE_UNAVAILABLE');
 }
@@ -102,7 +118,7 @@ export class PreviewSessionRepository implements PreviewSessionPersistence {
       };
     } catch (error) {
       if (error instanceof PreviewAiError) throw error;
-      throw persistenceError(error);
+      throw toPreviewPersistenceError(error);
     }
   }
 
@@ -119,7 +135,7 @@ export class PreviewSessionRepository implements PreviewSessionPersistence {
       if (data !== true) throw new Error('PREVIEW_COMMAND_LEASE_LOST');
     } catch (error) {
       if (error instanceof PreviewAiError) throw error;
-      throw persistenceError(error);
+      throw toPreviewPersistenceError(error);
     }
   }
 
@@ -147,7 +163,7 @@ export class PreviewSessionRepository implements PreviewSessionPersistence {
       return parseResponse(data);
     } catch (error) {
       if (error instanceof PreviewAiError) throw error;
-      throw persistenceError(error);
+      throw toPreviewPersistenceError(error);
     }
   }
 
@@ -163,7 +179,7 @@ export class PreviewSessionRepository implements PreviewSessionPersistence {
       if (error) throw error;
     } catch (error) {
       if (error instanceof PreviewAiError) throw error;
-      throw persistenceError(error);
+      throw toPreviewPersistenceError(error);
     }
   }
 
@@ -182,7 +198,7 @@ export class PreviewSessionRepository implements PreviewSessionPersistence {
       return fromPersistedPreviewServerState(data.state, userId, String(data.id), Number(data.version));
     } catch (error) {
       if (error instanceof PreviewAiError) throw error;
-      throw persistenceError(error);
+      throw toPreviewPersistenceError(error);
     }
   }
 }
