@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, type ChangeEvent, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Wand2, Building2, Users, FileText, Save, ArrowLeft, UserCog, BarChart3, Plus, Trash2, Pencil, X, LogOut, ShieldCheck, FlaskConical, Library, Database, ImageIcon, FileBarChart, TestTube2, PlayCircle, ClipboardList, Upload, Sparkles, FolderOpen } from 'lucide-react';
+import { Wand2, Building2, Users, FileText, Save, ArrowLeft, UserCog, BarChart3, Plus, Trash2, Pencil, X, LogOut, ShieldCheck, FlaskConical, Library, Database, ImageIcon, FileBarChart, TestTube2, PlayCircle, ClipboardList, Upload, Sparkles, FolderOpen, BrainCircuit } from 'lucide-react';
 import { aMetrics, bMetrics, cMetrics } from '@/lib/metrics-data';
 import { PROJECT_ONE_FIVE_PERSON_NPCS } from '@/lib/designer/project-one-five-person';
 import { ROLE_COLOR, ROLE_LABEL } from '@/components/app-shell';
@@ -780,6 +780,19 @@ export default function DesignerPage() {
                 <div className="text-sm font-semibold text-foreground">人物提示词设计</div>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">按人物和交流渠道维护角色表达；系统规则由代码统一保护。</p>
                 <div className="mt-4 text-xs font-medium text-violet-600">打开人物提示词 →</div>
+              </button>
+
+              <button
+                onClick={() => router.push('/designer/jev-config')}
+                className="group rounded-xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-amber-400/60 hover:shadow-md"
+              >
+                <div className="mb-4 flex items-center justify-between">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600"><BrainCircuit className="h-5 w-5" /></span>
+                  <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700">决策配置</span>
+                </div>
+                <div className="text-sm font-semibold text-foreground">Jev 决策配置</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">查看 Jev 可用的状态字段与题目规则，编辑决策补充说明。</p>
+                <div className="mt-4 text-xs font-medium text-amber-700">查看并编辑 Jev 配置 →</div>
               </button>
 
               <div className="rounded-xl border border-role-designer/30 bg-role-designer/5 p-5">

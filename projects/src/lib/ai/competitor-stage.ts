@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { invokeLLM, type ChatMessage } from '@/lib/ai/client';
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { invokeJev, type JevAnswer, type JevInvoker, type JevQuestions } from '@/lib/ai/jev-client';
+import { invokeConfiguredJev } from '@/lib/ai/jev-designer-config';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import { COMPETITOR_PROMPT } from '@/lib/ai/prompts/competitor';
 import {
@@ -231,7 +232,8 @@ export async function evaluateCompetitorStageAction(args: {
   invoker?: CompetitorStageInvoker;
   jevInvoker?: JevInvoker;
 }): Promise<CompetitorStageAiDecision> {
-  const { sessionId, state, invoker = defaultInvoker, jevInvoker = invokeJev } = args;
+  const { sessionId, state, invoker = defaultInvoker } = args;
+  const jevInvoker = args.jevInvoker ?? ((request) => invokeConfiguredJev('competitor_stage', request, invokeJev));
   if (state.gameMode !== 'solo') return { source: 'existing', validationErrors: ['MULTIPLAYER_DEFERRED'] };
   if (state.competitorState.actions.some((action) => action.round === state.currentRound)) {
     return { source: 'existing', validationErrors: [] };

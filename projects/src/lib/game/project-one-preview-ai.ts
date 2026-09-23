@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { invokeLLM, type ChatMessage } from '@/lib/ai/client';
 import { invokeJev, type JevInvoker, type JevRequest } from '@/lib/ai/jev-client';
+import { invokeConfiguredJev, type JevDesignerTaskId } from '@/lib/ai/jev-designer-config';
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import {
@@ -284,7 +285,24 @@ export type PreviewJevInvoker = JevInvoker;
  * without importing/configuring the external client.  The module is provided
  * by the Jev integration and intentionally has no browser-facing dependency.
  */
-const invokeDefaultJev: PreviewJevInvoker = invokeJev;
+function previewTaskIdForRequest(request: PreviewJevRequest): JevDesignerTaskId | undefined {
+  // Every preview state is labelled by the code-owned `jevState` helper. The
+  // label selects a configuration class but does not let browser input choose
+  // a task, question, type, or criterion.
+  const state = typeof request.state === 'string' ? request.state : '';
+  if (state.startsWith('<untrusted_data label="project_one_preview_npc_evaluator">')) return 'preview_npc_evaluator';
+  if (state.startsWith('<untrusted_data label="project_one_preview_plan">')) return 'preview_plan';
+  if (state.startsWith('<untrusted_data label="project_one_preview_attachment">')) return 'preview_attachment';
+  if (state.startsWith('<untrusted_data label="project_one_preview_message">')) return 'preview_message';
+  if (state.startsWith('<untrusted_data label="project_one_preview_wechat_request">')) return 'preview_wechat_request';
+  if (state.startsWith('<untrusted_data label="project_one_preview_visit_preparation">') || state.startsWith('<untrusted_data label="project_one_preview_visit_turn">')) return 'preview_visit';
+  return undefined;
+}
+
+const invokeDefaultJev: PreviewJevInvoker = (request) => {
+  const taskId = previewTaskIdForRequest(request);
+  return taskId ? invokeConfiguredJev(taskId, request, invokeJev) : invokeJev(request);
+};
 
 const narrativeContentAiOutputSchema = z.object({
   content: z.string().trim().min(1).max(2_000),

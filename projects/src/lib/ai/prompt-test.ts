@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { invokeLLM, type ChatMessage } from '@/lib/ai/client';
 import { invokeJev, type JevAnswer, type JevInvoker, type JevQuestions } from '@/lib/ai/jev-client';
+import { invokeConfiguredJev } from '@/lib/ai/jev-designer-config';
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import {
@@ -679,7 +680,9 @@ function repositoryPromptTestError(error: unknown): PromptTestError {
 
 export function createPromptTestService(deps: PromptTestServiceDeps = {}) {
   const invoker: PromptTestInvoker = deps.invoker ?? ((messages, options) => invokeLLM(messages, options));
-  const jevInvoker = deps.jevInvoker ?? invokeJev;
+  // Preserve injection semantics for tests; default production calls reload
+  // the designer configuration before each Jev evaluation.
+  const jevInvoker = deps.jevInvoker ?? ((request) => invokeConfiguredJev('prompt_test_evaluator', request, invokeJev));
   const store = deps.store ?? new PromptTestStore();
   const persistence = deps.persistence;
   const inFlight = new Set<string>();

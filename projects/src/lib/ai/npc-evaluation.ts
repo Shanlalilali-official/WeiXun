@@ -1,5 +1,6 @@
 import { invokeLLM, type ChatMessage } from '@/lib/ai/client';
 import { invokeJev, type JevInvoker, type JevQuestions } from '@/lib/ai/jev-client';
+import { invokeConfiguredJev } from '@/lib/ai/jev-designer-config';
 import { z } from 'zod';
 import {
   giftCommandDecisionSchema,
@@ -579,7 +580,12 @@ export async function evaluateNpcTurn(
   const fallback = createFallbackNpcEvaluation(ctx);
   let selected: NpcTurnEvaluation;
   try {
-    const response = await (dependencies.jevInvoker ?? invokeJev)({ state: npcDecisionState(ctx), questions: npcDecisionQuestions() });
+    const request = { state: npcDecisionState(ctx), questions: npcDecisionQuestions() };
+    // Test callers own their injected decision invoker exactly as before. Only
+    // the production default receives designer wording at call time.
+    const response = dependencies.jevInvoker
+      ? await dependencies.jevInvoker(request)
+      : await invokeConfiguredJev('live_npc_turn', request, invokeJev);
     const numberChoice = (key: string) => Number(readChoice(response, key));
     const clue = readChoice(response, 'clue');
     const handoffTarget = readChoice(response, 'handoffTarget');
@@ -827,10 +833,12 @@ function giftDecisionState(ctx: GiftDecisionContext) {
 
 export async function evaluateGiftDecision(ctx: GiftDecisionContext, dependencies: NpcEvaluationDependencies = {}): Promise<GiftDecisionResult> {
   if (ctx.exchangeRequested) return { decision: createFallbackGiftDecision(ctx), source: 'policy' };
-  const jevInvoker = dependencies.jevInvoker ?? invokeJev;
   let selected: GiftCommandDecision;
   try {
-    const response = await jevInvoker({ state: giftDecisionState(ctx), questions: giftDecisionQuestions() });
+    const request = { state: giftDecisionState(ctx), questions: giftDecisionQuestions() };
+    const response = dependencies.jevInvoker
+      ? await dependencies.jevInvoker(request)
+      : await invokeConfiguredJev('live_gift', request, invokeJev);
     const parsed = giftCommandDecisionSchema.safeParse({
       disposition: readChoice(response, 'disposition'),
       pleasureDelta: Number(readChoice(response, 'pleasureDelta')),

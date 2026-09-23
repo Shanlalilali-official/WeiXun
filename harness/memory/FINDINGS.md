@@ -1,5 +1,11 @@
 # 调查发现
 
+## 2026-09-23 Jev 请求组装与设计师配置缺口
+
+- Jev 请求由四处业务模块构造：`npc-evaluation.ts`（正式 NPC 回合及礼品）、`competitor-stage.ts`、`project-one-preview-ai.ts`（五人预览多种判断）和 `prompt-test.ts`；`jev-client.ts` 最终仅发送 `{ model, state, questions }`。
+- `state` 包含当轮玩家输入、NPC 回复、历史、人物与游戏状态等动态数据，不存在一份可安全逐字保存的静态 state 提示词；`questions` 也有随人物、阶段和剩余任务变化的候选项。现有 `/designer/prompt-library` 只允许人物与渠道表达提示词，服务端拒绝改写其他规则，没有 Jev 编辑入口。
+- Jev 响应由 question ID、类型与候选键解析并写入受约束状态；让界面直接编辑这些结构会破坏响应校验和业务映射。适合开放的是 state 补充说明与 question 的指令文字，并把动态上下文和结构字段只读展示。
+
 ## 2026-09-23 五人预览跨账号缓存实查
 
 - `projects/public/project1-prototype-v9.html` 的页面状态键 `project1_interactive_prototype_v10` 和服务端会话键 `weixun_project1_preview_session_v1` 均为固定标签页键，没有用户归属；切换账号后 `loadState()` 和 `restorePreviewSession()` 仍会读取前一账号内容。

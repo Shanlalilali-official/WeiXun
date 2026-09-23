@@ -1,5 +1,12 @@
 # 工作交接
 
+## 2026-09-23 Jev 决策配置编辑
+
+- 设计师入口 `/designer/jev-config` 位于素材库。`/api/designer/jev-config` 使用“工作流编辑”权限；GET 返回 task catalog、当前配置及 revision，PUT 携带 `expectedRevision` 与 `config.tasks`，冲突为 409。存储使用 `designer_prompt_configs` 的 `project-one-jev` 独立行，不需要新迁移。
+- `jev-designer-config.ts` 维护任务目录、默认空配置、白名单和状态/问题文字覆盖。每次默认 Jev 调用读取配置；保留注入式 mock 调用。新增决策任务或 question key 时需同步业务构造、目录和 `test:jev-designer-config`，避免页面展示/白名单漂移。
+- 编辑页只展示动态 state 的字段说明，不展示玩家真实请求快照。`stateGuidance` 作为额外指导与原 state 同送，非空 questionInstructions 替换对应题目的默认 instructions；所有 type/criteria/候选以及后续确定性校验仍由代码掌控。数据库配置读取失败时默认 Jev 请求继续使用代码原文。
+- 专项、Jev Provider 与业务回归、TypeScript、全量 ESLint、Next.js 与服务端构建通过。尚未进行真实 Jev 账户或远程数据库的人工保存烟测，交付时不得宣称已验证。
+
 ## 2026-09-23 五人预览账号切换修复
 
 - `projects/public/project1-prototype-v9.html` 的 `STORAGE_KEY` 与 `PREVIEW_SESSION_STORAGE_KEY` 现在按 `weixun_identity.userId` 派生专属键，并在 JSON 中再次保存 owner；读取时双重校验。账号变化通过 storage/focus/pageshow/visibility 事件或请求前检查切换完整快照；身份与 token 不同步时暂停请求，旧请求的返回、流式片段和调用方后续写入由代次/取消结果隔离。新增异步 UI 动作时，若 await 后会写 `state`，也应检查用户代次。
