@@ -2,10 +2,19 @@ import { NextRequest } from 'next/server';
 import { streamLLM, type ChatMessage } from '@/lib/ai/client';
 import { CUSTOMER_CONTEXT, CUSTOMER_PROMPT, type CustomerPromptContext } from '@/lib/ai/prompts/customer';
 import { evaluateNpcTurn } from '@/lib/ai/npc-evaluation';
+import {
+  appendViewedAttachmentsToPlayerMessage,
+  attachmentsForNpcContext,
+  decideChatAttachments,
+  npcHistoryWithViewedAttachments,
+  type ChatAttachmentTreatment,
+} from '@/lib/ai/chat-attachments';
+import { evaluateFormalVisitTurn } from '@/lib/ai/formal-visit-decision';
 import { authGuard } from '@/lib/auth/guard';
 import { npcChatRequestSchema } from '@/lib/contracts/ai';
 import type { GameCommand } from '@/lib/contracts/game';
 import { getProjectOneNpc, type ContactChannel } from '@/lib/game/project-one';
+import { BID_RULES, getProcurementRuleAccess } from '@/lib/game/bid-rules';
 import { isNaturalLanguageInvitation } from '@/lib/game/invitation-intent';
 import {
   commitGameCommand,
@@ -168,6 +177,7 @@ export async function POST(req: NextRequest) {
     intent,
     commandId,
     expectedVersion,
+    attachments: requestedAttachments,
     emailAttachments,
     usedPreparationIds,
   } = parsed.data;
@@ -185,7 +195,14 @@ export async function POST(req: NextRequest) {
     const deliveryStatus = replay.result.deliveryStatus === 'unanswered' ? 'unanswered' : 'replied';
     return immediateSse([
       ...(reply ? [{ type: 'delta', content: reply }] : []),
-      { type: 'result', state: toPlayerVisibleGameState(replay.state), deliveryStatus, emailAttachments: replay.result.emailAttachments ?? [], replayed: true },
+      {
+        type: 'result',
+        state: toPlayerVisibleGameState(replay.state),
+        deliveryStatus,
+        emailAttachments: replay.result.emailAttachments ?? [],
+        attachments: replay.result.attachments ?? [],
+        replayed: true,
+      },
       { type: 'done' },
     ]);
   }
@@ -207,8 +224,11 @@ export async function POST(req: NextRequest) {
   if (!npc) return jsonResponse('NPC不存在', 404);
   const contact = initialState.npcContacts[npcId];
   const meeting = initialState.activeMeeting;
-  const channel: ContactChannel = parsed.data.channel
+  const requestedChannel = parsed.data.channel === 'wechat' ? 'online' : parsed.data.channel;
+  const channel: ContactChannel = requestedChannel
     ?? (meeting?.npcId === npcId ? 'offline' : contact.status === 'online' ? 'online' : contact.initialChannel);
+  const attachments = requestedAttachments.length > 0 ? requestedAttachments : emailAttachments;
+  const emailAttachmentList = channel === 'email' ? attachments : [];
 
   if (intent === 'outreach') {
     if (contact.status !== 'known') return jsonResponse('CONTACT_ALREADY_ESTABLISHED', 409);
@@ -223,8 +243,14 @@ export async function POST(req: NextRequest) {
     return jsonResponse('ONLINE_CONTACT_REQUIRED', 409);
   }
 
-  if (emailAttachments.length > 0) {
-    if (channel !== 'email') return jsonResponse('EMAIL_ATTACHMENT_CHANNEL_INVALID', 409);
+  if (emailAttachments.length > 0 && channel !== 'email') {
+    return jsonResponse('EMAIL_ATTACHMENT_CHANNEL_INVALID', 409);
+  }
+  if (attachments.length > 0 && channel !== 'email' && channel !== 'online') {
+    return jsonResponse('ATTACHMENT_CHANNEL_INVALID', 409);
+  }
+  if (intent === 'call_connect' && attachments.length > 0) {
+    return jsonResponse('ATTACHMENT_CHANNEL_INVALID', 409);
   }
 
   if (channel !== 'offline') {
@@ -239,6 +265,16 @@ export async function POST(req: NextRequest) {
     } catch (error) {
       return jsonResponse(error instanceof Error ? error.message : 'TIME_RESOURCE_INSUFFICIENT', 409);
     }
+  }
+
+  let attachmentTreatments: ChatAttachmentTreatment[] = [];
+  if (attachments.length > 0) {
+    attachmentTreatments = await decideChatAttachments({
+      npcId,
+      channel: channel as 'email' | 'online',
+      playerText: message,
+      attachments,
+    });
   }
 
   // Natural-language invitations use the same deterministic command path as
@@ -256,7 +292,7 @@ export async function POST(req: NextRequest) {
         channel,
         rawText: message,
         attachmentIds: [],
-        emailAttachments,
+        emailAttachments: channel === 'email' ? attachmentsForNpcContext(attachmentTreatments) : [],
       },
     };
     try {
@@ -280,7 +316,8 @@ export async function POST(req: NextRequest) {
           ...execution.eventPayload,
           source: 'natural_language_chat',
           sourceChannel: channel,
-          emailAttachmentCount: emailAttachments.length,
+          emailAttachmentCount: emailAttachmentList.length,
+          attachmentCount: attachmentTreatments.length,
         },
         result: {
           ...execution.result,
@@ -288,14 +325,19 @@ export async function POST(req: NextRequest) {
           deliveryStatus: 'replied',
           channel,
           invitation: true,
-          emailAttachments,
+          emailAttachments: emailAttachmentList,
+          attachments: attachmentTreatments,
         },
         chatMessages: [
           {
             round: initialState.currentRound,
             role: 'user',
             content: message,
-            metadata: { npcId, intent, channel, deliveryStatus: 'sent', invitation: true, emailAttachments },
+            metadata: {
+              npcId, intent, channel, deliveryStatus: 'sent', invitation: true,
+              emailAttachments: emailAttachmentList,
+              attachments: attachmentTreatments,
+            },
           },
           {
             round: initialState.currentRound,
@@ -315,7 +357,8 @@ export async function POST(req: NextRequest) {
           deliveryStatus: 'replied',
           channel,
           invitation: true,
-          emailAttachments,
+          emailAttachments: emailAttachmentList,
+          attachments: attachmentTreatments,
           appointment: execution.result.appointment,
           reply: visibleReply,
         },
@@ -412,17 +455,21 @@ export async function POST(req: NextRequest) {
         expectedVersion,
         state: changed,
         eventType: 'npc.message.unanswered',
-        eventPayload: { npcId, channel, intent, responseChance, emailAttachmentCount: emailAttachments.length },
-        result: { deliveryStatus: 'unanswered', channel, emailAttachments },
+        eventPayload: { npcId, channel, intent, responseChance, emailAttachmentCount: emailAttachmentList.length, attachmentCount: attachmentTreatments.length },
+        result: { deliveryStatus: 'unanswered', channel, emailAttachments: emailAttachmentList, attachments: attachmentTreatments },
         chatMessages: [{
           round: initialState.currentRound,
           role: 'user',
           content: message,
-          metadata: { npcId, intent, channel, deliveryStatus: 'unanswered', emailAttachments },
+          metadata: {
+            npcId, intent, channel, deliveryStatus: 'unanswered',
+            emailAttachments: emailAttachmentList,
+            attachments: attachmentTreatments,
+          },
         }],
       });
       return immediateSse([
-        { type: 'result', state: toPlayerVisibleGameState(committed.state), deliveryStatus: 'unanswered', channel, emailAttachments },
+        { type: 'result', state: toPlayerVisibleGameState(committed.state), deliveryStatus: 'unanswered', channel, emailAttachments: emailAttachmentList, attachments: attachmentTreatments },
         { type: 'done' },
       ]);
     } catch (error) {
@@ -449,6 +496,10 @@ export async function POST(req: NextRequest) {
   // Who opened the work topic is authoritative meeting state derived from
   // prior evaluated turns. The browser cannot declare this value.
   const workTopicOpenedBy = meeting?.workTopicOpenedBy ?? 'none';
+  const procurementAccess = getProcurementRuleAccess(npcId);
+  const mayDiscloseProcurementFocus = procurementAccess.canDisclose
+    && procurementAccess.allowedRules.includes(initialState.bidRule as Exclude<typeof initialState.bidRule, 'balanced'>)
+    && (attitude?.support ?? 35) >= procurementAccess.disclosureMinSupport;
   const customerContext: CustomerPromptContext = {
     gameSessionId,
     scenarioId,
@@ -468,7 +519,7 @@ export async function POST(req: NextRequest) {
     supportBand: attitudeBand(attitude?.support ?? 35, 'support'),
     unseenImpressionSummary: unseenImpressionSummary(attitude?.unmetImpression ?? 0),
     preparedItems: relevantPreparations.map((item) => ({ type: item.type, title: item.title })),
-    emailAttachments,
+    emailAttachments: attachmentsForNpcContext(attachmentTreatments),
     giftContext: { giftType: 'none' },
     lastAction: initialState.lastAction,
     memorySummary: memory?.summary,
@@ -477,15 +528,24 @@ export async function POST(req: NextRequest) {
     inbox,
     canRevealPersonalInterest: (attitude?.support ?? 35) >= 50,
     canRevealKeyContact: (attitude?.support ?? 35) >= 50,
+    ...(mayDiscloseProcurementFocus ? {
+      procurementDisclosure: {
+        publishedEvaluationFocus: BID_RULES[initialState.bidRule].label,
+        disclosureBoundary: npcId === 'P1-003'
+          ? '只能说明已发布的评价重点和合规流程，不谈底价、其他供应商或内部讨论。'
+          : '只能说明职责范围内的评审方向和正式下一步，不谈采购细节或其他供应商。',
+      },
+    } : {}),
   };
   const promptConfig = await loadProjectOnePromptConfig()
     .then((stored) => stored.config)
     .catch(() => DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
   const rolePrompt = promptConfig.npcRolePrompts[npcId];
+  const npcHistory = npcHistoryWithViewedAttachments(recentHistory);
   const messages: ChatMessage[] = [
     { role: 'system', content: `${promptConfig.liveCustomerPrompt || CUSTOMER_PROMPT()}${rolePrompt ? `\n\n## 当前人物角色提示\n${rolePrompt}` : ''}` },
     { role: 'user', content: CUSTOMER_CONTEXT(customerContext) },
-    ...recentHistory.map(({ role, content }) => ({ role, content })),
+    ...npcHistory,
     { role: 'user', content: message },
   ];
 
@@ -515,9 +575,9 @@ export async function POST(req: NextRequest) {
           meetingType,
           workTopicOpenedBy,
           giftContext: { giftType: 'none' },
-          playerMessage: message,
+          playerMessage: appendViewedAttachmentsToPlayerMessage(message, attachmentTreatments),
           npcReply: reply,
-          recentConversation: recentHistory,
+          recentConversation: npcHistory,
           confirmedFacts: memory?.confirmedFacts ?? [],
           commitments: memory?.commitments ?? [],
         }, promptConfig.liveEvaluatorPrompt);
@@ -529,10 +589,18 @@ export async function POST(req: NextRequest) {
         changedState = applySelectedPreparations(changedState, npcId, usedPreparationIds);
 
         if (channel === 'offline') {
-          if (!changedState.activeMeeting) throw new Error('MEETING_NOT_ACTIVE');
           const opener = evaluation.workTopicOpenedBy;
           if (opener === 'player' || opener === 'npc') changedState = setMeetingWorkTopicOpenedBy(changedState, opener);
-          changedState = recordMeetingTurn(changedState);
+          const activeMeeting = changedState.activeMeeting;
+          if (!activeMeeting) throw new Error('MEETING_NOT_ACTIVE');
+          const visitProgress = await evaluateFormalVisitTurn({
+            npcId,
+            completedTasks: activeMeeting.completedTasks ?? [],
+            turn: activeMeeting.turnCount,
+            playerMessage: message,
+            npcReply: reply,
+          });
+          changedState = recordMeetingTurn(changedState, visitProgress);
         }
 
         if (evaluation.semanticFlags?.explicitQuidProQuo) {
@@ -571,12 +639,14 @@ export async function POST(req: NextRequest) {
             handoff: validHandoff,
             memoryRefreshError,
             meetingEnded,
-            emailAttachmentCount: emailAttachments.length,
+            emailAttachmentCount: emailAttachmentList.length,
+            attachmentCount: attachmentTreatments.length,
           },
           result: {
             reply,
             deliveryStatus: 'replied',
-            emailAttachments,
+            emailAttachments: emailAttachmentList,
+            attachments: attachmentTreatments,
             emotion: evaluation.emotion,
             meetingEnded,
           },
@@ -585,7 +655,13 @@ export async function POST(req: NextRequest) {
               round: initialState.currentRound,
               role: 'user',
               content: message,
-              metadata: { npcId, intent, channel, deliveryStatus: 'sent', meetingId: meeting?.id ?? null, meetingTurn: meeting ? meeting.turnCount + 1 : null, emailAttachments },
+              metadata: {
+                npcId, intent, channel, deliveryStatus: 'sent',
+                meetingId: meeting?.id ?? null,
+                meetingTurn: meeting ? meeting.turnCount + 1 : null,
+                emailAttachments: emailAttachmentList,
+                attachments: attachmentTreatments,
+              },
             },
             {
               round: initialState.currentRound,
@@ -632,7 +708,8 @@ export async function POST(req: NextRequest) {
           deliveryStatus: 'replied',
           meetingEnded,
           emotion: evaluation.emotion,
-          emailAttachments,
+          emailAttachments: emailAttachmentList,
+          attachments: attachmentTreatments,
         });
         emit({ type: 'done' });
         return immediateSse(events);

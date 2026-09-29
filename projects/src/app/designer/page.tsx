@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, type ChangeEvent, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Wand2, Building2, Users, FileText, Save, ArrowLeft, UserCog, BarChart3, Plus, Trash2, Pencil, X, LogOut, ShieldCheck, FlaskConical, Library, Database, ImageIcon, FileBarChart, TestTube2, PlayCircle, ClipboardList, Upload, Sparkles, FolderOpen, BrainCircuit } from 'lucide-react';
+import { Wand2, Building2, Users, FileText, Save, ArrowLeft, UserCog, BarChart3, Plus, Trash2, Pencil, X, LogOut, ShieldCheck, FlaskConical, Library, Database, ImageIcon, FileBarChart, TestTube2, PlayCircle, ClipboardList, Upload, Sparkles, FolderOpen, BrainCircuit, Bot } from 'lucide-react';
 import { aMetrics, bMetrics, cMetrics } from '@/lib/metrics-data';
 import { PROJECT_ONE_FIVE_PERSON_NPCS } from '@/lib/designer/project-one-five-person';
 import { ROLE_COLOR, ROLE_LABEL } from '@/components/app-shell';
@@ -793,6 +793,19 @@ export default function DesignerPage() {
                 <div className="text-sm font-semibold text-foreground">Jev 决策配置</div>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">查看 Jev 可用的状态字段与题目规则，编辑决策补充说明。</p>
                 <div className="mt-4 text-xs font-medium text-amber-700">查看并编辑 Jev 配置 →</div>
+              </button>
+
+              <button
+                onClick={() => router.push('/designer/ai-provider')}
+                className="group rounded-xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-blue-400/60 hover:shadow-md"
+              >
+                <div className="mb-4 flex items-center justify-between">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500/10 text-blue-600"><Bot className="h-5 w-5" /></span>
+                  <span className="rounded-full bg-blue-500/10 px-2 py-1 text-[10px] text-blue-700">接口配置</span>
+                </div>
+                <div className="text-sm font-semibold text-foreground">AI 接口配置</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">在 DeepSeek Flash、豆包、通义千问和旧默认接口间切换。</p>
+                <div className="mt-4 text-xs font-medium text-blue-700">选择运行接口 →</div>
               </button>
 
               <div className="rounded-xl border border-role-designer/30 bg-role-designer/5 p-5">

@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
+import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   AlertTriangle,
@@ -12,7 +13,6 @@ import {
   Gift,
   HeartHandshake,
   Home,
-  MessagesSquare,
   RefreshCw,
   ShieldAlert,
   Sparkles,
@@ -31,7 +31,7 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from 'recharts';
-import { calculateTotalScore, getGameOutcome, type GameDimension, type GameRuntimeState } from '@/lib/game/state';
+import { calculateTotalScore, type GameDimension, type GameRuntimeState } from '@/lib/game/state';
 import { getProjectOneNpc } from '@/lib/game/project-one';
 import type { GameReview } from '@/lib/contracts/game';
 
@@ -63,21 +63,40 @@ interface OutcomeView {
   fiveDimensionScore?: number;
   publicValueScore?: number;
   personalBenefitScore?: number;
-  decisionChainSupport?: number;
   baseScore?: number;
   compliancePenalty?: number;
   finalScore?: number;
   eligible?: boolean;
   won?: boolean;
+  winnerSupplierId?: string;
+  winnerSupplierName?: string;
+  supplierResults: SupplierResultView[];
 }
 
-interface AttitudeView {
+interface SupplierResultView {
+  supplierId: string;
+  name: string;
+  coreAdvantage: string;
+  rank?: number;
+}
+
+const NPC_PORTRAITS: Record<string, string> = {
+  'P1-001': '/assets/people/zhang-jianguo.png',
+  'P1-002': '/assets/people/li-minghui.png',
+  'P1-003': '/assets/people/wang-defu.png',
+  'P1-004': '/assets/people/zhao-xiaochen.png',
+  'P1-005': '/assets/people/liu-siqi.png',
+};
+
+interface InteractionSummary {
   npcId: string;
-  pleasantness?: number;
-  support?: number;
-  unmetImpression?: number;
-  complianceAwareness?: number;
-  history: Array<{ round: number; pleasantnessDelta: number; supportDelta: number; reason: string }>;
+  contactSummary?: string;
+  meetingSummary?: string;
+  confirmedItems: string[];
+  npcCommitments: string[];
+  completedTasks: string[];
+  endReason?: string;
+  nextStep?: string;
 }
 
 interface ComplianceView {
@@ -134,10 +153,6 @@ function firstString(source: Record<string, unknown> | null, keys: string[], fal
   return fallback;
 }
 
-function clampScore(value: number | undefined): number | undefined {
-  return typeof value === 'number' ? Math.max(0, Math.min(100, Math.round(value))) : undefined;
-}
-
 function clampOutcomeScore(value: number | undefined): number | undefined {
   return typeof value === 'number'
     ? Math.max(0, Math.min(100, Math.round(value * 10) / 10))
@@ -149,51 +164,95 @@ function normalizeOutcome(value: unknown, fallbackFiveDimension: number): Outcom
   const fiveDimensionScore = clampOutcomeScore(firstNumber(raw, ['fiveDimensionScore', 'abilityScore', 'salesCapability'])) ?? fallbackFiveDimension;
   const publicValueScore = clampOutcomeScore(firstNumber(raw, ['publicValueScore', 'publicValue', 'organizationalValue']));
   const personalBenefitScore = clampOutcomeScore(firstNumber(raw, ['personalBenefitScore', 'personalBenefit', 'individualBenefit']));
-  const decisionChainSupport = clampOutcomeScore(firstNumber(raw, ['decisionChainSupportScore', 'decisionChainSupport', 'supportScore']));
   const compliancePenalty = Math.max(0, Math.min(30, Math.round(firstNumber(raw, ['compliancePenalty', 'riskPenalty']) ?? 0)));
-  const calculatedBase = publicValueScore !== undefined && personalBenefitScore !== undefined && decisionChainSupport !== undefined
-    ? Math.round(fiveDimensionScore * 0.4 + publicValueScore * 0.3 + personalBenefitScore * 0.2 + decisionChainSupport * 0.1)
-    : undefined;
-  const baseScore = clampOutcomeScore(firstNumber(raw, ['baseScore'])) ?? calculatedBase;
+  const baseScore = clampOutcomeScore(firstNumber(raw, ['baseScore']));
   const finalScore = clampOutcomeScore(firstNumber(raw, ['finalScore', 'score'])) ?? (baseScore !== undefined ? Math.max(0, baseScore - compliancePenalty) : fallbackFiveDimension);
   return {
     fiveDimensionScore,
     publicValueScore,
     personalBenefitScore,
-    decisionChainSupport,
     baseScore,
     compliancePenalty,
     finalScore,
     eligible: typeof raw?.eligible === 'boolean' ? raw.eligible : undefined,
     won: typeof raw?.won === 'boolean' ? raw.won : undefined,
+    winnerSupplierId: firstString(raw, ['winnerSupplierId']) || undefined,
+    winnerSupplierName: firstString(raw, ['winnerSupplierName']) || undefined,
+    supplierResults: firstArray(raw, ['supplierResults']).map((item) => {
+      const supplier = asRecord(item);
+      return {
+        supplierId: firstString(supplier, ['supplierId', 'id']),
+        name: firstString(supplier, ['name', 'supplierName'], '供应商'),
+        coreAdvantage: firstString(supplier, ['coreAdvantage', 'advantage'], '核心优势尚未配置'),
+        rank: firstNumber(supplier, ['rank']),
+      };
+    }).filter((supplier) => supplier.supplierId || supplier.name !== '供应商'),
   };
 }
 
-function getAttitudes(state: GameRuntimeState): AttitudeView[] {
-  const attitudes = firstRecord(asRecord(state), ['npcAttitudes', 'attitudes']);
-  if (!attitudes) {
-    return Object.entries(state.npcAffinity ?? {}).map(([npcId, support]) => ({ npcId, support, history: [] }));
-  }
-  return Object.entries(attitudes).map(([npcId, rawValue]) => {
-    const value = asRecord(rawValue);
-    const history = firstArray(value, ['history', 'changes']).map((historyItem) => {
-      const item = asRecord(historyItem);
-      return {
-        round: firstNumber(item, ['round', 'stage']) ?? 0,
-        pleasantnessDelta: firstNumber(item, ['pleasantnessDelta', 'moodDelta']) ?? 0,
-        supportDelta: firstNumber(item, ['supportDelta']) ?? 0,
-        reason: firstString(item, ['reason', 'summary'], '本轮互动改变了人物态度'),
-      };
-    });
-    return {
+function getInteractionSummaries(state: GameRuntimeState): InteractionSummary[] {
+  const root = asRecord(state);
+  const summaries = new Map<string, InteractionSummary>();
+  const contacts = firstRecord(root, ['npcContacts']);
+  for (const [npcId, raw] of Object.entries(contacts ?? {})) {
+    const contact = asRecord(raw);
+    if (!contact) continue;
+    const status = firstString(contact, ['status']);
+    const wechatStatus = firstString(contact, ['wechatStatus']);
+    const phoneOutcome = firstString(contact, ['lastPhoneOutcome']);
+    const outboundCount = firstNumber(contact, ['outboundCount']) ?? 0;
+    const hasActivity = contact.hasReplied === true
+      || firstNumber(contact, ['lastContactRound']) !== undefined
+      || outboundCount > 0
+      || !['', 'not_requested'].includes(wechatStatus)
+      || ['unanswered', 'declined', 'call_later'].includes(phoneOutcome);
+    if (!hasActivity) continue;
+
+    let contactSummary = status === 'online' || wechatStatus === 'accepted'
+      ? '已建立工作微信沟通渠道。'
+      : status === 'connected'
+        ? '已建立正式联系。'
+        : contact.hasReplied === true
+          ? '客户已回应过沟通。'
+          : '已尝试联系，暂未形成持续沟通。';
+    if (phoneOutcome === 'unanswered') contactSummary = '最近一次工作电话暂未接通。';
+    else if (phoneOutcome === 'declined') contactSummary = '客户暂未接受本次工作电话。';
+    else if (phoneOutcome === 'call_later') contactSummary = '客户建议稍后再进行电话沟通。';
+    else if (wechatStatus === 'rejected') contactSummary = '客户暂未接受工作微信申请。';
+    else if (wechatStatus === 'later') contactSummary = '客户表示之后再考虑工作微信申请。';
+
+    summaries.set(npcId, {
       npcId,
-      pleasantness: clampScore(firstNumber(value, ['pleasantness', 'mood', 'happiness'])),
-      support: clampScore(firstNumber(value, ['support', 'supportLevel', 'affinity'])),
-      unmetImpression: firstNumber(value, ['unmetImpression', 'indirectImpression']),
-      complianceAwareness: clampScore(firstNumber(value, ['complianceAwareness', 'riskAwareness'])),
-      history,
+      contactSummary,
+      confirmedItems: [],
+      npcCommitments: [],
+      completedTasks: [],
+    });
+  }
+
+  const meetingMinutes = firstArray(root, ['meetingMinutes']);
+  for (const raw of meetingMinutes) {
+    const minutes = asRecord(raw);
+    const npcId = firstString(minutes, ['npcId']);
+    if (!minutes || !npcId) continue;
+    const existing = summaries.get(npcId) ?? {
+      npcId,
+      confirmedItems: [],
+      npcCommitments: [],
+      completedTasks: [],
     };
-  });
+    summaries.set(npcId, {
+      ...existing,
+      meetingSummary: firstString(minutes, ['summary']) || '已生成拜访纪要。',
+      confirmedItems: firstArray(minutes, ['confirmedItems']).filter((item): item is string => typeof item === 'string').slice(0, 3),
+      npcCommitments: firstArray(minutes, ['npcCommitments']).filter((item): item is string => typeof item === 'string').slice(0, 3),
+      completedTasks: firstArray(minutes, ['completedTasks']).filter((item): item is string => typeof item === 'string').slice(0, 3),
+      endReason: firstString(minutes, ['endReason']) || undefined,
+      nextStep: firstString(minutes, ['nextStep']) || undefined,
+    });
+  }
+
+  return Array.from(summaries.values());
 }
 
 function getComplianceEvents(state: GameRuntimeState): ComplianceView[] {
@@ -243,7 +302,7 @@ function getEvidence(state: GameRuntimeState): EvidenceView[] {
 
 export default function ResultPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-[#F5F7FB] flex items-center justify-center text-slate-500">正在生成赛后报告...</div>}>
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-[#eff3f9] text-[#68758c]">正在生成赛后报告...</div>}>
       <ResultInner />
     </Suspense>
   );
@@ -289,28 +348,30 @@ function ResultInner() {
     ? Object.entries(state.dimensions).map(([key, score]) => ({ key: key as GameDimension, name: DIMENSION_LABELS[key as GameDimension], score }))
     : [], [state]);
 
-  if (error) return <div className="min-h-screen flex items-center justify-center text-red-600">{error}</div>;
-  if (!state) return <div className="min-h-screen flex items-center justify-center text-slate-500">正在读取真实对局数据...</div>;
+  if (error) return <div className="flex min-h-screen items-center justify-center bg-[#eff3f9] text-[#d94c60]">{error}</div>;
+  if (!state) return <div className="flex min-h-screen items-center justify-center bg-[#eff3f9] text-[#68758c]">正在读取真实对局数据...</div>;
 
   const fiveDimensionFallback = calculateTotalScore(state.dimensions);
-  const outcome = normalizeOutcome(outcomeSource ?? getGameOutcome(state), fiveDimensionFallback);
+  const outcome = normalizeOutcome(outcomeSource, fiveDimensionFallback);
   const finalScore = outcome.finalScore ?? fiveDimensionFallback;
-  const isWin = outcome.won ?? outcome.eligible ?? state.status === 'won';
+  const root = asRecord(state);
+  const playerSupplierId = firstString(root, ['companyId'], 'player-company');
+  const isWin = outcome.winnerSupplierId
+    ? outcome.winnerSupplierId === playerSupplierId
+    : outcome.won ?? outcome.eligible ?? state.status === 'won';
   const strongest = dimensions.reduce((best, item) => item.score > best.score ? item : best, dimensions[0]);
   const weakest = dimensions.reduce((worst, item) => item.score < worst.score ? item : worst, dimensions[0]);
-  const attitudes = getAttitudes(state);
+  const interactions = getInteractionSummaries(state);
   const complianceEvents = getComplianceEvents(state);
   const evidence = getEvidence(state);
-  const root = asRecord(state);
+  const supplierResults = [...outcome.supplierResults].sort((a, b) => (a.rank ?? Number.MAX_SAFE_INTEGER) - (b.rank ?? Number.MAX_SAFE_INTEGER));
+  const winningSupplier = outcome.supplierResults.find((supplier) => supplier.supplierId === outcome.winnerSupplierId)
+    ?? supplierResults.find((supplier) => supplier.rank === 1);
+  const objectiveWinnerReason = winningSupplier
+    ? `${winningSupplier.name}凭借“${winningSupplier.coreAdvantage}”以及本次方案表现，在客户关注重点与供应能力的综合比较中排名第一。`
+    : '客户综合比较了本次项目需求、方案表现与各家供应商能力后，选出了最终中标者。';
   const cumulativeSpent = firstNumber(root, ['cumulativeSpentPoints', 'totalActionPointsSpent']) ?? 0;
-  const completeHybridData = outcome.publicValueScore !== undefined && outcome.personalBenefitScore !== undefined && outcome.decisionChainSupport !== undefined;
-  const decisionReplay = attitudes.map((attitude) => {
-    const npc = getProjectOneNpc(attitude.npcId);
-    const support = attitude.support ?? 0;
-    const stance = support >= 60 ? '支持我方方案' : support >= 45 ? '谨慎认可，仍要求补证' : '保留意见';
-    const reason = attitude.history[attitude.history.length - 1]?.reason ?? '本局没有形成更明确的直接证据';
-    return { npcId: attitude.npcId, name: npc?.name ?? attitude.npcId, title: npc?.title ?? '关键联系人', stance, reason };
-  });
+  const completeHybridData = outcome.publicValueScore !== undefined && outcome.personalBenefitScore !== undefined;
   const restartGame = () => {
     localStorage.removeItem(`game-session:${state.scenarioCode}`);
     router.push('/start');
@@ -320,24 +381,24 @@ function ResultInner() {
     { label: '五维能力', value: outcome.fiveDimensionScore, weight: '40%', icon: BarChart3, color: 'blue' },
     { label: '对公价值', value: outcome.publicValueScore, weight: '30%', icon: Building2, color: 'emerald' },
     { label: '个人合理收益', value: outcome.personalBenefitScore, weight: '20%', icon: HeartHandshake, color: 'amber' },
-    { label: '决策链支持', value: outcome.decisionChainSupport, weight: '10%', icon: Users, color: 'violet' },
   ] as const;
 
   return (
-    <div className="min-h-screen bg-app-shell text-foreground">
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-8">
-        <section className={`overflow-hidden rounded-3xl p-7 text-white shadow-2xl ${isWin ? 'bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-700' : 'bg-gradient-to-br from-slate-700 to-slate-900'}`}>
+    <div className="min-h-screen text-[#17223a]" style={{ background: 'radial-gradient(1100px 520px at 12% -6%,rgba(47,107,255,.075),transparent 60%),radial-gradient(900px 480px at 96% 6%,rgba(123,75,234,.055),transparent 55%),linear-gradient(180deg,#f5f8fd,#eef2f9 46%,#ebf0f8)' }}>
+      <main className="mx-auto max-w-[1220px] px-4 pb-12 pt-5 sm:px-6">
+        <section className="relative overflow-hidden rounded-[17px] border border-[rgba(90,130,200,.35)] p-6 text-white shadow-[0_18px_50px_rgba(24,43,77,.13)] sm:p-7" style={{ background: 'radial-gradient(700px 320px at 88% -20%,rgba(246,189,79,.16),transparent 55%),linear-gradient(135deg,#101b31,#16263f 52%,#0c1526)' }}>
+          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(105deg,transparent_42%,rgba(190,214,250,.09)_50%,transparent_58%)]" aria-hidden="true" />
           <div className="flex flex-wrap items-center justify-between gap-6">
             <div className="flex items-center gap-4">
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/15 backdrop-blur"><Trophy className="h-9 w-9" /></div>
-              <div><div className="text-sm text-white/70">项目一 · 赛后复盘</div><h1 className="mt-1 text-3xl font-bold">{isWin ? '中标' : '本场未中标'}</h1><div className="mt-2 text-xs text-white/70">最终结果由销售能力、客户价值、个人合理收益、决策链支持与合规风险共同决定。</div></div>
+              <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-white/15 bg-white/[.08] text-[#ffd582] shadow-inner backdrop-blur"><Trophy className="h-9 w-9" /></div>
+              <div><div className="text-[10px] font-bold uppercase tracking-[.16em] text-[#b9cdfc]">PROJECT 01 · FINAL REVIEW</div><h1 className="mt-1 bg-gradient-to-r from-white via-white to-[#ffd582] bg-clip-text text-3xl font-black text-transparent">{isWin ? '中标' : '本场未中标'}</h1><div className="mt-2 text-xs text-[#c7d2df]">三家供应商按客户关注重点、方案表现与核心优势综合比较。</div></div>
             </div>
             <div className="flex items-end gap-6">
-              <div><div className="text-xs text-white/60">最终得分</div><div className="text-4xl font-black num">{finalScore}<span className="text-base font-medium text-white/60"> / 100</span></div></div>
+              <div><div className="text-[10px] text-[#c6d1df]">我方方案表现分</div><div className="bg-gradient-to-b from-[#ffe9b8] to-[#f6bd4f] bg-clip-text text-4xl font-black text-transparent drop-shadow-[0_0_18px_rgba(246,189,79,.28)] num">{finalScore}<span className="text-base font-medium text-[#c6d1df]"> / 100</span></div></div>
               {(outcome.compliancePenalty ?? 0) > 0 && <div className="rounded-xl bg-red-500/25 px-4 py-3"><div className="text-[10px] text-white/70">合规扣分</div><div className="text-xl font-bold">-{outcome.compliancePenalty}</div></div>}
             </div>
           </div>
-          <div className="mt-6 grid gap-3 border-t border-white/15 pt-5 sm:grid-cols-4">
+          <div className="relative mt-6 grid gap-3 border-t border-white/15 pt-5 sm:grid-cols-4">
             <SummaryStat icon={Target} label="基础结果" value={outcome.baseScore !== undefined ? `${outcome.baseScore}分` : '旧存档'} />
             <SummaryStat icon={Sparkles} label="阶段进度" value={`第${state.currentStage}/${state.maxStages}阶段`} />
             <SummaryStat icon={Sparkles} label="行动点" value={cumulativeSpent ? `已消耗${cumulativeSpent}点` : `剩余${state.actionPoints}点`} />
@@ -346,36 +407,45 @@ function ResultInner() {
         </section>
 
         {!completeHybridData && (
-          <div className="mt-5 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900">
+          <div className="mt-5 flex items-start gap-3 rounded-2xl border border-[#f2d694] bg-[#fff9ea] p-4 text-xs leading-5 text-[#7d5715]">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            这是旧版或迁移中的对局，部分「对公价值、个人合理收益、决策链支持」数据尚未记录。已保留原五维结果，不会用虚构数值补齐缺失项。
+            这是旧版或迁移中的对局，部分「对公价值、个人合理收益」复盘数据尚未记录。已保留原五维结果，不会用虚构数值补齐缺失项。
           </div>
         )}
 
-        <section className="mt-6 rounded-2xl border border-border bg-card p-6 shadow-sm card-elevated">
-          <div className="flex items-center gap-2"><Swords className="h-5 w-5 text-red-600" /><h2 className="text-base font-bold">竞品最终对比</h2></div>
-          <p className="mt-1 text-xs text-muted-foreground">竞品过程分属于后台推演依据，不向玩家公开。以下只说明客户决策中可被行为证据支持的竞争影响。</p>
-          <div className="mt-4 rounded-xl border border-border bg-surface-container p-4 text-sm leading-6 text-slate-700">{isWin ? '我方在关键人物支持、客户价值证据或履约表现上形成了更有效的综合优势。' : '客户最终更倾向竞品；请结合下方决策回放检查未核实的信息、未回应的异议和缺失的关键人支持。'}</div>
+        <section className="mt-6 rounded-2xl border border-[#e0e8f2] bg-gradient-to-b from-white to-[#fbfdff] p-5 shadow-[0_4px_16px_rgba(20,40,80,.05)] sm:p-6">
+          <div className="flex items-center gap-2"><Swords className="h-5 w-5 text-[#2f6bff]" /><h2 className="text-base font-bold">三家供应商中标结果</h2></div>
+          <p className="mt-1 text-xs text-muted-foreground">排名综合客户意见、供应商核心优势和方案表现；供应商精确竞争分保留为后台推演数据。</p>
+          <div className="mt-4 rounded-xl border border-[#cfdcf4] bg-gradient-to-br from-[#f4f8ff] to-[#edf4ff] p-4">
+            <div className="text-[10px] font-bold text-[#2c5cd0]">最终中标供应商</div>
+            <div className="mt-1 text-lg font-extrabold text-[#17223a]">{outcome.winnerSupplierName ?? '本局存档未记录中标供应商'}</div>
+            <p className="mt-2 text-sm leading-6 text-[#33445f]">{objectiveWinnerReason}</p>
+          </div>
+          {supplierResults.length > 0 && (
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              {supplierResults.map((supplier) => {
+                const isWinner = supplier.supplierId === outcome.winnerSupplierId;
+                return <article key={supplier.supplierId || supplier.name} className={`rounded-xl border p-4 shadow-[0_2px_8px_rgba(24,43,77,.04)] ${isWinner ? 'border-[#bde5d6] bg-gradient-to-b from-[#f0faf6] to-[#e7f7f0]' : 'border-[#e2eaf4] bg-gradient-to-b from-white to-[#fafcfe]'}`}>
+                  <div className="flex items-start justify-between gap-2"><div><div className="text-sm font-bold">{supplier.name}</div><div className="mt-1 text-[10px] text-muted-foreground">{supplier.coreAdvantage}</div></div><span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${isWinner ? 'bg-emerald-100 text-emerald-800' : 'bg-surface-container text-muted-foreground'}`}>{isWinner ? '中标' : supplier.rank ? `第 ${supplier.rank} 名` : '参与竞标'}</span></div>
+                  <div className="mt-3 text-[10px] text-muted-foreground">综合客户意见与本次方案表现进行评定</div>
+                </article>;
+              })}
+            </div>
+          )}
         </section>
 
-        <section className="mt-6 rounded-2xl border border-border bg-card p-6 shadow-sm card-elevated">
-          <div className="flex items-center gap-2"><MessagesSquare className="h-5 w-5 text-violet-600" /><h2 className="text-base font-bold">客户内部决策回放</h2></div>
-          <p className="mt-1 text-xs text-muted-foreground">根据各关键人最终支持度和最近态度转折生成，便于追溯“为什么支持或保留”。</p>
-          <div className="mt-4 grid gap-3 md:grid-cols-2">{decisionReplay.map((item) => <article key={item.npcId} className="rounded-xl border border-border p-4"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-bold">{item.name}</div><div className="text-[10px] text-muted-foreground">{item.title}</div></div><span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${item.stance.startsWith('支持') ? 'bg-emerald-50 text-emerald-700' : item.stance.startsWith('谨慎') ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700'}`}>{item.stance}</span></div><p className="mt-3 text-xs leading-5 text-slate-600">核心依据：{item.reason}</p></article>)}</div>
-        </section>
-
-        <section className="mt-6 rounded-2xl border border-border bg-card p-6 shadow-sm card-elevated">
-          <div className="flex items-center gap-2"><Award className="h-5 w-5 text-blue-600" /><h2 className="text-base font-bold">混合结果构成</h2></div>
-          <p className="mt-1 text-xs text-muted-foreground">基础分 = 五维能力×40% + 对公价值×30% + 个人合理收益×20% + 决策链支持×10%；最终分再扣除已触发的合规风险。</p>
-          <div className="mt-5 grid gap-4 md:grid-cols-4">
+        <section className="mt-6 rounded-2xl border border-[#e0e8f2] bg-gradient-to-b from-white to-[#fbfdff] p-5 shadow-[0_4px_16px_rgba(20,40,80,.05)] sm:p-6">
+          <div className="flex items-center gap-2"><Award className="h-5 w-5 text-[#2f6bff]" /><h2 className="text-base font-bold">混合结果构成</h2></div>
+          <p className="mt-1 text-xs text-muted-foreground">基础分综合本局已记录的方案与价值指标；最终分再扣除已触发的合规风险。</p>
+          <div className="mt-5 grid gap-4 md:grid-cols-3">
             {outcomeCards.map((item) => <MetricCard key={item.label} {...item} />)}
           </div>
-          {(outcome.baseScore !== undefined || outcome.compliancePenalty !== undefined) && <div className="mt-5 flex flex-wrap items-center justify-center gap-3 rounded-xl bg-surface-container p-4 text-sm"><span>基础分 <strong>{outcome.baseScore ?? '—'}</strong></span><span className="text-muted-foreground/40">−</span><span>合规惩罚 <strong className="text-destructive">{outcome.compliancePenalty ?? 0}</strong></span><span className="text-muted-foreground/40">=</span><span>最终分 <strong className="text-primary">{finalScore}</strong></span></div>}
+          {(outcome.baseScore !== undefined || outcome.compliancePenalty !== undefined) && <div className="mt-5 flex flex-wrap items-center justify-center gap-3 rounded-xl bg-surface-container p-4 text-sm"><span>基础分 <strong>{outcome.baseScore ?? '—'}</strong></span><span className="text-muted-foreground/40">−</span><span>合规惩罚 <strong className="text-destructive">{outcome.compliancePenalty ?? 0}</strong></span><span className="text-muted-foreground/40">=</span><span>我方方案表现分 <strong className="text-primary">{finalScore}</strong></span></div>}
         </section>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-2">
-          <section className="rounded-2xl border border-border bg-card p-6 shadow-sm card-elevated">
-            <div className="flex items-center gap-2"><BarChart3 className="h-5 w-5 text-blue-600" /><h2 className="text-base font-bold">五维销售能力</h2></div>
+          <section className="rounded-2xl border border-[#e0e8f2] bg-gradient-to-b from-white to-[#fbfdff] p-5 shadow-[0_4px_16px_rgba(20,40,80,.05)] sm:p-6">
+            <div className="flex items-center gap-2"><BarChart3 className="h-5 w-5 text-[#2f6bff]" /><h2 className="text-base font-bold">五维销售能力</h2></div>
             <div className="mt-4 h-64 w-full" aria-label="五维销售能力雷达图">
               <ResponsiveContainer width="100%" height="100%">
                 <RadarChart data={dimensions} outerRadius="72%">
@@ -391,21 +461,38 @@ function ResultInner() {
               {dimensions.map((dimension) => <ScoreBar key={dimension.key} label={dimension.name} value={dimension.score} />)}
             </div>
           </section>
-          <section className="rounded-2xl border border-border bg-card p-6 shadow-sm card-elevated">
-            <div className="flex items-center gap-2"><Users className="h-5 w-5 text-violet-600" /><h2 className="text-base font-bold">人物态度揭示</h2></div>
-            <p className="mt-1 text-xs text-muted-foreground">对局中隐藏的愉悦度与项目支持度在此揭示；愉悦度不直接计入最终分。</p>
+          <section className="rounded-2xl border border-[#e0e8f2] bg-gradient-to-b from-white to-[#fbfdff] p-5 shadow-[0_4px_16px_rgba(20,40,80,.05)] sm:p-6">
+            <div className="flex items-center gap-2"><Users className="h-5 w-5 text-[#7b4bea]" /><h2 className="text-base font-bold">人物互动反馈</h2></div>
+            <p className="mt-1 text-xs text-muted-foreground">以下摘要来自公开联络状态和已保存的拜访纪要。</p>
             <div className="mt-4 max-h-[330px] space-y-3 overflow-y-auto pr-1">
-              {attitudes.length === 0 && <EmptyReport text="本局没有可展示的人物态度记录。" />}
-              {attitudes.map((attitude) => {
-                const npc = getProjectOneNpc(attitude.npcId);
-                return <div key={attitude.npcId} className="rounded-xl border border-border p-3 hover:border-primary/30 transition-colors"><div className="mb-3 flex items-center gap-2"><div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-700 font-bold text-white">{npc?.name.slice(0, 1) ?? <UserRound className="h-4 w-4" />}</div><div><div className="text-xs font-bold">{npc?.name ?? attitude.npcId}</div><div className="text-[10px] text-muted-foreground">{npc?.title ?? '关键联系人'}</div></div></div>{attitude.pleasantness !== undefined ? <ScoreBar label="愉悦度" value={attitude.pleasantness} compact color="amber" /> : <div className="mb-2 text-[10px] text-muted-foreground">愉悦度：旧存档未记录</div>}<ScoreBar label={attitude.pleasantness === undefined ? '支持度（旧关系值兼容）' : '支持度'} value={attitude.support ?? 0} compact color="violet" />{(attitude.unmetImpression !== undefined || attitude.complianceAwareness !== undefined) && <div className="mt-2 flex flex-wrap gap-1.5 text-[9px] text-muted-foreground">{attitude.unmetImpression !== undefined && <span className="rounded-full bg-surface-container px-2 py-1">初见前印象 {attitude.unmetImpression >= 0 ? '+' : ''}{attitude.unmetImpression}</span>}{attitude.complianceAwareness !== undefined && <span className="rounded-full bg-red-50 px-2 py-1 text-red-700">合规警觉 {attitude.complianceAwareness}</span>}</div>}{attitude.history.length > 0 && <div className="mt-3 border-t border-border pt-2"><div className="mb-1 text-[9px] font-bold text-muted-foreground">最近态度转折</div>{attitude.history.slice(-2).map((item, index) => <div key={`${item.round}-${index}`} className="mt-1 text-[9px] leading-4 text-muted-foreground">第{item.round}阶段 · 愉悦{item.pleasantnessDelta >= 0 ? '+' : ''}{item.pleasantnessDelta} / 支持{item.supportDelta >= 0 ? '+' : ''}{item.supportDelta}：{item.reason}</div>)}</div>}</div>;
+              {interactions.length === 0 && <EmptyReport text="本局尚未形成可展示的联络或拜访记录。" />}
+              {interactions.map((interaction) => {
+                const npc = getProjectOneNpc(interaction.npcId);
+                const endReasonLabel: Record<string, string> = {
+                  completed: '完成关键沟通任务',
+                  player: '我方主动结束交流',
+                  npc_left: '客户临时离场',
+                  turn_limit: '达到会谈轮次上限',
+                };
+                return <article key={interaction.npcId} className="rounded-xl border border-[#e5edf6] bg-gradient-to-b from-white to-[#fafcfe] p-3 transition-colors hover:border-[#c6d6ee]">
+                  <div className="mb-3 flex items-center gap-2"><div className="relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-[#4f8dff] to-[#2250c8] font-bold text-white ring-2 ring-white shadow-sm">{npc?.name.slice(0, 1) ?? <UserRound className="h-4 w-4" />}{NPC_PORTRAITS[interaction.npcId] && <Image src={NPC_PORTRAITS[interaction.npcId]} alt="" width={40} height={40} className="absolute inset-0 h-full w-full object-cover" />}</div><div><div className="text-xs font-bold">{npc?.name ?? interaction.npcId}</div><div className="text-[10px] text-muted-foreground">{npc?.title ?? '关键联系人'}</div></div></div>
+                  {interaction.contactSummary && <div className="mb-2 rounded-lg bg-surface-container px-3 py-2 text-[11px] text-muted-foreground">{interaction.contactSummary}</div>}
+                  {interaction.meetingSummary && <div className="space-y-2 text-[11px] leading-5">
+                    <div className="flex flex-wrap gap-1.5"><span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">拜访纪要</span>{interaction.endReason && <span className="rounded-full bg-surface-container px-2 py-1 text-muted-foreground">{endReasonLabel[interaction.endReason] ?? '拜访已结束'}</span>}</div>
+                    <p>{interaction.meetingSummary}</p>
+                    {interaction.completedTasks.length > 0 && <div><span className="font-semibold">完成事项：</span>{interaction.completedTasks.join('、')}</div>}
+                    {interaction.confirmedItems.length > 0 && <div><span className="font-semibold">已确认：</span>{interaction.confirmedItems.join('；')}</div>}
+                    {interaction.npcCommitments.length > 0 && <div><span className="font-semibold">客户承诺：</span>{interaction.npcCommitments.join('；')}</div>}
+                    {interaction.nextStep && <div className="text-muted-foreground"><span className="font-semibold">后续：</span>{interaction.nextStep}</div>}
+                  </div>}
+                </article>;
               })}
             </div>
           </section>
         </div>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-2">
-          <section className="rounded-2xl border border-border bg-card p-6 shadow-sm card-elevated">
+          <section className="rounded-2xl border border-[#e0e8f2] bg-gradient-to-b from-white to-[#fbfdff] p-5 shadow-[0_4px_16px_rgba(20,40,80,.05)] sm:p-6">
             <div className="flex items-center gap-2"><FileCheck2 className="h-5 w-5 text-emerald-600" /><h2 className="text-base font-bold">价值证据账本</h2></div>
             <div className="mt-4 space-y-4">
               {(['public', 'personal'] as const).map((category) => {
@@ -414,8 +501,8 @@ function ResultInner() {
               })}
             </div>
           </section>
-          <section className="rounded-2xl border border-border bg-card p-6 shadow-sm card-elevated">
-            <div className="flex items-center gap-2"><ShieldAlert className="h-5 w-5 text-red-600" /><h2 className="text-base font-bold">礼品与合规事件</h2></div>
+          <section className="rounded-2xl border border-[#e0e8f2] bg-gradient-to-b from-white to-[#fbfdff] p-5 shadow-[0_4px_16px_rgba(20,40,80,.05)] sm:p-6">
+            <div className="flex items-center gap-2"><ShieldAlert className="h-5 w-5 text-[#d94c60]" /><h2 className="text-base font-bold">礼品与合规事件</h2></div>
             <p className="mt-1 text-xs text-muted-foreground">高波动礼品的即时收益与延迟代价在这里一并复盘。</p>
             <div className="mt-4 space-y-3">
               {complianceEvents.length === 0 && <EmptyReport text="本局没有记录到合规风险事件。" />}
@@ -424,7 +511,7 @@ function ResultInner() {
           </section>
         </div>
 
-        <section className="mt-6 rounded-2xl border border-border bg-card p-6 shadow-sm card-elevated">
+        <section className="mt-6 rounded-2xl border border-[#e0e8f2] bg-gradient-to-b from-white to-[#fbfdff] p-5 shadow-[0_4px_16px_rgba(20,40,80,.05)] sm:p-6">
           <div className="flex items-center gap-2"><Award className="h-5 w-5 text-amber-500" /><h2 className="text-base font-bold">基于本局数据的诊断</h2></div>
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <DiagnosisCard title="当前优势" tone="success" text={review?.strengths.join('；') || `${strongest.name}为本局最高维度（${strongest.score}分），可回看对应对话与准备动作并固化做法。`} />
@@ -446,11 +533,6 @@ function ResultInner() {
 
 function SummaryStat({ icon: Icon, label, value }: { icon: typeof Trophy; label: string; value: string }) {
   return <div className="rounded-xl bg-white/10 p-3"><div className="flex items-center gap-1.5 text-[10px] text-white/65"><Icon className="h-3.5 w-3.5" />{label}</div><div className="mt-1 text-lg font-bold">{value}</div></div>;
-}
-
-function ComparisonScore({ label, value, winner, tone }: { label: string; value: number; winner: boolean; tone: 'blue' | 'red' }) {
-  const color = tone === 'blue' ? 'border-blue-200 bg-blue-50 text-blue-900' : 'border-red-200 bg-red-50 text-red-900';
-  return <div className={`rounded-2xl border p-5 ${color}`}><div className="flex items-center justify-between"><span className="text-sm font-bold">{label}</span>{winner && <span className="rounded-full bg-white/70 px-2 py-1 text-[10px] font-semibold">领先</span>}</div><div className="mt-3 text-4xl font-black">{value}<span className="text-sm font-medium opacity-60"> / 100</span></div></div>;
 }
 
 function MetricCard({ label, value, weight, icon: Icon, color }: { label: string; value?: number; weight: string; icon: typeof Trophy; color: 'blue' | 'emerald' | 'amber' | 'violet' }) {

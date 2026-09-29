@@ -131,10 +131,8 @@ function createDeterministicReview(args: {
   const strongest = dimensionEntries[0];
   const weakest = dimensionEntries.at(-1);
   const finalScore = outcomeNumber(args.outcome, ['finalScore', 'score', 'totalScore']);
-  const fiveDimensionScore = outcomeNumber(args.outcome, ['fiveDimensionScore', 'salesAbilityScore', 'fiveDimension']);
   const publicValueScore = outcomeNumber(args.outcome, ['publicValueScore', 'corporateValueScore']);
   const personalBenefitScore = outcomeNumber(args.outcome, ['personalBenefitScore', 'personalValueScore']);
-  const decisionSupportScore = outcomeNumber(args.outcome, ['decisionChainSupportScore', 'decisionSupportScore']);
   const compliancePenalty = outcomeNumber(args.outcome, ['compliancePenalty', 'complianceRiskPenalty']) ?? 0;
   const investedMinutes = firstValue(args.state, [
     'cumulativeTimeMinutes',
@@ -167,21 +165,20 @@ function createDeterministicReview(args: {
   const outcomeStrengths = [
     publicValueScore === undefined ? null : { label: '对公价值', score: publicValueScore },
     personalBenefitScore === undefined ? null : { label: '个人合理收益', score: personalBenefitScore },
-    decisionSupportScore === undefined ? null : { label: '决策链支持', score: decisionSupportScore },
   ].filter((item): item is { label: string; score: number } => Boolean(item))
     .sort((left, right) => right.score - left.score);
   if (outcomeStrengths[0] && outcomeStrengths[0].score >= 50) {
     strengths.push(`项目结果层中“${outcomeStrengths[0].label}”相对突出（${Math.round(outcomeStrengths[0].score)}分），说明部分客户选择理由已得到有效确认。`);
   }
-  const outcomeSummary = `混合结算${finalScore === undefined ? '' : `为${Math.round(finalScore)}分`}：五维能力${fiveDimensionScore === undefined ? '' : `${Math.round(fiveDimensionScore)}分，`}占40%，对公价值占30%，个人合理收益占20%，决策链支持占10%，再扣除${Math.round(compliancePenalty)}分合规风险${resourceText ? `；本局${resourceText}` : ''}。`;
+  const outcomeSummary = `综合结算${finalScore === undefined ? '' : `为${Math.round(finalScore)}分`}：结合五维能力、对公价值、个人合理收益、合规风险和当前招标规则${resourceText ? `；本局${resourceText}` : ''}。`;
   if (args.status === 'won') {
-    strengths.unshift(`${outcomeSummary}最终达到60分中标标准。`);
+    strengths.unshift(`${outcomeSummary}在本次三方比选中中标。`);
   }
   if (!strengths.length) strengths.push('完成了完整客户接触并留下了可复盘的对话记录，为下一次针对性改进提供了依据。');
 
   const improvements: string[] = [];
   if (args.status === 'lost') {
-    improvements.push(`${outcomeSummary}最终未达到60分中标标准，需要从最低的能力或结果指标补证。`);
+    improvements.push(`${outcomeSummary}本次未能中标，需要从最低的能力或结果指标补证。`);
   }
   if (compliancePenalty > 0) {
     improvements.push(`本局已触发${Math.round(compliancePenalty)}分合规扣分。任何短期好感或项目推进都不能抵消上报、审计或后续反噬，应避免违规利益交换。`);
@@ -245,7 +242,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     const reviewInput = serializeUntrustedPromptData('game_review_context', {
       result: outcome.won ? 'won' : 'lost',
       persistedLegacyResult: gameSession.state.status,
-      formula: '最终分 = 五维平均分×40% + 对公价值×30% + 个人合理收益×20% + 决策链支持×10% - 已触发合规扣分；最终分达到60为中标',
+      formula: '最终结果由三家供应商的项目表现、已验证价值、合规风险、客户内部决策与当前招标规则共同决定；客户支持度及其分级为内部计算，不得展示或推断。',
       outcome: toReviewOutcome(outcome),
       npcMemories: reviewContext.npcMemories,
       persistentState: reviewContext.persistentState,
@@ -255,7 +252,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     }, { maxStringLength: 700, maxTotalLength: 32_000 });
     const systemPrompt = [
       '你是政企销售训练复盘教练。只能依据给定对局数据给出具体、可执行的中文复盘，不得编造对话外事实。',
-      '必须按混合结算解释结果：五维销售能力40%、对公价值30%、个人合理收益20%、决策链支持10%，最后扣除已触发的合规风险；不能只依据五维或最终胜负。',
+      '必须结合五维销售能力、已验证的对公价值和个人合理收益、合规风险、招标规则及三方核心优势解释结果；不能只依据五维或最终胜负。不得展示、估算或推断任何客户支持度、支持分级或内部关系分数。',
       '如存在礼品记录，必须同时说明其即时收益与拒收、上报、审计、转述或后续反噬的实际/潜在代价；现金、回扣和利益交换不得评价为个人合理收益。没有礼品或风险记录时不得编造。',
       '结合累计模拟投入时间和累计行动点消耗评价资源效率；旧存档字段缺失时直接省略对应判断，不得自行推算。',
       '区分玩家主张与NPC确认：对公价值和个人合理收益只能引用已确认或已验证的证据。',

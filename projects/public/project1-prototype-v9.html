@@ -236,12 +236,18 @@ linear-gradient(180deg,#f6f9fd,#f2f6fa);padding:14px}.workspace-body>*{animation
 radial-gradient(circle at 50% 46%,rgba(124,83,234,.3),transparent 30%),
 radial-gradient(circle at 50% 52%,rgba(43,98,232,.16),transparent 48%),
 linear-gradient(150deg,#101b31,#16263f 55%,#0c1526);color:#fff;display:flex;align-items:center;justify-content:center;text-align:center;box-shadow:inset 0 1px 0 rgba(170,198,245,.1),inset 0 -40px 80px rgba(5,12,26,.5),var(--shadow-lg)}
-.phone-inner{max-width:480px}
+.phone-inner{width:min(480px,calc(100% - 24px));max-height:calc(100vh - 34px);overflow:auto;padding:16px 0}
 .phone-inner h2{font-size:18px;margin:0;text-shadow:0 2px 16px rgba(77,141,255,.35)}
 .phone-inner p{font-size:10px;color:#a9b9d4}
 .call-avatar{width:82px;height:82px;border-radius:50%;background:linear-gradient(145deg,#b18cff,#6f3fe4);display:grid;place-items:center;margin:18px auto 10px;font-size:32px;font-weight:900;box-shadow:0 0 0 12px rgba(139,92,246,.09),0 0 0 26px rgba(139,92,246,.04),0 16px 34px rgba(80,42,160,.45),inset 0 2px 0 rgba(255,255,255,.3);animation:pulseDot 3.2s ease-in-out infinite}
-.phone-log{margin:12px 0;background:rgba(255,255,255,.07);border:1px solid rgba(170,198,245,.12);border-radius:10px;padding:9px;text-align:left;font-size:9px;line-height:1.55;color:#d5e0f0}
+.phone-log{margin:12px 0;background:rgba(255,255,255,.07);border:1px solid rgba(170,198,245,.12);border-radius:10px;padding:9px;text-align:left;font-size:9px;line-height:1.55;color:#d5e0f0;max-height:190px;overflow:auto}
 .phone-line+.phone-line{margin-top:5px}.phone-line.pending{color:#aebdd3}.phone-line.failed{color:#ffb8c3}
+.phone-history{margin:12px 0;text-align:left;border:1px solid rgba(170,198,245,.16);border-radius:10px;background:rgba(255,255,255,.045);overflow:hidden}
+.phone-history-head{display:flex;justify-content:space-between;gap:8px;padding:8px 10px;font-size:9px;color:#e4ecf8;border-bottom:1px solid rgba(170,198,245,.12)}
+.phone-history-list{max-height:128px;overflow:auto}
+.phone-history-row{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;padding:7px 10px;font-size:8px;color:#c2cee0}
+.phone-history-row+.phone-history-row{border-top:1px solid rgba(170,198,245,.08)}
+.phone-history-row strong{color:#e0e8f5;font-size:8px}.phone-history-status{color:#b9c8df;white-space:nowrap}.phone-history-empty{padding:9px 10px;font-size:8px;color:#9eafc9}
 .wechat-request{padding:22px}
 .wechat-request h3{font-size:15px;margin:0 0 5px}.wechat-request p{font-size:9px;color:var(--muted);line-height:1.6}.wechat-request textarea{min-height:100px}
 .postal-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;padding:14px}
@@ -288,7 +294,7 @@ linear-gradient(135deg,#33465c,#1b2836 55%,#0d141d);color:#fff;padding:17px;disp
 .result-hero:before{content:"";position:absolute;inset:0;background:linear-gradient(105deg,transparent 42%,rgba(190,214,250,.09) 50%,transparent 58%);animation:sheen 4.2s var(--ease) infinite}
 .result-hero h2{font-size:29px;margin:4px 0;background:linear-gradient(92deg,#fff 45%,#ffd582);-webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:none}
 .score-box strong{display:inline-block;font-size:43px;background:linear-gradient(180deg,#ffe9b8,#f6bd4f);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 22px rgba(246,189,79,.4))}
-.result-stats{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-top:11px}
+.result-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:11px}
 .result-stat{position:relative;overflow:hidden;background:rgba(255,255,255,.07);border:1px solid rgba(190,214,250,.16);border-radius:10px;padding:10px;animation:panelIn .5s var(--ease) both}
 .result-stat:nth-child(2){animation-delay:.06s}.result-stat:nth-child(3){animation-delay:.12s}.result-stat:nth-child(4){animation-delay:.18s}
 .result-stat span{display:block;font-size:8px;color:#b9c9e4}.result-stat strong{display:block;font-size:16px;margin-top:4px;color:#ffd582}
@@ -484,8 +490,8 @@ const DemoOnlyApi = {
  let expressionCaret={start:0,end:0};
  const blankConversations=()=>Object.fromEntries(MockData.npcs.map(n=>[n.id,{email:[],work_phone:[],wechat:[],meeting:[],postal:[]}]))
 const normalizeNpcMap=(value,fallback={})=>Object.fromEntries(MockData.npcs.map(n=>[n.id,value&&Object.prototype.hasOwnProperty.call(value,n.id)?value[n.id]:fallback[n.id]]));
-const blankNpcTestStates=()=>Object.fromEntries(MockData.npcs.map(n=>[n.id,{support:0,pleasantness:50,effectiveContactCount:0,node:''}]));
-const normalizeNpcTestStates=value=>Object.fromEntries(MockData.npcs.map(n=>{const item=value?.[n.id]||{},node=['N1','N2','N3','N4','BLOCKED'].includes(item.node)?item.node:'';return [n.id,{support:clampTestInteger(item.support,0,100,0),pleasantness:clampTestInteger(item.pleasantness,0,100,50),effectiveContactCount:clampTestInteger(item.effectiveContactCount,0,100,0),node}]}));
+const blankNpcTestStates=()=>Object.fromEntries(MockData.npcs.map(n=>[n.id,{support:0,pleasantness:50,effectiveContactCount:0,node:'N1'}]));
+const normalizeNpcTestStates=value=>Object.fromEntries(MockData.npcs.map(n=>{const item=value?.[n.id]||{},node=['N1','N2','N3','N4','BLOCKED'].includes(item.node)?item.node:'N1';return [n.id,{support:clampTestInteger(item.support,0,100,0),pleasantness:clampTestInteger(item.pleasantness,0,100,50),effectiveContactCount:clampTestInteger(item.effectiveContactCount,0,100,0),node}]}));
  const TEST_APPOINTMENT_STATUSES=['none','pending','accepted','rejected','later','completed','cancelled'];
  const PREVIEW_RETRY_ACTIONS=new Set(['plan','message','wechat_request','phone_connect','visit_preparation','brief_visit','start_visit','visit_turn','end_visit','test_adjust_npcs','test_adjust_appointments','reset']);
  function normalizeRetryRequest(value){
@@ -498,7 +504,7 @@ const normalizeNpcTestStates=value=>Object.fromEntries(MockData.npcs.map(n=>{con
  }
 const initialState=()=>({
   screen:'projects',playMode:'solo',phase:1,actionPoints:28,totalSpent:0,
-  selectedNpcId:null,workspaceMode:'overview',channel:null,phoneActive:false,phoneAttempts:{},
+  selectedNpcId:null,workspaceMode:'overview',channel:null,phoneActive:false,phoneAttempts:{},phoneHistory:{},
   wechat:{},conversations:blankConversations(),
   appointments:[],meeting:null,npcExpressions:{},visitPreparations:{},visitPreparationFeedback:{},directVisitIntent:{},completedVisits:[],postal:[],
   workPlans:{global:'',byNpc:{}},planAnalysis:{global:null,byNpc:{}},submittedPlans:{global:null,byNpc:{}},publicIntel:{},
@@ -508,6 +514,8 @@ const initialState=()=>({
 });
 let stateOwnerUserId=activeUserId;
 let state=loadState(activeUserId);
+let activePhoneCallId=null;
+let testNpcStateVisibility='uninitialized',testNpcStateSyncedAt=null,testNpcAdjustmentsEnabled=true;
 function normalizeConversations(value){
  const raw=value&&typeof value==='object'?value:{};
  const result=blankConversations();
@@ -527,6 +535,30 @@ function normalizeNpcExpressions(value){
  MockData.npcs.forEach(n=>{if(allowed.has(value?.[n.id]))result[n.id]=value[n.id]});
  return result;
 }
+const PHONE_CALL_STATUSES=new Set(['connecting','connected','ended','not_answered','failed','interrupted','legacy']);
+function normalizePhoneHistory(value,attempts){
+ return Object.fromEntries(MockData.npcs.map(n=>{
+  const source=Array.isArray(value?.[n.id])?value[n.id]:[];
+  if(source.length){
+   const records=source.slice(-100).map((item,index)=>{
+    const status=PHONE_CALL_STATUSES.has(item?.status)?item.status:'legacy';
+    const interrupted=status==='connecting'||status==='connected';
+    const started=typeof item?.startedAt==='string'&&Number.isFinite(Date.parse(item.startedAt))?new Date(item.startedAt).toISOString():null;
+    const ended=typeof item?.endedAt==='string'&&Number.isFinite(Date.parse(item.endedAt))?new Date(item.endedAt).toISOString():null;
+    const phase=Number.isInteger(item?.phase)&&item.phase>=1&&item.phase<=5?item.phase:null;
+    return {
+     id:typeof item?.id==='string'&&item.id.trim()?item.id.slice(0,160):`legacy-${n.id}-${index+1}`,
+     sequence:Number.isInteger(item?.sequence)&&item.sequence>0?item.sequence:index+1,
+     startedAt:started,endedAt:ended,status:interrupted?'interrupted':status,phase,
+     ...(typeof item?.connectCommandId==='string'?{connectCommandId:item.connectCommandId.slice(0,200)}:{})
+    };
+   });
+   return [n.id,records];
+  }
+  const count=Math.max(0,Math.min(100,Math.floor(Number(attempts?.[n.id])||0)));
+  return [n.id,Array.from({length:count},(_,index)=>({id:`legacy-${n.id}-${index+1}`,sequence:index+1,startedAt:null,endedAt:null,status:'legacy',phase:null}))];
+ }));
+}
  function normalizeAppointments(value){
  const result=[];
  if(!Array.isArray(value))return result;
@@ -544,6 +576,7 @@ function normalizeState(saved){
  const next={...base,...raw};
  next.selectedNpcId=npcIds.has(raw.selectedNpcId)?raw.selectedNpcId:null;
  next.conversations=normalizeConversations(raw.conversations);
+ next.phoneActive=false;
  next.npcExpressions=normalizeNpcExpressions(raw.npcExpressions);
  next.aiRetry=normalizeRetryRequest(raw.aiRetry);
  next.aiStatus='';
@@ -554,7 +587,13 @@ function normalizeState(saved){
   next.wechat=normalizeNpcMap(raw.wechat,base.wechat);
   next.appointments=normalizeAppointments(raw.appointments);
  next.npcTestStates=normalizeNpcTestStates(raw.npcTestStates);
- next.phoneAttempts=normalizeNpcMap(raw.phoneAttempts,base.phoneAttempts);
+ next.phoneAttempts=Object.fromEntries(MockData.npcs.map(n=>[n.id,Math.max(0,Math.floor(Number(raw.phoneAttempts?.[n.id])||0))]));
+ next.phoneHistory=normalizePhoneHistory(raw.phoneHistory,next.phoneAttempts);
+ if(next.aiRetry?.kind==='phone_message'){
+  next.aiRetry=null;
+  next.aiError=next.aiError||'上次通话已结束，请重新拨打后继续沟通。';
+  next.aiErrorCanRefresh=false;
+ }
  next.visitPreparations=normalizeNpcMap(raw.visitPreparations,base.visitPreparations);
  next.visitPreparationFeedback=normalizeNpcMap(raw.visitPreparationFeedback,base.visitPreparationFeedback);
  next.directVisitIntent=normalizeNpcMap(raw.directVisitIntent,base.directVisitIntent);
@@ -590,7 +629,7 @@ function persistStateForUser(userId){
  if(!userId||stateOwnerUserId!==userId)return;
  try{
   const key=scopedStorageKey(STORAGE_KEY,userId);
-  if(key)sessionStorage.setItem(key,JSON.stringify({ownerId:userId,state:{...state,previewSessionId:null,previewVersion:0}}));
+  if(key)sessionStorage.setItem(key,JSON.stringify({ownerId:userId,state:{...state,phoneActive:false,previewSessionId:null,previewVersion:0}}));
   const sessionKey=scopedStorageKey(PREVIEW_SESSION_STORAGE_KEY,userId);
   if(!sessionKey)return;
   if(!state.previewSessionId)sessionStorage.removeItem(sessionKey);
@@ -607,6 +646,7 @@ function syncIdentitySnapshot(){
  let changed=false;
  if(nextUserId!==activeUserId){
   persistStateForUser(stateOwnerUserId);
+  activePhoneCallId=null;
   const oldToken=boundSessionToken;
   invalidateActiveRequest();
   activeUserId=nextUserId;stateOwnerUserId=nextUserId;boundSessionToken=nextToken;
@@ -647,7 +687,7 @@ function clearPreviewSession(){
  if(key)try{sessionStorage.removeItem(key)}catch{}
 }
 function clearAiRuntimeState(){
- state=initialState();stateOwnerUserId=activeUserId;pendingConversation=null;clearPreviewSession();save();
+ state=initialState();stateOwnerUserId=activeUserId;pendingConversation=null;activePhoneCallId=null;clearPreviewSession();save();
 }
 restorePreviewSession(activeUserId);
 function save(){
@@ -743,6 +783,8 @@ async function apiCall(action,payload={},options={}){
    if(body?.success===false)throw {status:response.status,message:body?.error||body?.message};
   if(body?.previewSessionId)state.previewSessionId=body.previewSessionId;
   const data=body?.data||{};
+  if(data.npcTestStates!==undefined)applyPreviewNpcTestStates(data.npcTestStates);
+  else markTestNpcStateUnavailable('服务端未返回 NPC 当前值；已隐藏本地缓存值。请确认设计师权限后刷新。');
   if(action==='message'){
    const normalized=normalizeMessageResponse(data,payload.channel);
    if(!normalized)throw {status:502,message:'服务端返回的消息结果不符合预览协议，请重试。'};
@@ -971,6 +1013,41 @@ function renderOverview(){
  return `<div class="workspace-card"><div class="workspace-card-head"><h2>${n.name} · 联系人概览</h2><p>可通过上方渠道联系。获得的公开信息会更新到联系人网络。</p></div><div style="padding:14px"><div class="notice">当前状态：${contactStatus(n.id)}</div><div class="split-list" style="margin-top:10px"><div class="info-block"><strong>已获公开信息</strong><div class="small muted">${intel.length?intel.map(x=>`• ${esc(x)}`).join('<br>'):'暂无公开信息记录。'}</div></div><div class="info-block"><strong>拜访状态</strong><div class="small muted">${hasInvite(n.id)?'已有预约。':'暂无预约。'}</div></div></div></div></div>`
 }
 function channelLabel(ch){return ch==='email'?'邮件':ch==='wechat'?'微信':ch==='work_phone'?'电话':'沟通'}
+function phoneHistoryFor(npcId){return Array.isArray(state.phoneHistory?.[npcId])?state.phoneHistory[npcId]:[]}
+function activePhoneCall(npcId){return activePhoneCallId?phoneHistoryFor(npcId).find(record=>record.id===activePhoneCallId)||null:null}
+function startPhoneCallRecord(npcId,commandId){
+ const history=phoneHistoryFor(npcId);
+ let record=history.find(item=>item.connectCommandId===commandId);
+ if(!record){
+  const sequence=history.reduce((max,item)=>Math.max(max,Number(item.sequence)||0),0)+1;
+  record={id:`phone-call-${npcId}-${commandId}`,sequence,startedAt:new Date().toISOString(),endedAt:null,status:'connecting',phase:state.phase,connectCommandId:commandId};
+  history.push(record);
+  state.phoneHistory[npcId]=history;
+ }else{record.status='connecting';record.endedAt=null}
+ activePhoneCallId=record.id;
+ return record;
+}
+function finishActivePhoneCall(status='ended'){
+ if(activePhoneCallId){
+  const record=MockData.npcs.map(person=>phoneHistoryFor(person.id).find(item=>item.id===activePhoneCallId)).find(Boolean);
+  if(record){
+   record.status=record.status==='connecting'?'interrupted':status;
+   record.endedAt=new Date().toISOString();
+  }
+ }
+ state.phoneActive=false;
+ if(state.aiRetry?.kind==='phone_message')state.aiRetry=null;
+ activePhoneCallId=null;
+}
+function phoneCallStatusLabel(status){return ({connecting:'正在拨打',connected:'已接通',ended:'已挂断',not_answered:'未接通',failed:'连接失败',interrupted:'通话中断',legacy:'历史通话'})[status]||'历史通话'}
+function phoneCallTimeLabel(value){
+ if(typeof value!=='string'||!Number.isFinite(Date.parse(value)))return '时间未记录';
+ return new Date(value).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function renderPhoneHistory(npcId){
+ const history=phoneHistoryFor(npcId).filter(record=>!['connecting','connected'].includes(record.status)),rows=[...history].sort((a,b)=>(Number(b.sequence)||0)-(Number(a.sequence)||0));
+ return `<div class="phone-history"><div class="phone-history-head"><strong>历史通话记录</strong><span>${history.length} 次</span></div>${rows.length?`<div class="phone-history-list">${rows.map(record=>`<div class="phone-history-row"><strong>第 ${Number(record.sequence)||0} 次</strong><span>${phoneCallTimeLabel(record.startedAt)}${record.phase?` · 第 ${Number(record.phase)} 阶段`:''}</span><span class="phone-history-status">${phoneCallStatusLabel(record.status)}</span></div>`).join('')}</div>`:'<div class="phone-history-empty">暂无历史通话记录</div>'}</div>`
+}
 function renderMessageWorkspace(channel){
  const n=npc(),arr=state.conversations[n.id][channel],isWechat=channel==='wechat',waiting=pendingConversation?.npcId===n.id&&pendingConversation?.channel===channel;
  const expressions=isWechat?renderExpressionTools():'';
@@ -983,8 +1060,9 @@ function renderWechat(){
  return `<div class="workspace-card"><div class="wechat-request"><div class="eyebrow" style="color:#15966f">WECHAT REQUEST</div><h3>申请添加 ${n.name} 的工作微信</h3><p>申请操作使用自然语言描述。请说明添加原因、工作背景或希望后续沟通的事项；AI / 后端会判断是否接受。</p>${state.wechat[n.id]==='rejected'?'<div class="notice amber" style="margin-bottom:10px">上一条申请说明未被接受，你可以调整理由后再次申请。</div>':''}<textarea class="form-area" id="wechat-reason" placeholder="例如：王老师您好，我是本项目供应方负责人。后续有几项流程细节希望向您确认，如果方便，想添加您的工作微信用于项目沟通……"></textarea><div class="composer-foot"><span class="cost-note">发送申请 · <strong>1 行动点</strong></span><button class="btn btn-green" data-action="request-wechat">发送微信申请</button></div></div></div>`
 }
 function renderPhone(){
- const n=npc(),arr=state.conversations[n.id].work_phone;
- return `<div class="phone-panel"><div class="phone-inner"><h2>与 ${esc(n.name)} 的工作电话</h2><p>电话可能无人接听；接通后可以输入自然语言对话。</p>${renderAvatar(n,'call-avatar')}<strong>${esc(n.name)}</strong><div class="phone-status">${contactStatus(n.id)}</div>${arr.length?`<div class="phone-log">${arr.slice(-4).map(x=>`<div class="phone-line${x.pending?' pending':''}${x.failed?' failed':''}" data-stream-id="${esc(x.messageId||'')}"><strong>${x.role==='player'?'你':esc(n.name)}：</strong><span data-stream-text>${esc(x.text||'')}</span>${x.pending&&!x.text?streamDots('正在回复'):''}</div>`).join('')}</div>`:''}${state.phoneActive?`<div class="meeting-composer" style="margin-top:11px"><textarea id="phone-text" placeholder="输入你在电话中要说的话…" ${requestBusy?'disabled':''}></textarea><button class="btn btn-violet" data-action="phone-say" ${requestBusy?'disabled aria-busy="true"':''}>${requestBusy?'通话中…':'发送'}</button><button class="btn" data-action="end-call" ${requestBusy?'disabled':''}>挂断</button></div>`:`<button class="btn btn-violet" data-action="call" ${requestBusy?'disabled aria-busy="true"':''} style="margin-top:14px">${requestBusy?'正在接通…':'拨打电话 · 1 行动点'}</button>`}</div></div>`
+ const n=npc(),arr=state.conversations[n.id].work_phone,active=activePhoneCall(n.id),connected=Boolean(state.phoneActive&&active?.status==='connected'),dialing=active?.status==='connecting';
+ const liveMessages=connected?arr.filter(message=>message.phoneCallId===activePhoneCallId).slice(-4):[];
+ return `<div class="phone-panel"><div class="phone-inner"><h2>与 ${esc(n.name)} 的工作电话</h2><p>电话可能无人接听；接通后可以输入自然语言对话。</p>${renderAvatar(n,'call-avatar')}<strong>${esc(n.name)}</strong><div class="phone-status">${dialing?'正在拨打电话…':connected?'通话已接通':contactStatus(n.id)}</div>${renderPhoneHistory(n.id)}${liveMessages.length?`<div class="phone-log" aria-label="本次通话实时对话">${liveMessages.map(x=>`<div class="phone-line${x.pending?' pending':''}${x.failed?' failed':''}" data-stream-id="${esc(x.messageId||'')}"><strong>${x.role==='player'?'你':esc(n.name)}：</strong><span data-stream-text>${esc(x.text||'')}</span>${x.pending&&!x.text?streamDots('正在回复'):''}</div>`).join('')}</div>`:''}${connected?`<div class="meeting-composer" style="margin-top:11px"><textarea id="phone-text" placeholder="输入你在电话中要说的话…" ${requestBusy?'disabled':''}></textarea><button class="btn btn-violet" data-action="phone-say" ${requestBusy?'disabled aria-busy="true"':''}>${requestBusy?'通话中…':'发送'}</button><button class="btn" data-action="end-call" ${requestBusy?'disabled':''}>挂断</button></div>`:`<button class="btn btn-violet" data-action="call" ${requestBusy||dialing?'disabled aria-busy="true"':''} style="margin-top:14px">${dialing?'正在接通…':'拨打电话 · 1 行动点'}</button>`}</div></div>`
 }
 function renderPostal(){
  const n=npc();
@@ -1025,7 +1103,7 @@ function renderMeeting(){
 }
 function renderResult(){
  const r=state.result||MockData.result;
- return `<main class="view result-page"><section class="result-hero"><div><div class="eyebrow" style="color:#b9cdfc">PROJECT 01 · 前端结果样例</div><h2>${r.won?'中标':'本场未中标'}</h2><div class="small" style="color:#c7d2df;max-width:690px;line-height:1.7">这里是前端结果样例，用来确认信息结构；不代表真实结算。正式开发时由真实结算 API 和 AI 诊断返回。</div><div class="result-stats">${r.breakdown.map(x=>`<div class="result-stat"><span>${x.label} · ${x.weight}</span><strong>${x.value}</strong></div>`).join('')}</div></div><div class="score-box"><div class="tiny" style="color:#c6d1df">最终得分</div><strong>${r.score}</strong><span style="color:#c6d1df"> / 100</span></div></section><div class="result-grid"><section class="card result-card"><h3>五维销售能力</h3>${r.dimensions.map(x=>scoreRow(x.label,x.value)).join('')}</section><section class="card result-card"><h3>人物态度揭示</h3><div class="attitude-grid">${r.attitudes.map(a=>{const n=npc(a.id);return `<div class="attitude"><div class="attitude-head">${renderAvatar(n)}<div><strong class="small">${esc(n.name)}</strong><div class="tiny muted">联系人</div></div></div>${scoreRow('愉悦度',a.pleasant,true)}${scoreRow('支持度',a.support,true)}</div>`}).join('')}</div></section></div><section class="card result-card" style="margin-top:12px"><h3>价值证据账本</h3>${r.evidence.map(e=>`<div class="evidence-item">✓ ${esc(e.text)}<small>来源：${esc(e.source)}</small></div>`).join('')}</section><div class="result-actions"><button class="btn" data-action="restart">重新开局</button><button class="btn" data-action="back-projects">回到项目入口</button></div></main>`
+ return `<main class="view result-page"><section class="result-hero"><div><div class="eyebrow" style="color:#b9cdfc">PROJECT 01 · 前端结果样例</div><h2>${r.won?'中标':'本场未中标'}</h2><div class="small" style="color:#c7d2df;max-width:690px;line-height:1.7">这里是前端结果样例，用来确认信息结构；不代表真实结算。正式开发时由真实结算 API 和 AI 诊断返回。</div><div class="result-stats">${r.breakdown.filter(x=>!x.label.includes('支持')).map(x=>`<div class="result-stat"><span>${x.label} · ${x.weight}</span><strong>${x.value}</strong></div>`).join('')}</div></div><div class="score-box"><div class="tiny" style="color:#c6d1df">最终得分</div><strong>${r.score}</strong><span style="color:#c6d1df"> / 100</span></div></section><div class="result-grid"><section class="card result-card"><h3>五维销售能力</h3>${r.dimensions.map(x=>scoreRow(x.label,x.value)).join('')}</section><section class="card result-card"><h3>人物沟通氛围</h3><div class="attitude-grid">${r.attitudes.map(a=>{const n=npc(a.id);return `<div class="attitude"><div class="attitude-head">${renderAvatar(n)}<div><strong class="small">${esc(n.name)}</strong><div class="tiny muted">联系人</div></div></div>${scoreRow('愉悦度',a.pleasant,true)}</div>`}).join('')}</div></section></div><section class="card result-card" style="margin-top:12px"><h3>价值证据账本</h3>${r.evidence.map(e=>`<div class="evidence-item">✓ ${esc(e.text)}<small>来源：${esc(e.source)}</small></div>`).join('')}</section><div class="result-actions"><button class="btn" data-action="restart">重新开局</button><button class="btn" data-action="back-projects">回到项目入口</button></div></main>`
 }
 function scoreRow(l,v,c=false){return `<div class="score-row" style="${c?'grid-template-columns:52px 1fr 28px;margin:6px 0':''}"><span>${l}</span><div class="bar"><span style="width:${v}%"></span></div><strong>${v}</strong></div>`}
 
@@ -1071,25 +1149,25 @@ function updateMessageCost(){
 }
 function selectNpc(id){
  if(state.selectedNpcId===id){return backToGlobalPlan()}
- state.selectedNpcId=id;state.workspaceMode='overview';state.channel=null;state.phoneActive=false;save();render()
+ finishActivePhoneCall();state.selectedNpcId=id;state.workspaceMode='overview';state.channel=null;save();render()
 }
 function backToGlobalPlan(){
+ finishActivePhoneCall();
  state.selectedNpcId=null;
  state.workspaceMode='overview';
  state.channel=null;
- state.phoneActive=false;
  state.meeting=null;
  save();
  render();
 }
 function chooseWorkspace(mode){
+ finishActivePhoneCall();
  if(mode==='visit'){
-   state.phoneActive=false;
-   if(!hasInvite(state.selectedNpcId)&&!hasDirectVisitIntent(state.selectedNpcId)){state.workspaceMode='visit';save();render();return directVisitConfirm()}
+  if(!hasInvite(state.selectedNpcId)&&!hasDirectVisitIntent(state.selectedNpcId)){state.workspaceMode='visit';save();render();return directVisitConfirm()}
    if(!state.visitPreparations[state.selectedNpcId]){state.workspaceMode='visitPrep';save();render();return}
    state.workspaceMode='visit';save();render();return
  }
- state.workspaceMode=mode;state.channel=mode;state.phoneActive=false;save();render();
+ state.workspaceMode=mode;state.channel=mode;save();render();
 }
 async function analyzePlan(scope){
  const id=scope==='global'?null:state.selectedNpcId;
@@ -1174,7 +1252,7 @@ function applyInvitationResult(n,data){
  if(data.invitationStatus==='accepted'&&data.appointment){
   addUpdate(`${n.name} 已接受邀约。可以进入拜访准备。`);
   openModal('邀约已接受',`<div class="notice green">服务端预览会话确认 ${n.name} 已接受本阶段拜访邀约。</div><div class="info-block" style="margin-top:10px"><strong>下一步</strong><div class="small muted">建议先简述你准备如何开展这次拜访，再选择实际模拟或简述拜访方案。</div></div>`,`<button class="btn" data-modal-close>稍后准备</button><button class="btn btn-primary" id="go-prep">进入准备</button>`);
-  document.getElementById('go-prep').onclick=()=>{closeModal();state.workspaceMode='visitPrep';save();render()};
+   document.getElementById('go-prep').onclick=()=>{closeModal();finishActivePhoneCall();state.workspaceMode='visitPrep';save();render()};
  }else if(data.invitationStatus!=='accepted')toast(`邀约结果：${data.invitationStatus}`,'warn');
  }
  function appendMessageResult(n,channel,text,attachmentDescription,result,extra={},localMessageId){
@@ -1275,7 +1353,7 @@ function applyInvitationResult(n,data){
 function directVisitConfirm(){
  const n=npc();
  openModal('未进行邀约',`<div class="notice amber">您未进行邀约，是否选择直接登门拜访 ${n.name}？</div><div class="small muted" style="margin-top:10px;line-height:1.7">这只记录你的意图；开始拜访时由服务端预览会话决定是否允许进入。</div>`,`<button class="btn" data-modal-close>取消</button><button class="btn btn-primary" id="confirm-door">选择直接登门</button>`);
- document.getElementById('confirm-door').onclick=()=>{closeModal();state.directVisitIntent[n.id]=true;addUpdate(`你选择尝试直接登门拜访 ${n.name}，等待服务端判断。`);state.workspaceMode='visitPrep';save();render()}
+ document.getElementById('confirm-door').onclick=()=>{closeModal();finishActivePhoneCall();state.directVisitIntent[n.id]=true;addUpdate(`你选择尝试直接登门拜访 ${n.name}，等待服务端判断。`);state.workspaceMode='visitPrep';save();render()}
 }
 async function saveVisitPrep(){
  const n=npc(),text=document.getElementById('visit-prep-text')?.value.trim()||'';if(text.length<12){toast('请至少简述一下拜访准备，再继续。','warn');return}
@@ -1294,7 +1372,7 @@ async function saveVisitPrep(){
   toast('请根据反馈完善拜访准备后再继续。','warn');return;
  }
  openModal('拜访准备反馈',`<div class="notice">${esc(summary)}</div>${strengths}${risks}`,`<button class="btn btn-primary" id="continue-prep">继续选择拜访方式</button>`);
- document.getElementById('continue-prep').onclick=()=>{closeModal();state.workspaceMode='visit';save();render()};
+ document.getElementById('continue-prep').onclick=()=>{closeModal();finishActivePhoneCall();state.workspaceMode='visit';save();render()};
 }
 async function startVisitSimulation({skipPreparation=false}={}){
  const n=npc(),appt=state.appointments.find(a=>a.npcId===n.id&&a.status==='accepted');
@@ -1334,27 +1412,29 @@ async function callNpc(options={}){
  const retryPayload=options.payload&&typeof options.payload==='object'?options.payload:null;
  const n=npc(retryPayload?.npcId||state.selectedNpcId);if(!n||!canAfford(1,'拨打电话'))return;
  const payload=retryPayload||{npcId:n.id,text:'玩家拨打工作电话，等待接听。',phase:state.phase};
- const commandId=options.commandId||newPreviewCommandId(),arr=state.conversations[n.id].work_phone;
+ const commandId=options.commandId||newPreviewCommandId(),arr=state.conversations[n.id].work_phone,callRecord=startPhoneCallRecord(n.id,commandId);
  let reply=arr.find(message=>message.role==='npc'&&message.commandId===commandId);
- if(reply){reply.pending=true;reply.failed=false;reply.text=''}else{reply={role:'npc',channel:'电话',text:'',messageId:`phone-${commandId}`,commandId,pending:true,charged:false};arr.push(reply)}
- state.phoneActive=true;save();
+ if(reply){reply.pending=true;reply.failed=false;reply.text='';reply.phoneCallId=callRecord.id}else{reply={role:'npc',channel:'电话',text:'',messageId:`phone-${commandId}`,commandId,phoneCallId:callRecord.id,pending:true,charged:false};arr.push(reply)}
+ state.phoneActive=false;save();
  const pending=accountScopedApiCall('phone_connect',payload,{commandId,retryKind:'phone_connect',retainRetryUntilCommit:true,renderPending:false,stream:true,onDelta:content=>appendStreamDelta(reply,content)});
  clearAiFeedback();refreshWorkspaceBody();
  const res=await pending;
- if(res===INVALIDATED_REQUEST)return;
- if(!res){reply.pending=false;reply.failed=true;reply.text=reply.text||'本次连接失败，请重试。';state.phoneActive=false;save();refreshWorkspaceBody();refreshAiFeedback();return}
+ if(res===INVALIDATED_REQUEST){if(activePhoneCallId===callRecord.id){callRecord.status='interrupted';callRecord.endedAt=new Date().toISOString();finishActivePhoneCall('interrupted');save();refreshWorkspaceBody()}return}
+ if(!res){reply.pending=false;reply.failed=true;reply.text=reply.text||'本次连接失败，请重试。';callRecord.status='failed';callRecord.endedAt=new Date().toISOString();state.phoneActive=false;activePhoneCallId=null;save();refreshWorkspaceBody();refreshAiFeedback();return}
  reply.pending=false;reply.failed=false;reply.text=res.content||reply.text;if(!reply.charged){spend(1,'拨打电话',false);reply.charged=true}
- state.phoneAttempts[n.id]=(state.phoneAttempts[n.id]||0)+1;state.phoneActive=res.connected!==false;state.aiRetry=null;
+ state.phoneAttempts[n.id]=(state.phoneAttempts[n.id]||0)+1;state.phoneActive=res.connected!==false;callRecord.status=state.phoneActive?'connected':'not_answered';callRecord.endedAt=state.phoneActive?null:new Date().toISOString();if(!state.phoneActive)activePhoneCallId=null;state.aiRetry=null;
  applyInvitationResult(n,res);addUpdate(`${n.name} 已处理本次电话连接。`);save();refreshWorkspaceBody();refreshActionPoints();toast(state.phoneActive?'电话已接通':'电话未接通',state.phoneActive?'success':'warn')
 }
 async function phoneSay(options={}){
  if(requestBusy){toast('AI 正在处理中，请稍候。','warn');return}
  const retryPayload=options.payload&&typeof options.payload==='object'?options.payload:null;
+ const active=activePhoneCall(state.selectedNpcId);if(!state.phoneActive||!active||active.status!=='connected'){toast('电话已结束，请重新拨打后继续沟通。','warn');return}
  const n=npc(retryPayload?.npcId||state.selectedNpcId),text=retryPayload?.text||document.getElementById('phone-text')?.value.trim()||'';if(!n||!text)return;
+ if(n.id!==state.selectedNpcId||activePhoneCall(n.id)?.id!==active.id)return;
  const payload=retryPayload||{npcId:n.id,channel:'work_phone',text,phase:state.phase},commandId=options.commandId||newPreviewCommandId(),arr=state.conversations[n.id].work_phone;
  let player=arr.find(message=>message.role==='player'&&message.commandId===commandId),reply=arr.find(message=>message.role==='npc'&&message.commandId===commandId);
- if(player){player.pending=true;player.failed=false}else{player={role:'player',channel:'电话',text,messageId:`phone-player-${commandId}`,commandId,pending:true};arr.push(player)}
- if(reply){reply.pending=true;reply.failed=false;reply.text=''}else{reply={role:'npc',channel:'电话',text:'',messageId:`phone-reply-${commandId}`,commandId,pending:true};arr.push(reply)}
+ if(player){player.pending=true;player.failed=false;player.phoneCallId=active.id}else{player={role:'player',channel:'电话',text,messageId:`phone-player-${commandId}`,commandId,phoneCallId:active.id,pending:true};arr.push(player)}
+ if(reply){reply.pending=true;reply.failed=false;reply.text='';reply.phoneCallId=active.id}else{reply={role:'npc',channel:'电话',text:'',messageId:`phone-reply-${commandId}`,commandId,phoneCallId:active.id,pending:true};arr.push(reply)}
  const pending=accountScopedApiCall('message',payload,{commandId,retryKind:'phone_message',retainRetryUntilCommit:true,renderPending:false,stream:true,onDelta:content=>appendStreamDelta(reply,content)});
  clearAiFeedback();refreshWorkspaceBody();
  const res=await pending;
@@ -1408,7 +1488,7 @@ function showEndPhase(){
  document.getElementById('next-phase').onclick=advancePhase
 }
 function advancePhase(){
- state.phase+=1;state.actionPoints=Math.min(28,state.actionPoints+8);state.selectedNpcId=null;state.workspaceMode='overview';state.phoneActive=false;if(state.phase>=3&&state.competitorEventsSeen.length<MockData.competitorEvents.length)state.competitorEventsSeen.push(MockData.competitorEvents[state.competitorEventsSeen.length]);addUpdate(`已进入第 ${state.phase} 阶段 · ${phaseMeta().name}。`);save();closeModal();render();toast('已进入下一阶段','success')
+ finishActivePhoneCall();state.phase+=1;state.actionPoints=Math.min(28,state.actionPoints+8);state.selectedNpcId=null;state.workspaceMode='overview';if(state.phase>=3&&state.competitorEventsSeen.length<MockData.competitorEvents.length)state.competitorEventsSeen.push(MockData.competitorEventsSeen[state.competitorEventsSeen.length]);addUpdate(`已进入第 ${state.phase} 阶段 · ${phaseMeta().name}。`);save();closeModal();render();toast('已进入下一阶段','success')
 }
 function showSubmission(){
  const contacted=MockData.npcs.filter(n=>Object.values(state.conversations[n.id]).some(a=>a.length)).length,visits=state.completedVisits.length,plans=(state.workPlans.global?1:0)+Object.values(state.workPlans.byNpc).filter(Boolean).length;
@@ -1429,15 +1509,124 @@ function clampTestInteger(value,min,max,fallback){
  const parsed=Number.parseInt(value,10);
  return Number.isFinite(parsed)?Math.max(min,Math.min(max,parsed)):fallback;
 }
+function parsePreviewNpcTestStates(value){
+ if(!Array.isArray(value)||value.length!==MockData.npcs.length)return null;
+ const result={};
+ for(const item of value){
+  if(!npcIds.has(item?.npcId)||Object.prototype.hasOwnProperty.call(result,item.npcId))return null;
+  const node=item.node;
+  if(!Number.isInteger(item.support)||item.support<0||item.support>100||!Number.isInteger(item.pleasantness)||item.pleasantness<0||item.pleasantness>100||!Number.isInteger(item.effectiveContactCount)||item.effectiveContactCount<0||item.effectiveContactCount>100||!['N1','N2','N3','N4','BLOCKED'].includes(node))return null;
+  result[item.npcId]={support:item.support,pleasantness:item.pleasantness,effectiveContactCount:item.effectiveContactCount,node};
+ }
+ return MockData.npcs.every(person=>Object.prototype.hasOwnProperty.call(result,person.id))?result:null;
+}
+function updateTestNpcStateUi(message,visibility){
+ testNpcStateVisibility=visibility;
+ testNpcAdjustmentsEnabled=visibility==='ready'||visibility==='uninitialized';
+ const status=document.getElementById('test-npc-state-status');
+ if(status)status.textContent=message;
+ MockData.npcs.forEach(person=>{
+  const toggle=document.querySelector(`[data-test-npc-enable="${person.id}"]`);
+  const values=state.npcTestStates[person.id]||blankNpcTestStates()[person.id];
+  const node=document.querySelector(`[data-test-node="${person.id}"]`);
+  if(node)node.textContent=testNpcAdjustmentsEnabled?values.node:'—';
+  if(toggle&&!testNpcAdjustmentsEnabled)toggle.checked=false;
+  if(toggle)toggle.disabled=!testNpcAdjustmentsEnabled;
+  document.querySelectorAll(`[data-test-npc="${person.id}"]`).forEach(input=>{
+   const field=input.dataset.testField;
+   input.disabled=!testNpcAdjustmentsEnabled||!toggle?.checked;
+   input.value=testNpcAdjustmentsEnabled?String(values[field]??''):'';
+  });
+ });
+ const refresh=document.getElementById('refresh-test-npc-states');
+ if(refresh)refresh.disabled=requestBusy;
+}
+function applyPreviewNpcTestStates(value){
+ const snapshot=parsePreviewNpcTestStates(value);
+ if(!snapshot){
+  state.npcTestStates=blankNpcTestStates();
+  testNpcStateSyncedAt=null;
+  save();
+  updateTestNpcStateUi('服务端没有提供完整的 NPC 状态快照；已隐藏本地缓存值。请确认设计师权限后重试。','unavailable');
+  return false;
+ }
+ state.npcTestStates=snapshot;
+ testNpcStateSyncedAt=new Date().toISOString();
+ save();
+ updateTestNpcStateUi(`已同步服务端当前值 · ${new Date(testNpcStateSyncedAt).toLocaleTimeString()}`,'ready');
+ return true;
+}
+function markTestNpcStateUnavailable(message){
+ state.npcTestStates=blankNpcTestStates();
+ testNpcStateSyncedAt=null;
+ save();
+ updateTestNpcStateUi(message,'unavailable');
+}
+async function refreshTestNpcStates(){
+ if(!state.previewSessionId){
+  state.npcTestStates=blankNpcTestStates();
+  testNpcStateSyncedAt=null;
+  save();
+  updateTestNpcStateUi('尚未建立服务端预览会话；当前显示的是服务端初始化默认值。','uninitialized');
+  return true;
+ }
+ if(requestBusy){
+  updateTestNpcStateUi('当前操作尚未完成，请稍后刷新 NPC 状态。','loading');
+  return false;
+ }
+ const changed=syncIdentitySnapshot();
+ if(changed){closeModal();render();return false}
+ const token=boundSessionToken,sessionId=state.previewSessionId;
+ if(!activeUserId||!token||authTransitionPending){
+  markTestNpcStateUnavailable('登录状态尚未就绪，无法读取服务端 NPC 状态。');
+  return false;
+ }
+ const context={userId:activeUserId,token,generation:identityGeneration,serial:++activeRequestSerial};
+ const controller=new AbortController();activeRequestController=controller;requestBusy=true;
+ updateTestNpcStateUi('正在读取服务端当前值，下方数字暂时隐藏。','loading');
+ try{
+  const response=await fetch(`/api/project-one-preview/ai?previewSessionId=${encodeURIComponent(sessionId)}`,{method:'GET',credentials:'same-origin',headers:{'x-session':token,'cache-control':'no-cache'},cache:'no-store',signal:controller.signal});
+  if(!requestContextIsCurrent(context))return false;
+  let body={};try{body=await response.json()}catch{}
+  if(!response.ok)throw {status:response.status,message:body?.error||body?.message};
+  const data=body?.data;
+  if(data?.previewSessionId!==sessionId||!Number.isInteger(data?.version)||data.version<0)throw {status:502,message:'恢复响应缺少有效的会话版本。'};
+  if(!applyPreviewNpcTestStates(data.npcTestStates))return false;
+  state.previewVersion=data.version;
+  save();
+  updateTestNpcStateUi(`已同步服务端当前值 · ${new Date(testNpcStateSyncedAt).toLocaleTimeString()}`,'ready');
+  return true;
+ }catch(error){
+  if(!requestContextIsCurrent(context))return false;
+  if([404,410].includes(error?.status)){
+   clearPreviewSession();
+   state.npcTestStates=blankNpcTestStates();
+   save();
+  }
+  const message=[403,401].includes(error?.status)?'当前账号无法读取设计师 NPC 状态；已隐藏本地缓存值。':([404,410].includes(error?.status)?'服务端预览会话已失效；已隐藏本地缓存值。':'读取服务端 NPC 状态失败；已隐藏本地缓存值，可重试。');
+  testNpcStateSyncedAt=null;
+  updateTestNpcStateUi(message,'unavailable');
+  return false;
+ }finally{
+  if(requestContextIsCurrent(context)){requestBusy=false;activeRequestController=null;save();const refresh=document.getElementById('refresh-test-npc-states');if(refresh)refresh.disabled=false}
+ }
+}
 function openTestControls(){
+ const hasPreviewSession=Boolean(state.previewSessionId);
+ testNpcStateVisibility=hasPreviewSession?'loading':'uninitialized';
+ testNpcAdjustmentsEnabled=!hasPreviewSession;
+ if(!hasPreviewSession){state.npcTestStates=blankNpcTestStates();save()}
  const statusOptions=current=>[['','未添加'],['accepted','已添加'],['pending','待处理'],['rejected','已拒绝']].map(([value,label])=>`<option value="${value}" ${current===value?'selected':''}>${label}</option>`).join('');
  const appointmentStatusOptions=current=>TEST_APPOINTMENT_STATUSES.map(value=>{const labels={none:'无预约',pending:'待处理',accepted:'已接受',rejected:'已拒绝',later:'待改期',completed:'已完成',cancelled:'已取消'};return `<option value="${value}" ${current===value?'selected':''}>${labels[value]}</option>`}).join('');
- const npcRows=MockData.npcs.map(person=>{const values=state.npcTestStates[person.id]||blankNpcTestStates()[person.id];return `<div class="test-npc-state-row"><div class="test-npc-state-head"><strong>${esc(person.name)} · ${esc(person.title)}</strong><div class="test-npc-state-actions"><label class="test-npc-enable"><input type="checkbox" data-test-npc-enable="${person.id}">覆盖本 NPC</label><span class="test-node">节点 ${esc(values.node||'待应用')}</span></div></div><div class="test-npc-metrics"><div class="test-npc-metric"><label for="test-support-${person.id}">支持度（0–100）</label><input id="test-support-${person.id}" data-test-npc="${person.id}" data-test-field="support" type="number" min="0" max="100" value="${values.support}" disabled></div><div class="test-npc-metric"><label for="test-pleasantness-${person.id}">愉悦度（0–100）</label><input id="test-pleasantness-${person.id}" data-test-npc="${person.id}" data-test-field="pleasantness" type="number" min="0" max="100" value="${values.pleasantness}" disabled></div><div class="test-npc-metric"><label for="test-contact-${person.id}">有效接触次数（0–100）</label><input id="test-contact-${person.id}" data-test-npc="${person.id}" data-test-field="effectiveContactCount" type="number" min="0" max="100" value="${values.effectiveContactCount}" disabled></div></div></div>`}).join('');
+ const npcRows=MockData.npcs.map(person=>{const values=state.npcTestStates[person.id]||blankNpcTestStates()[person.id],showValues=!hasPreviewSession||testNpcStateVisibility==='ready';return `<div class="test-npc-state-row"><div class="test-npc-state-head"><strong>${esc(person.name)} · ${esc(person.title)}</strong><div class="test-npc-state-actions"><label class="test-npc-enable"><input type="checkbox" data-test-npc-enable="${person.id}" ${hasPreviewSession?'disabled':''}>覆盖本 NPC</label><span class="test-node">节点 <span data-test-node="${person.id}">${showValues?esc(values.node):'—'}</span></span></div></div><div class="test-npc-metrics"><div class="test-npc-metric"><label for="test-support-${person.id}">支持度（0–100）</label><input id="test-support-${person.id}" data-test-npc="${person.id}" data-test-field="support" type="number" min="0" max="100" value="${showValues?values.support:''}" disabled></div><div class="test-npc-metric"><label for="test-pleasantness-${person.id}">愉悦度（0–100）</label><input id="test-pleasantness-${person.id}" data-test-npc="${person.id}" data-test-field="pleasantness" type="number" min="0" max="100" value="${showValues?values.pleasantness:''}" disabled></div><div class="test-npc-metric"><label for="test-contact-${person.id}">有效接触次数（0–100）</label><input id="test-contact-${person.id}" data-test-npc="${person.id}" data-test-field="effectiveContactCount" type="number" min="0" max="100" value="${showValues?values.effectiveContactCount:''}" disabled></div></div></div>`}).join('');
  const appointmentRows=MockData.npcs.map(person=>{const current=state.appointments.find(item=>item.npcId===person.id),values=current||{id:'',status:'none',phase:state.phase,timeWindow:'待设置时间',location:'待设置地点',agenda:'待设置议题'};return `<div class="test-appointment-row" data-test-appointment="${person.id}"><div class="test-npc-state-head"><strong>${esc(person.name)} · 拜访预约</strong><label class="test-npc-enable"><input type="checkbox" data-test-appointment-enable="${person.id}">覆盖预约</label></div><div class="test-appointment-grid"><div class="test-control"><label for="test-appointment-status-${person.id}">预约状态</label><select id="test-appointment-status-${person.id}" data-test-appointment-field="status" disabled>${appointmentStatusOptions(values.status)}</select></div><div class="test-control"><label for="test-appointment-phase-${person.id}">预约阶段（1–5）</label><input id="test-appointment-phase-${person.id}" data-test-appointment-field="phase" type="number" min="1" max="5" value="${values.phase}" disabled></div><div class="test-control"><label for="test-appointment-time-${person.id}">时间说明</label><input id="test-appointment-time-${person.id}" data-test-appointment-field="timeWindow" type="text" maxlength="120" value="${esc(values.timeWindow)}" disabled></div><div class="test-control"><label for="test-appointment-location-${person.id}">拜访地点</label><input id="test-appointment-location-${person.id}" data-test-appointment-field="location" type="text" maxlength="120" value="${esc(values.location)}" disabled></div><div class="test-control test-appointment-agenda"><label for="test-appointment-agenda-${person.id}">拜访议题</label><input id="test-appointment-agenda-${person.id}" data-test-appointment-field="agenda" type="text" maxlength="300" value="${esc(values.agenda)}" disabled></div></div></div>`}).join('');
- openModal('测试调节',`<div class="notice amber">测试值只作用于当前五人版预览会话，不写入正式存档。NPC 数值与拜访预约会同步到服务端，后续拜访读取服务端结果。</div><div class="test-controls-grid" style="margin-top:10px"><div class="test-control"><label for="test-phase">当前阶段（1–5）</label><input id="test-phase" type="number" min="1" max="5" value="${state.phase}"></div><div class="test-control"><label for="test-action-points">行动点（0–999）</label><input id="test-action-points" type="number" min="0" max="999" value="${state.actionPoints}"></div><div class="test-control"><label for="test-total-spent">累计消耗（0–9999）</label><input id="test-total-spent" type="number" min="0" max="9999" value="${state.totalSpent}"></div></div><div class="info-block" style="margin-top:10px"><strong>NPC 状态数值</strong><div class="tiny muted">关系节点由支持度、有效接触和已获得证据共同计算；仅提高数值不一定直接升级节点。</div><div class="test-npc-state-list">${npcRows}</div></div><div class="info-block" style="margin-top:10px"><strong>拜访预约</strong><div class="tiny muted">勾选“覆盖预约”后可修改状态、阶段、时间、地点和议题；没有预约的人物也可用“已接受”创建测试预约，选择“无预约”可清除当前预约。</div><div class="test-appointment-list">${appointmentRows}</div></div><div class="info-block" style="margin-top:10px"><strong>工作微信状态</strong><div class="tiny muted">设为“已添加”后，可直接进入对应联系人的微信对话并测试 Emoji 和预设表情包。</div><div class="test-wechat-list">${MockData.npcs.map(person=>`<div class="test-wechat-row"><label for="test-wechat-${person.id}">${esc(person.name)}</label><select id="test-wechat-${person.id}" data-test-wechat="${person.id}">${statusOptions(state.wechat[person.id]||'')}</select></div>`).join('')}</div></div>`,`<button class="btn" data-modal-close>取消</button><button class="btn btn-primary" id="apply-test-controls">应用测试值</button>`);
+ openModal('测试调节',`<div class="notice amber">测试值只作用于当前五人版预览会话，不写入正式存档。NPC 数值与拜访预约会同步到服务端，后续拜访读取服务端结果。</div><div class="test-controls-grid" style="margin-top:10px"><div class="test-control"><label for="test-phase">当前阶段（1–5）</label><input id="test-phase" type="number" min="1" max="5" value="${state.phase}"></div><div class="test-control"><label for="test-action-points">行动点（0–999）</label><input id="test-action-points" type="number" min="0" max="999" value="${state.actionPoints}"></div><div class="test-control"><label for="test-total-spent">累计消耗（0–9999）</label><input id="test-total-spent" type="number" min="0" max="9999" value="${state.totalSpent}"></div></div><div class="info-block" style="margin-top:10px"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><strong>NPC 状态数值</strong><button class="btn" id="refresh-test-npc-states" type="button">刷新当前值</button></div><div class="tiny muted" id="test-npc-state-status">${hasPreviewSession?'正在读取服务端当前值，下方数字暂时隐藏。':'尚未建立服务端预览会话；当前显示的是服务端初始化默认值。'}</div><div class="tiny muted">关系节点由支持度、有效接触和已获得证据共同计算；仅提高数值不一定直接升级节点。</div><div class="test-npc-state-list">${npcRows}</div></div><div class="info-block" style="margin-top:10px"><strong>拜访预约</strong><div class="tiny muted">勾选“覆盖预约”后可修改状态、阶段、时间、地点和议题；没有预约的人物也可用“已接受”创建测试预约，选择“无预约”可清除当前预约。</div><div class="test-appointment-list">${appointmentRows}</div></div><div class="info-block" style="margin-top:10px"><strong>工作微信状态</strong><div class="tiny muted">设为“已添加”后，可直接进入对应联系人的微信对话并测试 Emoji 和预设表情包。</div><div class="test-wechat-list">${MockData.npcs.map(person=>`<div class="test-wechat-row"><label for="test-wechat-${person.id}">${esc(person.name)}</label><select id="test-wechat-${person.id}" data-test-wechat="${person.id}">${statusOptions(state.wechat[person.id]||'')}</select></div>`).join('')}</div></div>`,`<button class="btn" data-modal-close>取消</button><button class="btn btn-primary" id="apply-test-controls">应用测试值</button>`);
  document.getElementById('apply-test-controls').onclick=applyTestControls;
- document.querySelectorAll('[data-test-npc-enable]').forEach(toggle=>toggle.addEventListener('change',()=>document.querySelectorAll(`[data-test-npc="${toggle.dataset.testNpcEnable}"]`).forEach(input=>{input.disabled=!toggle.checked})));
+ document.getElementById('refresh-test-npc-states').onclick=()=>void refreshTestNpcStates();
+ updateTestNpcStateUi(hasPreviewSession?'正在读取服务端当前值，下方数字暂时隐藏。':'尚未建立服务端预览会话；当前显示的是服务端初始化默认值。',hasPreviewSession?'loading':'uninitialized');
+ document.querySelectorAll('[data-test-npc-enable]').forEach(toggle=>toggle.addEventListener('change',()=>document.querySelectorAll(`[data-test-npc="${toggle.dataset.testNpcEnable}"]`).forEach(input=>{input.disabled=!testNpcAdjustmentsEnabled||!toggle.checked})));
  document.querySelectorAll('[data-test-appointment-enable]').forEach(toggle=>toggle.addEventListener('change',()=>document.querySelectorAll(`[data-test-appointment="${toggle.dataset.testAppointmentEnable}"] [data-test-appointment-field]`).forEach(input=>{input.disabled=!toggle.checked})));
+ if(hasPreviewSession)void refreshTestNpcStates();
 }
 async function applyTestControls(){
  const phase=clampTestInteger(document.getElementById('test-phase')?.value,1,5,state.phase);
@@ -1462,7 +1651,6 @@ async function applyTestControls(){
  if(response===INVALIDATED_REQUEST)return;
  if(!response)return;
  state.phase=phase;state.actionPoints=actionPoints;state.totalSpent=totalSpent;
- (response.npcTestStates||[]).forEach(item=>{if(npcIds.has(item.npcId))state.npcTestStates[item.npcId]={support:item.support,pleasantness:item.pleasantness,effectiveContactCount:item.effectiveContactCount,node:item.node}});
  if(Array.isArray(response.appointments))state.appointments=normalizeAppointments(response.appointments);
  const allowedWechatStatuses=new Set(['','accepted','pending','rejected']);
  document.querySelectorAll('[data-test-wechat]').forEach(select=>{
@@ -1492,20 +1680,20 @@ async function handleAction(e){
  if(a==='send-postal')return sendPostal();
  if(a==='call')return callNpc();
  if(a==='phone-say')return phoneSay();
- if(a==='end-call'){state.phoneActive=false;save();render()}
+ if(a==='end-call'){finishActivePhoneCall();save();render()}
  if(a==='direct-visit-confirm')return directVisitConfirm();
  if(a==='save-visit-prep')return saveVisitPrep();
  if(a==='skip-visit-prep')return startVisitSimulation({skipPreparation:true});
  if(a==='visit-sim')return startVisitSimulation();
- if(a==='visit-brief'){state.workspaceMode='briefVisit';save();render()}
+ if(a==='visit-brief'){finishActivePhoneCall();state.workspaceMode='briefVisit';save();render()}
  if(a==='submit-brief-visit')return submitBriefVisit();
  if(a==='meeting-send')return meetingSend();
  if(a==='end-visit')return endVisit();
- if(a==='overview'){state.workspaceMode='overview';save();render()}
+ if(a==='overview'){finishActivePhoneCall();state.workspaceMode='overview';save();render()}
  if(a==='end-phase')return showEndPhase();
  if(a==='submit')return showSubmission();
- if(a==='restart'){state=initialState();state.screen='game';save();render()}
- if(a==='back-projects'){state=initialState();save();render()}
+ if(a==='restart'){finishActivePhoneCall();state=initialState();activePhoneCallId=null;state.screen='game';save();render()}
+ if(a==='back-projects'){finishActivePhoneCall();state=initialState();activePhoneCallId=null;save();render()}
 }
 function openModal(title,body,footer='<button class="btn btn-primary" data-modal-close>知道了</button>'){modalRoot.innerHTML=`<div class="modal-backdrop"><div class="modal"><div class="modal-head"><h3>${title}</h3><button class="modal-close" data-modal-close>×</button></div><div class="modal-body">${body}</div><div class="modal-footer">${footer}</div></div></div>`;modalRoot.querySelectorAll('[data-modal-close]').forEach(x=>x.onclick=closeModal);modalRoot.querySelector('.modal-backdrop')?.addEventListener('click',e=>{if(e.target.classList.contains('modal-backdrop'))closeModal()})}
 function closeModal(){modalRoot.innerHTML=''}

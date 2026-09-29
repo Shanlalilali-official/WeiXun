@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { buildReviewContext, toReviewOutcome, type StoredChatMessage, type StoredGameEvent } from '../src/lib/game/repository';
+import { buildReviewContext, toPlayerVisibleChatMessages, toReviewOutcome, type StoredChatMessage, type StoredGameEvent } from '../src/lib/game/repository';
 import { createProjectOneState, getGameOutcome } from '../src/lib/game/state';
 
 const base = createProjectOneState();
@@ -49,7 +49,7 @@ const transcript: StoredChatMessage[] = Array.from({ length: 100 }, (_, index) =
   content: `第${index + 1}条对话`,
   round: Math.ceil((index + 1) / 20),
   createdAt: `2026-08-31T00:00:${String(index).padStart(2, '0')}.000Z`,
-  metadata: { npcId: 'P1-004' },
+  metadata: { npcId: 'P1-004', affinityDelta: 7, supportDelta: 5, pleasureDelta: 4, channel: 'email', deliveryStatus: 'replied' },
 }));
 
 const events: StoredGameEvent[] = [
@@ -124,9 +124,35 @@ const serializedContext = JSON.stringify(context);
 assert.equal(serializedContext.includes('HIDDEN_COMPETITOR_SECRET'), false, 'hidden competitor values never enter review context');
 assert.equal(serializedContext.includes('competitorActionKind'), false, 'hidden competitor event fields are allowlisted out');
 assert.equal(serializedContext.includes('pressureScore'), false, 'hidden competitor score is omitted');
+assert.equal(serializedContext.includes('supportDelta'), false, 'review context omits relationship deltas');
+assert.equal(serializedContext.includes('affinityDelta'), false, 'review context omits affinity deltas');
+assert.equal(serializedContext.includes('npcAttitudes'), false, 'review context omits internal NPC attitudes');
+
+const playerMessages = toPlayerVisibleChatMessages([{
+  id: 'message-public',
+  role: 'assistant',
+  content: '请发送技术材料。',
+  createdAt: '2026-08-31T03:00:00.000Z',
+  metadata: {
+    channel: 'email',
+    deliveryStatus: 'replied',
+    supportDelta: 6,
+    affinityDelta: 8,
+    evaluationSource: 'model',
+    emailAttachments: [{ fileName: '技术方案.pdf', description: '技术精度说明' }],
+  },
+}]);
+assert.deepEqual(playerMessages[0]?.metadata, {
+  channel: 'email',
+  deliveryStatus: 'replied',
+  emailAttachments: [{ fileName: '技术方案.pdf', description: '技术精度说明' }],
+}, 'player message history only includes delivery metadata');
 
 const safeOutcome = toReviewOutcome(getGameOutcome(state));
 assert.equal('competitorScore' in safeOutcome, false, 'review outcome omits hidden competitor score');
 assert.equal('competitivePosition' in safeOutcome, false, 'review outcome omits hidden competitor position');
+assert.equal('supportByNpc' in safeOutcome, false, 'review outcome omits private NPC support values');
+assert.equal('overallSupportState' in safeOutcome, false, 'review outcome omits private support bands');
+assert.equal('supportBySupplier' in safeOutcome, false, 'review outcome omits supplier support bands');
 
 console.log('review context regression tests passed');

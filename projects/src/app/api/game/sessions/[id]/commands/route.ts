@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { evaluateCompetitorStageAction } from '@/lib/ai/competitor-stage';
 import { evaluateGiftDecision } from '@/lib/ai/npc-evaluation';
+import { evaluateFormalBriefVisit, evaluateFormalWorkPlan } from '@/lib/ai/formal-workflow';
 import { authGuard } from '@/lib/auth/guard';
 import { gameCommandSchema, type GameCommand } from '@/lib/contracts/game';
 import {
@@ -12,7 +13,7 @@ import {
 } from '@/lib/game/repository';
 import { getProjectOneNpc } from '@/lib/game/project-one';
 import { assertMultiplayerCommandAllowed } from '@/lib/game/multiplayer';
-import { executeGameCommand, getPhaseName, toPlayerVisibleGameState } from '@/lib/game/state';
+import { executeGameCommand, getPhaseName, toPlayerVisibleGameCommandResult, toPlayerVisibleGameState } from '@/lib/game/state';
 import { createServerProbabilitySeed } from '@/lib/game/server-random';
 
 export const runtime = 'nodejs';
@@ -29,7 +30,12 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   try {
     const gameSession = await getOwnedGameSession(id, guard.session.userId);
     const replay = await getCommittedGameCommand(id, parsed.data.commandId);
-    if (replay) return NextResponse.json({ success: true, ...replay });
+    if (replay) return NextResponse.json({
+      success: true,
+      ...replay,
+      result: toPlayerVisibleGameCommandResult(replay.result),
+      state: toPlayerVisibleGameState(replay.state),
+    });
 
     const allowFinishedRoom = parsed.data.type === 'mark_notification_read'
       || (parsed.data.type === 'submit' && gameSession.state.submissionReady);
@@ -70,12 +76,20 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     // The pure reducer still rejects invalid inventory/meeting/version state;
     // the authoritative state is committed only once after the candidate has
     // been validated or the deterministic fallback has been selected.
-    let execution = executeGameCommand(gameSession.state, probabilityCommand, competitorDecision?.candidate
-      ? {
+    const workflowEvaluation = parsed.data.type === 'work_plan'
+      ? { workPlanEvaluation: await evaluateFormalWorkPlan(parsed.data.payload) }
+      : parsed.data.type === 'brief_visit'
+        ? { briefVisitEvaluation: await evaluateFormalBriefVisit(parsed.data.payload) }
+        : {};
+    let execution = executeGameCommand(gameSession.state, probabilityCommand, {
+      ...(competitorDecision?.candidate
+        ? {
         competitorStageAction: competitorDecision.candidate,
         competitorStageSource: 'model',
       }
-      : undefined);
+        : {}),
+      ...workflowEvaluation,
+    });
     if (parsed.data.type === 'give_gift') {
       const giftCommand = parsed.data;
       const preparation = gameSession.state.preparations.find((item) => item.id === giftCommand.payload.preparationId);
@@ -136,7 +150,12 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       result: execution.result,
     });
     await deliverPendingNpcHandoffs(id, committed.state.currentRound).catch(() => undefined);
-    return NextResponse.json({ success: true, ...committed, state: toPlayerVisibleGameState(committed.state) });
+    return NextResponse.json({
+      success: true,
+      ...committed,
+      result: toPlayerVisibleGameCommandResult(committed.result),
+      state: toPlayerVisibleGameState(committed.state),
+    });
   } catch (error) {
     const code = error instanceof Error ? error.message : 'GAME_COMMAND_FAILED';
     const status = code === 'STATE_VERSION_CONFLICT' || code === 'COMMAND_IN_PROGRESS' || code === 'MULTIPLAYER_ROOM_NOT_RUNNING' ? 409 : 400;

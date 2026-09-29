@@ -49,7 +49,10 @@ const command = (type: Parameters<typeof executeGameCommand>[1]['type'], payload
 const firstResearch = command('research_public_info', { npcId: 'P1-004' }, 'research-1');
 assert.equal(firstResearch.result.publicResearch && typeof firstResearch.result.publicResearch, 'object');
 assert.equal(state.actionPoints, 26);
-assert.equal(Object.keys(state.publicResearch).length, 0, 'public search must not remain on the player card');
+assert.equal(state.publicResearch['P1-004']?.facts.length, 3, 'completed public search persists for player recovery');
+const visibleResearch = toPlayerVisibleGameState(state).publicResearch;
+assert.equal(visibleResearch['P1-004']?.weakSignals.length, 1, 'the public snapshot retains only obtained research');
+assert.equal(visibleResearch['P1-001'], undefined, 'unsearched NPC profiles are not synthesized into the player snapshot');
 assert.equal('timeMinutes' in firstResearch.eventPayload, false, 'public search events use action points, not time metrics');
 assert.equal(firstResearch.eventPayload.costPoints, 2);
 command('research_public_info', { npcId: 'P1-004' }, 'research-2');
@@ -151,7 +154,7 @@ const legacyState = normalizeProjectOneState({
     },
   ],
 });
-assert.equal(Object.keys(legacyState.publicResearch).length, 0, 'legacy public research is not restored into a contact card');
+assert.equal(legacyState.publicResearch['P1-004']?.facts.length, 1, 'completed legacy public research is restored for recovery');
 assert.equal(legacyState.preparations.length, 2, 'legacy preparation rows remain readable for archive compatibility');
 assert.equal(isCurrentPreparationType('visit_preparation'), true);
 assert.equal(isCurrentPreparationType('materials'), false);
@@ -267,7 +270,7 @@ assert.equal(state.competitorState.actions.length, 1, 'solo ABC simulation runs 
 assert.equal('competitorAction' in advanced.result, false, 'advance result does not expose the internal competitor action');
 assert.equal(state.notifications.some((item) => item.title === '竞品动态'), false, 'hidden competitor progress must not be pushed to the player');
 const visibleState = toPlayerVisibleGameState({ ...state, competitorClaims: [{ id: 'claim-1', npcId: 'P1-004', stage: 1, statement: '内部竞品主张', truthStatus: 'unverified' }] });
-assert.deepEqual(visibleState.competitorClaims, [], 'player state does not expose competitor claims');
+assert.deepEqual(visibleState.competitorClaims, [{ id: 'claim-1', npcId: 'P1-004', stage: 1, statement: '内部竞品主张', truthStatus: 'unverified' }], 'player state exposes only NPC statements already heard');
 assert.equal(visibleState.competitorState.actions.length, 0, 'player state does not expose competitor actions');
 assert.equal(normalizeProjectOneState({ ...createProjectOneState(), gameMode: 'multiplayer', roomStageVersion: 4 }).roomStageVersion, 4, 'room stage concurrency token survives player-state normalization');
 const duplicate = executeGameCommand(state, { commandId: 'advance-1', expectedVersion: state.version, type: 'advance_phase', payload: {} });

@@ -1,5 +1,47 @@
 # 工作交接
 
+## 2026-09-29 测试调节数值与 Jev 延迟
+
+- 当前本地设计师 Jev 配置页显示已保存 Jev 决策开关。代码上电话消息路径串行约两次 Jev 与两次正文 LLM；Jev 请求默认 30 秒超时与两次重试。尚无分阶段真实计时，不要把整段等待归因于 Jev。用户要求保留原预览 SSE 逐字播放效果，已恢复原分段等待；后续性能调查应聚焦外部调用与重试。
+- 预览服务 `project-one-preview-ai.ts` 在所有成功 POST 输出五人 `npcTestStates`；新 GET 恢复由 `api/project-one-preview/ai/handler.ts` 返回相同快照，GET/POST 只给设计师并保持 owner 隔离。正式 `/game` DTO 不变。前端 `public/project1-prototype-v9.html` 以 GET 同步测试调节数值，POST 后更新，缺字段/403/失败隐藏旧缓存。
+- 主线程使用本地浏览器验证新 UI：新标签中的 42/68 测试调整提交成功，但 5000 运行进程的 GET 尚无新字段，因而新前端按设计显示“服务端没有提供完整的 NPC 状态快照”并隐藏旧值。该测试预览会话随后已重置。需更新运行的服务端实例再做浏览器端到端验收；不要误将当前 5000 返回视为新 GET 实现失败。mock 鉴权、UI 行为、预览 AI、流分段、隔离和构建已过。
+
+## 2026-09-29 电话历史记录显示
+
+- 预览 `public/project1-prototype-v9.html` 现在以独立 `phoneHistory` 保存通话次数、时间、阶段和状态，旧快照仅有拨号次数时生成“时间未记录”的条目；`activePhoneCallId` 只在当前页内存中，刷新、挂断、换人或切视图后不会再显示历史正文。旧会话正文仍保留在原对话存储供后端上下文/审计，不再由电话 UI 渲染。
+- 正式 `/game/page.tsx` 从 `/api/game/sessions/[id]/call-history?npcId=` 读取元数据；接口按归属读取 `game_events` 的 `npc.call.connected`、`npc.call.unanswered`，兼容 work_phone `contact.completed`。响应只有 `id/npcId/outcome/round/createdAt`；错误有重试 UI。当前通话正文用拨号时刻隔离，离开电话视图/未接/刷新后隐藏。
+- 本地主线程通过 `test-call-history-api.ts`、`test-preview-call-history-ui.ts`、旧 UI 契约、预览账号隔离、`tsc`、全量 ESLint、Next build、tsup、`git diff --check`；请在有真实登录与数据库环境时再做两页面手工拨号/刷新验收。远程数据库未实查，无新迁移。
+
+## 2026-09-29 预览电话角色反转
+
+- 截图来自 `public/project1-prototype-v9.html` 的预览电话，后续玩家话术走 `message/work_phone` 到 `/api/project-one-preview/ai`。预览 `content` 原本只校验 JSON 和长度，模型把玩家称为“张总”、以供应商身份讲话也会被保存；不能只归因于某版提示词。
+- 修复在 `src/lib/game/project-one-preview-ai.ts` 的消息生成入口：针对目标 NPC 检查称呼/供应商自称，最多一次纠偏，再失败短兜底；旧错误 NPC 回复仍在原始会话供追溯，但不会传给新一轮生成。`scripts/test-project-one-preview-ai.ts` 有截图型 mock 和正常首轮电话自介回归。
+- 本地读取远程 `designer_prompt_configs/project-one` 返回 `fetch failed`，未确认实际保存提示词版本；真实在线模型还需后续测试。正式 `/api/chat/stream` 不使用这条预览质量门，若正式聊天出现同类角色反转，应另行补正式发出前校验。
+
+## 2026-09-29 后台 AI 接口切换与 Qwen
+
+- 新增 `/designer/ai-provider` 和 `/api/designer/ai-provider`，配置在 `designer_prompt_configs` 的 `global-ai-provider` 行，允许 `default/deepseek/doubao/qwen`，写入使用 revision CAS。`client.ts` 仅在调用方未指定 Provider 时读取该选择；显式轨道覆盖全局选择。
+- 部署 Qwen 前配置 `QWEN_AI_BASE_URL`（地域对应 WorkspaceId 兼容地址）、`QWEN_AI_API_KEY`、`QWEN_AI_MODEL`，并重启服务；页面只显示配置状态和模型名，不回传 Key。当前本地缺 Qwen 变量，未做真实请求或远程数据库保存验证。请在真实环境选中 Qwen 后实际发起一轮正式/预览正文请求，核查失败码和返回文本。
+
+## 2026-09-28 正式体验同步与支持度脱敏（已完成本地实现与验收）
+
+- 用户指出正式游戏应先同步设计师后台“实际测试”的体验，再基于该体验实现招标机制；玩家侧不能显示支持度。此前 GAME-015 的完成声明仅覆盖旧 `/game` 链路，现已完成后续 UI/行动同步与本地验收。
+- 已核实：设计师“实际测试”从 `src/app/designer/page.tsx` 进入 `/project-one-preview`，该路由 iframe 承载 `public/project1-prototype-v9.html`。预览 AI/拜访会话走 `src/app/api/project-one-preview/ai/route.ts` 与 `project_one_preview_sessions`；原型的阶段/AP等部分状态仍在浏览器，提交结果是样例。正式游戏走 `src/app/api/game/sessions`、`[id]/commands`、`executeGameCommand` 与 `game_runtime_states.simulation_state`，具备正式命令和结算。不要把预览会话或浏览器进度直接作为正式存档。
+- 支持度脱敏已实现：正式 game/result 页面隐藏支持度数值/档位，session/commands/messages/result DTO 与复盘上下文已脱敏；设计师样例结果也不显示支持度，测试调节面板仍可设置支持度。支持度仍供服务端内部规则与结算使用。
+- 用户已确认并采用 D-084：保留正式 `game_sessions`、命令 reducer 与结算唯一权威，按设计师实际测试同步 UI/行动；preview 会话与浏览器阶段/AP不迁入正式存档。同步改动和支持度脱敏均已验收。
+- 正式后端行动有 `work_plan`、`postal`、`brief_visit`、直访和服务端拜访进度判断；`evaluateFormalVisitTurn` 的可信字段由 `recordMeetingTurn` 校验并记录任务与 `endReason`。前端工作台使用正式 `/game` React 页面和 `game-board.module.css`，未将业务状态改由 preview/sessionStorage 管理。
+- 最终验证：主线程确认 12 组相关 TSX 测试、`tsc --noEmit`、`eslint . --quiet`、`next build`、`tsup src/server.ts`、`scripts/harness-check.ps1` 与 `git diff --check` 均通过。
+- 限制：没有执行登录态、数据库支持的真实 UI E2E，也没有实查远程 Supabase；记录的完成状态仅基于本地专项/状态测试、类型/lint/build/harness 验收。GAME-015 已关闭；preview 与正式存档仍保持独立。
+
+## 2026-09-28 三家供应商招标与结算机制（旧 `/game` 链路本地实现与验证记录）
+
+- 本节列出的早期页面显示内容和实现文件反映 D-083 初次落地时的旧 UI 状态；支持度可见内容已由上方 D-084 脱敏实现移除，正式实际测试 UI/行动同步已在后续完成。
+- 用户已批准完整三家中标模型，并要求在新的三家比较中保留原综合评分因素；D-083、GAME-015 和当前迭代条目已登记。主线程确定的供应商画像为：`player-company` 技术精度 / `technical_accuracy`，`abc-company` 最低价 / `lowest_price`，`xyz-company` 功能完整度 / `feature_completeness`。
+- 实现文件：`projects/src/lib/game/bid-rules.ts` 定义 4 档支持态势、4 种规则与匹配分；`game/project-one.ts` 定义三家供应商画像；`game/state.ts` 持久化支持矩阵、bidRule、建议历史，负责自动规则变化、建议采纳与确定性三家结算；`contracts/game.ts` 添加 `propose_bid_rule`；`repository.ts` 保存 JSON 状态并把公开结算摘要加入复盘白名单；`app/game/page.tsx` 和 `app/result/page.tsx` 展示过程与结果。设计师竞品 CRUD (`designer/competitors.ts`) 仍是 legacy 描述信息接口，运行时画像目前来自规范 `PROJECT_ONE_SUPPLIERS`，扩展 CRUD 需另接配置契约。
+- 实际默认阈值：加权支持均值 HIGH≥65 且≥60% 决策权重支持值≥60，MID_HIGH≥50，MID≥35；提议 HIGH 目标人≥50，MID_HIGH 决策权重≥0.18/目标人≥55/均值≥50，MID 权重≥0.24/目标人≥72/均值≥35，LOW 无采纳通路。建议耗 2 AP，每个 NPC/规则组合只能提出一次。三家综合候选分 = 玩家既有最终综合分或对手基础竞争分 + `(供应商加权支持均值−50)×0.3` + 规则匹配分；规则分为不匹配 2、综合中性 8、匹配 `12+round(优势值/25)`。分数降序后按支持均值、规则匹配分、供应商 ID 稳定排序；精确竞品分不向玩家展示。结算原因明确提及基础竞争力、支持和规则匹配，并显示赢家规则/核心优势；旧分数在 UI 标为我方方案表现分。更多见 CURRENT_ITERATION。
+- 复核范围：主线程验证 `test-bid-rules`、`test-game-state`、`test-five-stage-state`、`test-review-context`、`test-competitor-ai`、`test-formal-five-person`、`test-ai-attitudes`、`test-legacy-ui-contracts`；`tsc --noEmit`、`eslint . --quiet`、`next build`、`tsup` 服务端构建均 exit 0。由于机器装有 pnpm 11.19 而项目要求 9，本批通过本地 `node_modules` 可执行文件验证。
+- 限制：未执行远程 Supabase 检查或数据库 E2E；没有迁移，依赖既有 `simulation_state` JSON 持久化和归一化默认值。阈值及评分系数属于当前可调基线，尚未通过远程/实战数据校准。本工作项已完成本地验收；后续若将设计师竞品配置与规范画像统一，需另开工作项。
+
 ## 2026-09-23 全局结构化决策 Provider 开关
 
 - `/designer/jev-config` 的顶层 `config.decisionProvider` 为 `jev|llm`，既有 `project-one-jev` 记录无字段时归一到 Jev，保存仍受 revision CAS 控制。设计师编辑 Jev 指令在 LLM 模式暂停但不删除；重新切回 Jev 继续使用。

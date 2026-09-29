@@ -4,12 +4,24 @@ import assert from 'node:assert/strict';
 
 async function main() {
   const attempts = new Map<string, number>();
+  let selectionUnavailable = false;
   const requestPayloads: Array<{
     model: string;
     thinking?: { type?: string };
+    enable_thinking?: boolean;
   }> = [];
   const server = createServer((request, response) => {
-    if (request.url !== '/v1/chat/completions' || request.method !== 'POST') {
+    if (request.method === 'GET' && request.url?.startsWith('/rest/v1/designer_prompt_configs?')) {
+      if (selectionUnavailable) {
+        response.writeHead(503, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ code: 'TEST_DB_UNAVAILABLE', message: 'unavailable' }));
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ config: { provider: 'qwen' }, revision: 1, updated_at: null, updated_by: null }));
+      return;
+    }
+    if (request.method !== 'POST') {
       response.writeHead(404).end();
       return;
     }
@@ -23,11 +35,20 @@ async function main() {
         model: string;
         response_format?: { type?: string };
         thinking?: { type?: string };
+        enable_thinking?: boolean;
       };
       requestPayloads.push(payload);
       const count = (attempts.get(payload.model) ?? 0) + 1;
       attempts.set(payload.model, count);
-      if (request.headers.authorization !== 'Bearer local-test-key') {
+      const expectedPath = payload.model === 'qwen-local-model'
+        ? '/qwen/v1/chat/completions'
+        : '/v1/chat/completions';
+      if (request.url !== expectedPath) {
+        response.writeHead(404).end();
+        return;
+      }
+      const expectedApiKey = payload.model === 'qwen-local-model' ? 'qwen-test-key' : 'local-test-key';
+      if (request.headers.authorization !== `Bearer ${expectedApiKey}`) {
         response.writeHead(401).end();
         return;
       }
@@ -60,12 +81,14 @@ async function main() {
   process.env.AI_BASE_URL = `http://127.0.0.1:${address.port}/v1`;
   process.env.AI_API_KEY = 'local-test-key';
   process.env.AI_MODEL = 'local-test-model';
+  process.env.SUPABASE_URL = `http://127.0.0.1:${address.port}`;
+  process.env.SUPABASE_ANON_KEY = 'local-test-key';
 
   try {
     const { invokeLLM, streamLLM } = await import('../src/lib/ai/client');
-    const response = await invokeLLM([{ role: 'user', content: 'test' }]);
+    const response = await invokeLLM([{ role: 'user', content: 'test' }], { provider: 'default' });
     if (response !== '普通响应通过') throw new Error(`INVOKE_MISMATCH: ${response}`);
-    const defaultThinkingResponse = await invokeLLM([{ role: 'user', content: 'default thinking test' }], { thinking: 'disabled' });
+    const defaultThinkingResponse = await invokeLLM([{ role: 'user', content: 'default thinking test' }], { provider: 'default', thinking: 'disabled' });
     assert.equal(defaultThinkingResponse, '普通响应通过');
     assert.equal(requestPayloads[requestPayloads.length - 1].thinking, undefined, 'Default provider must not forward thinking');
 
@@ -79,22 +102,42 @@ async function main() {
     assert.equal(doubaoThinkingResponse, '普通响应通过');
     assert.deepEqual(requestPayloads[requestPayloads.length - 1].thinking, { type: 'disabled' });
 
-    const jsonResponse = await invokeLLM([{ role: 'user', content: 'json test' }], { jsonMode: true });
+    process.env.QWEN_AI_BASE_URL = `http://127.0.0.1:${address.port}/qwen/v1`;
+    process.env.QWEN_AI_API_KEY = 'qwen-test-key';
+    process.env.QWEN_AI_MODEL = 'qwen-local-model';
+    const qwenThinkingResponse = await invokeLLM(
+      [{ role: 'user', content: 'qwen thinking test' }],
+      { provider: 'qwen', thinking: 'disabled' },
+    );
+    assert.equal(qwenThinkingResponse, '普通响应通过');
+    assert.equal(requestPayloads[requestPayloads.length - 1].model, 'qwen-local-model');
+    const requestCountBeforeUnavailable = requestPayloads.length;
+    selectionUnavailable = true;
+    await assert.rejects(invokeLLM([{ role: 'user', content: 'config unavailable' }]), /AI_PROVIDER_SELECTION_READ_FAILED/);
+    assert.equal(requestPayloads.length, requestCountBeforeUnavailable, 'Configuration read failure must not send an AI request');
+    selectionUnavailable = false;
+    assert.equal(requestPayloads[requestPayloads.length - 1].enable_thinking, false);
+    assert.equal(requestPayloads[requestPayloads.length - 1].thinking, undefined);
+    const selectedResponse = await invokeLLM([{ role: 'user', content: 'selected qwen test' }]);
+    assert.equal(selectedResponse, '普通响应通过');
+    assert.equal(requestPayloads[requestPayloads.length - 1].model, 'qwen-local-model');
+
+    const jsonResponse = await invokeLLM([{ role: 'user', content: 'json test' }], { provider: 'default', jsonMode: true });
     if (jsonResponse !== '{"ok":true}') throw new Error(`JSON_MODE_MISMATCH: ${jsonResponse}`);
 
     let streamed = '';
-    for await (const chunk of streamLLM([{ role: 'user', content: 'test stream' }])) {
+    for await (const chunk of streamLLM([{ role: 'user', content: 'test stream' }], { provider: 'default' })) {
       streamed += chunk;
     }
     if (streamed !== '流式响应通过') throw new Error(`STREAM_MISMATCH: ${streamed}`);
-    assert.equal(await invokeLLM([{ role: 'user', content: 'retry' }], { model: 'retry-once' }), '普通响应通过');
+    assert.equal(await invokeLLM([{ role: 'user', content: 'retry' }], { provider: 'default', model: 'retry-once' }), '普通响应通过');
     assert.equal(attempts.get('retry-once'), 2);
-    await assert.rejects(invokeLLM([], { model: 'always-unavailable' }), /^Error: AI_PROVIDER_HTTP_503$/);
+    await assert.rejects(invokeLLM([], { provider: 'default', model: 'always-unavailable' }), /^Error: AI_PROVIDER_HTTP_503$/);
     assert.equal(attempts.get('always-unavailable'), 2, 'Retries must be bounded');
-    await assert.rejects(invokeLLM([], { model: 'always-unauthorized' }), /^Error: AI_PROVIDER_HTTP_401$/);
+    await assert.rejects(invokeLLM([], { provider: 'default', model: 'always-unauthorized' }), /^Error: AI_PROVIDER_HTTP_401$/);
     assert.equal(attempts.get('always-unauthorized'), 1, 'Invalid credentials must not retry');
     await assert.rejects(async () => {
-      for await (const chunk of streamLLM([], { model: 'broken-stream' })) { assert.equal(chunk, 'partial'); }
+      for await (const chunk of streamLLM([], { provider: 'default', model: 'broken-stream' })) { assert.equal(chunk, 'partial'); }
     }, /^Error: AI_PROVIDER_STREAM_PROTOCOL$/);
     assert.equal(attempts.get('broken-stream'), 1, 'Never replay a stream after output starts');
     console.log('AI Provider 普通响应与流式响应测试通过。');

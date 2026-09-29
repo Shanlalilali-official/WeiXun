@@ -1,7 +1,7 @@
 import { createServerClient } from '@/storage/database/supabase-client';
 import { getProgressionMultiplier } from '@/lib/game/acceptance-mode';
 import { assertMultiplayerRoomRunning } from '@/lib/game/multiplayer';
-import { createProjectOneState, getGameOutcome, normalizeProjectOneState, type GameOutcome, type GameRuntimeState } from '@/lib/game/state';
+import { createProjectOneState, getGameOutcome, normalizeProjectOneState, toPlayerVisibleGameOutcome, type GameOutcome, type GameRuntimeState } from '@/lib/game/state';
 import type { GameReview } from '@/lib/contracts/game';
 
 export interface StoredChatMessage {
@@ -10,6 +10,11 @@ export interface StoredChatMessage {
   content: string;
   round?: number;
   createdAt: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** Chat history returned to a player contains delivery details only. */
+export interface PlayerVisibleChatMessage extends Omit<StoredChatMessage, 'metadata'> {
   metadata?: Record<string, unknown>;
 }
 
@@ -35,7 +40,9 @@ export interface StoredGameEvent {
  */
 export const REVIEW_RECENT_MESSAGE_LIMIT = 32;
 export const REVIEW_KEY_EVENT_LIMIT = 256;
-export const REVIEW_CONTEXT_VERSION = 2;
+// Bump when the player-visible review privacy boundary changes so cached prose
+// produced from older, richer context is regenerated before being returned.
+export const REVIEW_CONTEXT_VERSION = 3;
 
 const REVIEW_EVENT_TYPES = [
   'npc.turn.completed',
@@ -677,6 +684,59 @@ export async function getNpcConversation(sessionId: string, npcId: string, limit
   }));
 }
 
+/**
+ * AI evaluation metadata is retained in the durable transcript for server
+ * audit and later model work. Player history only needs transport details, so
+ * this allowlist prevents score deltas or relationship assessments leaking
+ * through the messages endpoint.
+ */
+export function toPlayerVisibleChatMessages(messages: StoredChatMessage[]): PlayerVisibleChatMessage[] {
+  return messages.map((message) => {
+    const metadata = message.metadata && typeof message.metadata === 'object' && !Array.isArray(message.metadata)
+      ? message.metadata
+      : {};
+    const publicMetadata: Record<string, unknown> = {};
+    if (typeof metadata.channel === 'string' && metadata.channel.length <= 32) publicMetadata.channel = metadata.channel;
+    if (typeof metadata.deliveryStatus === 'string' && metadata.deliveryStatus.length <= 32) publicMetadata.deliveryStatus = metadata.deliveryStatus;
+    if (Array.isArray(metadata.emailAttachments)) {
+      const attachments = metadata.emailAttachments.flatMap((attachment) => {
+        if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) return [];
+        const item = attachment as Record<string, unknown>;
+        if (typeof item.fileName !== 'string' || typeof item.description !== 'string') return [];
+        return [{ fileName: item.fileName.slice(0, 160), description: item.description.slice(0, 1_000) }];
+      }).slice(0, 8);
+      if (attachments.length) publicMetadata.emailAttachments = attachments;
+    }
+    if (Array.isArray(metadata.attachments)) {
+      // Attachment assessment data can be shown after a refresh, but this is a
+      // narrow transport DTO: scores, evaluator payloads and arbitrary nested
+      // metadata never cross the player API boundary.
+      const attachments = metadata.attachments.flatMap((attachment) => {
+        if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) return [];
+        const item = attachment as Record<string, unknown>;
+        if (typeof item.fileName !== 'string' || typeof item.description !== 'string'
+          || typeof item.viewed !== 'boolean' || typeof item.impact !== 'string') return [];
+        if (!item.fileName.trim() || !item.description.trim() || !item.impact.trim()) return [];
+        return [{
+          fileName: item.fileName.slice(0, 160),
+          description: item.description.slice(0, 1_000),
+          viewed: item.viewed,
+          impact: item.impact.slice(0, 400),
+        }];
+      }).slice(0, 8);
+      if (attachments.length) publicMetadata.attachments = attachments;
+    }
+    return {
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      ...(message.round === undefined ? {} : { round: message.round }),
+      createdAt: message.createdAt,
+      ...(Object.keys(publicMetadata).length ? { metadata: publicMetadata } : {}),
+    };
+  });
+}
+
 export async function getNpcMessageCount(sessionId: string, npcId: string): Promise<number> {
   const supabase = createServerClient();
   const { count, error } = await supabase
@@ -729,7 +789,7 @@ const REVIEW_CRITICAL_EVENT_TYPES = new Set<string>([
 
 const REVIEW_EVENT_FIELDS: Record<string, readonly string[]> = {
   'npc.turn.completed': [
-    'npcId', 'channel', 'intent', 'scoreDelta', 'evaluationSource', 'cluesUnlocked',
+    'npcId', 'channel', 'intent', 'evaluationSource', 'cluesUnlocked',
     'handoff', 'meetingEnded', 'emailAttachmentCount', 'semanticFlags', 'giftAssessment',
     'confirmedFacts', 'commitments', 'publicValueEvidence', 'personalBenefitEvidence',
     'workTopicOpenedBy',
@@ -857,8 +917,7 @@ function sanitizeReviewMetadata(value: unknown): Record<string, unknown> | undef
   const output: Record<string, unknown> = {};
   for (const key of [
     'npcId', 'intent', 'channel', 'deliveryStatus', 'meetingId', 'meetingTurn', 'meetingType',
-    'evaluationSource', 'protocolValid', 'affinityDelta', 'scoreDelta', 'pleasureDelta',
-    'supportDelta', 'unmetImpressionDelta', 'complianceAwarenessDelta', 'workTopicOpenedBy',
+    'evaluationSource', 'protocolValid', 'workTopicOpenedBy',
   ]) {
     const safe = reviewScalar(metadata[key]);
     if (safe !== undefined) output[key] = safe;
@@ -1031,15 +1090,6 @@ function sanitizeReviewState(state: GameRuntimeState): Record<string, unknown> {
     const number = reviewNumber(value);
     return number === undefined ? [] : [[key, number]];
   }));
-  const attitudes = Object.fromEntries(Object.entries(state.npcAttitudes ?? {}).flatMap(([npcId, value]) => {
-    const attitude = reviewRecord(value);
-    const safe: Record<string, unknown> = {};
-    for (const key of ['pleasantness', 'support', 'complianceAwareness']) {
-      const number = reviewNumber(attitude[key]);
-      if (number !== undefined) safe[key] = number;
-    }
-    return Object.keys(safe).length ? [[npcId, safe]] : [];
-  }));
   const contacts = Object.fromEntries(Object.entries(state.npcContacts ?? {}).flatMap(([npcId, value]) => {
     const contact = reviewRecord(value);
     return [[npcId, {
@@ -1114,7 +1164,6 @@ function sanitizeReviewState(state: GameRuntimeState): Record<string, unknown> {
     cumulativeTimeMinutes: state.cumulativeTimeMinutes,
     cumulativeSpentPoints: state.cumulativeSpentPoints,
     dimensions: safeDimensions,
-    npcAttitudes: attitudes,
     npcContacts: contacts,
     unlockedClues: reviewTextList(state.unlockedClues, 16, 64),
     outcomeEvidence: {
@@ -1157,21 +1206,14 @@ export function buildReviewContext(args: {
   };
 }
 
-/** Allowlist the outcome fields that are safe for a review model to see. */
+/**
+ * Reviews are player-facing. Reuse the public settlement DTO so an LLM cannot
+ * turn a private support score or band into prose in the final report.
+ */
 export function toReviewOutcome(outcome: GameOutcome): Record<string, unknown> {
-  return {
-    fiveDimensionScore: outcome.fiveDimensionScore,
-    publicValueScore: outcome.publicValueScore,
-    personalBenefitScore: outcome.personalBenefitScore,
-    decisionChainSupportScore: outcome.decisionChainSupportScore,
-    decisionChainSupport: outcome.decisionChainSupport,
-    baseScore: outcome.baseScore,
-    compliancePenalty: outcome.compliancePenalty,
-    finalScore: outcome.finalScore,
-    won: outcome.won,
-    eligible: outcome.eligible,
-    supportByNpc: { ...outcome.supportByNpc },
-  };
+  const playerOutcome = { ...toPlayerVisibleGameOutcome(outcome) } as Partial<ReturnType<typeof toPlayerVisibleGameOutcome>>;
+  delete playerOutcome.competitivePosition;
+  return playerOutcome;
 }
 
 export async function getSessionReviewEvents(sessionId: string, limit = REVIEW_KEY_EVENT_LIMIT): Promise<StoredGameEvent[]> {

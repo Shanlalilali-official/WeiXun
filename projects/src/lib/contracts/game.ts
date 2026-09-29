@@ -91,9 +91,47 @@ export const startVisitGameCommandSchema = z.object({
   ...commandBaseSchema,
   type: z.literal('start_visit'),
   payload: z.object({
-    appointmentId: entityIdSchema,
+    appointmentId: entityIdSchema.optional(),
+    /** No appointment means an at-risk direct drop-in visit. */
+    npcId: npcIdSchema.optional(),
     preparationIds: z.array(entityIdSchema).max(12).default([]),
+    // Optional for old persisted/client commands; reducer treats omission as false.
+    skipPreparation: z.boolean().optional(),
+  }).superRefine((value, context) => {
+    if (!value.appointmentId && !value.npcId) context.addIssue({ code: z.ZodIssueCode.custom, path: ['npcId'], message: '直访需要指定NPC' });
   }),
+});
+
+export const workPlanGameCommandSchema = z.object({
+  ...commandBaseSchema,
+  type: z.literal('work_plan'),
+  payload: z.object({
+    scope: z.enum(['global', 'npc']),
+    npcId: npcIdSchema.optional(),
+    content: z.string().trim().min(10).max(4_000),
+  }).superRefine((value, context) => {
+    if (value.scope === 'npc' && !value.npcId) context.addIssue({ code: z.ZodIssueCode.custom, path: ['npcId'], message: '人物计划需要指定NPC' });
+    if (value.scope === 'global' && value.npcId) context.addIssue({ code: z.ZodIssueCode.custom, path: ['npcId'], message: '整体计划不能指定NPC' });
+  }),
+});
+
+export const postalGameCommandSchema = z.object({
+  ...commandBaseSchema,
+  type: z.literal('postal'),
+  payload: z.object({
+    npcId: npcIdSchema,
+    content: z.string().trim().min(1).max(2_000),
+    attachment: z.object({
+      title: z.string().trim().min(1).max(120),
+      content: z.string().trim().min(1).max(1_000),
+    }).strict().optional(),
+  }),
+});
+
+export const briefVisitGameCommandSchema = z.object({
+  ...commandBaseSchema,
+  type: z.literal('brief_visit'),
+  payload: z.object({ npcId: npcIdSchema, content: z.string().trim().min(10).max(4_000) }),
 });
 
 export const endVisitGameCommandSchema = z.object({
@@ -193,6 +231,18 @@ export const researchPublicInfoGameCommandSchema = z.object({
   payload: z.object({ npcId: npcIdSchema }),
 });
 
+export const proposeBidRuleGameCommandSchema = z.object({
+  ...commandBaseSchema,
+  type: z.literal('propose_bid_rule'),
+  // The player expresses a business recommendation in their own words.  The
+  // server interprets a single explicit direction and never trusts a browser
+  // supplied rule enum.
+  payload: z.object({
+    targetContactId: npcIdSchema,
+    proposalText: z.string().trim().min(12).max(500),
+  }),
+});
+
 /** Versioned deterministic commands used by the unified game command API. */
 export const gameCommandSchema = z.discriminatedUnion('type', [
   contactGameCommandSchema,
@@ -200,6 +250,9 @@ export const gameCommandSchema = z.discriminatedUnion('type', [
   inviteGameCommandSchema,
   updateAppointmentGameCommandSchema,
   prepareGameCommandSchema,
+  workPlanGameCommandSchema,
+  postalGameCommandSchema,
+  briefVisitGameCommandSchema,
   startVisitGameCommandSchema,
   endVisitGameCommandSchema,
   giveGiftGameCommandSchema,
@@ -210,6 +263,7 @@ export const gameCommandSchema = z.discriminatedUnion('type', [
   submitGameCommandSchema,
   markNotificationReadGameCommandSchema,
   researchPublicInfoGameCommandSchema,
+  proposeBidRuleGameCommandSchema,
 ]);
 
 export type GameCommand = z.infer<typeof gameCommandSchema>;

@@ -1,6 +1,6 @@
 # 动态问题台账
 
-- 最后缺陷复核与回归：2026-09-23；产品流程差异登记：2026-08-31
+- 最后缺陷复核与回归：2026-09-29；产品流程差异登记：2026-08-31；三家供应商机制代码现状核查：2026-09-28
 - 规则：问题只改变状态，不删除；解决必须记录证据。
 
 ## 本期问题
@@ -19,6 +19,13 @@
 
 | ID | 优先级 | 状态 | 问题/目标 | 当前原因或下一步 |
 |---|---|---|---|---|
+| UX-014 | P1 | Resolved (local code) | 设计师“测试调节”不显示交互后支持度和愉悦度的变化 | 2026-09-29：设计师预览 POST 与 GET 返回服务端五人快照，面板打开时刷新、普通交互后更新，缺字段/无权限时隐藏旧值；专项行为、鉴权、隔离、类型及构建通过。浏览器 5000 运行实例仍返回旧 GET 数据，需更新该实例后完成在线联调。 |
+| PERF-001 | P1 | In Progress | Jev 决策的测试回复体感慢 | 2026-09-29：当前设计师页面 Jev 开关选中且已保存；预览普通消息/电话路径有两次 Jev 与两次正文 LLM 串行调用，Jev 最多三次尝试（单次默认 30 秒超时）。用户要求保留约 1.2 秒逐字播放，已恢复并验证。真实 Jev/LLM 各阶段网络耗时尚未实测，不能把整段等待单独归因 Jev。 |
+| UX-013 | P1 | Resolved | 电话面板可看到历史对话正文，预览与正式游戏都应只展示历史通话条目 | 2026-09-29：预览 `renderPhone()` 保留独立历史条目并以活动通话 ID 限定本次正文；正式 `/game/page.tsx` 从 `/api/game/sessions/[id]/call-history` 读取元数据，按拨号时刻限定实时内容。API 仅投影 id/NPC/结果/阶段/时间，先鉴权与校验会话归属；失败提示重试。API 专项、预览行为 VM、旧 UI/账号隔离回归、TypeScript、全量 ESLint、Next/服务端构建及 diff 检查通过。仅本地验收，远程数据库与登录态浏览器 E2E 未实查。 |
+| AI-026 | P1 | Resolved | 张建国电话回复角色反转，以供应商身份发言并称玩家为“张总” | 2026-09-29：截图定位设计师实际测试 `/api/project-one-preview/ai` 的 work_phone 回复。`project-one-preview-ai.ts` 增加目标人物身份质量门、一次重生成及同人物/渠道兜底；旧错误台词从生成上下文排除，原始流水保留。预览专项覆盖截图型反转、连续失败、状态不污染、正常自我介绍与他人姓名；人物提示词专项、TypeScript、目标 ESLint、Next 构建、harness 检查通过。仅本地实现验收；远程保存提示词与真实模型请求未实查，正式 `/api/chat/stream` 另有同类质量门缺口待评估。 |
+| AI-027 | P1 | Open | 正式聊天 AI 正文缺少发出前的身份视角验收 | 2026-09-29 代码审计：`src/app/api/chat/stream/route.ts` 拼接 `streamLLM` 正文后直接进入后续状态流程，未应用预览或 A/B 测试的角色方向质量门。当前截图来自预览链路，不证明正式链路已发生同样错误；后续按正式流式/事务契约单独设计校验与回归，避免未经批准扩大本批范围。 |
+| AI-025 | P1 | Resolved | 设计师后台切换正文 AI Provider，并接入 Qwen | 2026-09-29：`client.ts` 默认路由按独立 `global-ai-provider` 配置选择，显式轨道不受影响；`/designer/ai-provider`、鉴权/CAS API、Qwen `QWEN_AI_*` 已接入。mock 验证 Qwen 路径/Key/模型/参数、全局选中后实际路由、配置读失败不跨 Provider；选择校验与原双轨专项、TypeScript、全量 ESLint、Next.js/服务端构建、harness 检查通过。仅本地实现验收；远程数据库保存与真实 Qwen 调用未实查，当前本地缺 `QWEN_AI_*`，页面应标为未配置。 |
+| GAME-015 | P1 | Resolved | 正式游戏体验同步设计师实际测试、隐藏支持度并接入三家招标机制 | 2026-09-28：支持度隐私已实现：正式 game/result UI、session/commands/messages/result DTO 和复盘上下文不暴露支持度数值/档位；设计师测试样例结果不显示支持度，测试调节面板保留支持度编辑。用户通过 D-084 确认并采用正式 `game_sessions`/commands/reducer/结算为唯一权威，同步实际测试 UI/动作，preview 会话及浏览器阶段/AP不迁入。正式 `/game` 工作台与 `game-board.module.css` 已完成同步；正式 `work_plan`、`postal`、`brief_visit`、直访和拜访任务完成判定均通过服务端命令/reducer，`recordMeetingTurn` 校验 evaluator 可信进度并记录结束原因。三家优势、规则建议采纳/反馈与唯一中标结算贯通正式流程。验证通过：12 组相关 TSX 测试、`tsc --noEmit`、`eslint . --quiet`、`next build`、`tsup src/server.ts`、`scripts/harness-check.ps1`、`git diff --check`。未执行登录态、数据库支持的真实 UI E2E，也未实查远程 Supabase；这是本地专项/状态测试和构建验收。 |
 | AI-024 | P1 | Resolved | 设计师按用户要求全局选择 Jev 或 LLM 承担结构化决策 | 2026-09-23：配置旧记录缺省 Jev；设计师全局开关和统一调用路由已接入正式、预览、提示词测试 10 类任务。LLM 简化答案经同一响应契约和业务规则校验；配置不可读或 Provider 失败只走确定性兜底。适配器、配置路由、人物画像及业务专项、TypeScript、全量 ESLint、Next.js/服务端构建通过；远程保存/真实模型烟测未执行。 |
 | AI-023 | P1 | Resolved | Jev 部分 NPC 判断缺少个体画像，设计师无法看到 state 已填的静态值 | 2026-09-23：五人主档同源画像已进入正式 NPC/礼品、固定张建国测试及预览相关 Jev 判断，计划匹配用紧凑候选；设计师页逐人展示静态真实值，动态对局数据不跨用户展示。注入式真实请求专项覆盖不同人物、未知 ID、预览多路径与原 question 契约；相关业务回归、类型、全量 lint、Next.js/服务端构建通过。真实 Jev 调用及远程页面人工验收未执行。 |
 | AI-022 | P1 | Resolved | Jev state/question 缺少设计师可视化与安全编辑入口 | 2026-09-23：`/designer/jev-config` 与独立配置 API 展示 10 类任务字段、默认问题、类型/候选；仅编辑 state 补充说明和 question 指令文字，固定结构及硬规则。独立 `project-one-jev` 记录、权限/白名单/版本冲突校验与默认 Jev 调用接入已完成；专项、Provider 与业务回归、类型、全量 lint、Next.js/服务端构建通过。远程保存和真实 Jev 账户烟测未执行。 |

@@ -113,13 +113,19 @@ const meetingStatusSchema = z.object({
 });
 /** Public display cue only. The underlying relationship scores remain server-only. */
 export const previewNpcExpressionSchema = z.enum(['angry', 'serious', 'calm', 'pleasant', 'very_happy']);
-const previewNpcTestStateSchema = z.object({
+/**
+ * Relationship metrics are only part of the authenticated designer preview
+ * contract.  The formal player game keeps its own DTOs and never imports this
+ * schema.
+ */
+export const previewNpcTestStateSchema = z.object({
   npcId: previewNpcIdSchema,
   support: z.number().int().min(0).max(100),
   pleasantness: z.number().int().min(0).max(100),
   effectiveContactCount: z.number().int().min(0).max(100),
   node: previewNodeSchema,
 });
+export type PreviewNpcTestState = z.infer<typeof previewNpcTestStateSchema>;
 
 export const previewAiResponseSchema = z.object({
   previewSessionId: z.string().regex(/^[A-Za-z0-9_-]{20,128}$/),

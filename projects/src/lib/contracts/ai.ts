@@ -23,11 +23,36 @@ export const npcChatRequestSchema = z.object({
   commandId: z.string().trim().min(8).max(128),
   expectedVersion: z.number().int().min(1),
   intent: z.enum(['outreach', 'message', 'call_connect']).default('message'),
-  channel: z.enum(['email', 'work_phone', 'online', 'offline']).optional(),
+  channel: z.enum(['email', 'work_phone', 'online', 'wechat', 'offline']).optional(),
   contextType: z.enum(['online', 'short_visit', 'formal_visit', 'informal_visit']).optional(),
   appointmentId: z.string().trim().min(1).max(128).optional(),
+  /** Canonical attachment field for email and WeChat messages. */
+  attachments: z.array(emailAttachmentSchema).max(8).default([]),
+  /** Legacy email-only field retained for existing clients and saved flows. */
   emailAttachments: z.array(emailAttachmentSchema).max(8).default([]),
   usedPreparationIds: z.array(z.string().trim().min(1).max(128)).max(12).default([]),
+}).superRefine((value, context) => {
+  if (value.attachments.length > 0 && value.emailAttachments.length > 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['attachments'],
+      message: 'attachments and emailAttachments cannot both be provided',
+    });
+  }
+  if (value.emailAttachments.length > 0 && value.channel && value.channel !== 'email') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['emailAttachments'],
+      message: 'emailAttachments is only valid for email messages',
+    });
+  }
+  if (value.attachments.length > 0 && value.channel && !['email', 'online', 'wechat'].includes(value.channel)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['attachments'],
+      message: 'attachments are only valid for email or WeChat messages',
+    });
+  }
 });
 
 export const npcSemanticFlagsSchema = z.object({

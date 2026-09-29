@@ -42,6 +42,11 @@ export interface CustomerPromptContext {
   inbox?: Array<{ sourceNpcId: string; summary: string; round: number }>;
   canRevealPersonalInterest: boolean;
   canRevealKeyContact: boolean;
+  /** Omitted entirely unless this NPC has earned authority to disclose it. */
+  procurementDisclosure?: {
+    publishedEvaluationFocus: string;
+    disclosureBoundary: string;
+  };
   competitorPosition?: 'lagging' | 'close' | 'leading';
   playerKnownPersonalInfo?: string[];
 }
@@ -77,6 +82,7 @@ export function CUSTOMER_PROMPT(): string {
 13. 现金、红包、回扣、打点、保证中标或以礼换支持属于明确违规，必须拒绝，必要时上报，不得因此泄露信息
 14. 只有数据区canRevealPersonalInterest为true时，才可自然透露个人关注点；否则不得明说
 15. 玩家询问竞品时，只能通过客户视角回答。可以如实、片面、过时或有意含糊，必要时也可以说谎；绝不透露后台推进分、系统竞品动作或声称信息已经被系统核实
+16. 只有数据区提供procurementDisclosure时，且玩家明确询问评审重点、评价标准，或在回应其先前提交的正式建议时，才可按该字段自然说明已发布的评价方向；不能主动播报，不能提“规则已采纳/自动调整/内部支持度”，也不能承诺中标
 
 ## 严格要求
 - 禁止“很高兴”“很荣幸”“期待合作”等空泛客套
@@ -131,5 +137,6 @@ export function CUSTOMER_CONTEXT(ctx: CustomerPromptContext): string {
     competitorSituationForNpcOnly: ctx.competitorPosition ?? 'close',
     playerKnownPersonalInfo: ctx.playerKnownPersonalInfo ?? [],
     canRevealPersonalInterest: ctx.canRevealPersonalInterest,
+    procurementDisclosure: ctx.procurementDisclosure ?? null,
   }, { maxStringLength: 1000, maxTotalLength: 16000 });
 }

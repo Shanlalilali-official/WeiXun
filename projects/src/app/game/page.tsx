@@ -4,34 +4,27 @@ import { Suspense, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import {
-  Bell,
   Building2,
   CalendarClock,
   Check,
   ChevronRight,
-  Clock3,
-  FileText,
-  Gift,
-  Inbox,
-  ListTodo,
   Mail,
   MapPin,
   MessageCircle,
   Mic,
   MicOff,
-  MoreHorizontal,
   PackageCheck,
   Phone,
   Play,
   Send,
-  Search,
   Sparkles,
   UserRound,
   Users,
-  WalletCards,
   X,
 } from 'lucide-react';
 import { getPhaseName, isCurrentPreparationType, type GamePublicResearchRecord, type GameRuntimeState } from '@/lib/game/state';
+import { BID_RULE_PROPOSAL_COST } from '@/lib/game/bid-rules';
+import styles from './game-board.module.css';
 
 interface Message {
   role: 'user' | 'assistant' | 'system';
@@ -39,12 +32,26 @@ interface Message {
   ts: number;
   deliveryStatus?: 'sent' | 'replied' | 'unanswered';
   channel?: 'email' | 'work_phone' | 'online' | 'offline';
+  attachments?: ChatAttachmentView[];
   emailAttachments?: EmailAttachmentDraft[];
+}
+
+interface CallHistoryRecord {
+  id: string;
+  npcId: string;
+  outcome: 'connected' | 'unanswered' | 'declined' | 'call_later';
+  round: number;
+  createdAt: string;
 }
 
 interface EmailAttachmentDraft {
   fileName: string;
   description: string;
+}
+
+interface ChatAttachmentView extends EmailAttachmentDraft {
+  viewed?: boolean;
+  impact?: string;
 }
 
 interface NpcProfile {
@@ -145,7 +152,10 @@ interface ActiveMeetingView {
   durationMinutes: number;
   workTopicOpenedBy?: string;
   usedPreparationIds: string[];
+  completedTasks: string[];
 }
+
+type DesignerImageAssetMap = Record<string, string>;
 
 interface GameSaveView {
   id: string;
@@ -172,8 +182,7 @@ interface SpeechRecognitionLike {
 }
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
-type PhoneTab = 'contacts' | 'messages' | 'tasks';
-type WorkspaceMode = 'conversation' | 'preparation' | 'follow_up';
+type WorkspaceMode = 'global_plan' | 'npc_plan' | 'conversation' | 'postal' | 'visit' | 'preparation' | 'follow_up';
 type CommunicationChannel = 'email' | 'work_phone' | 'online';
 
 const CHANNEL_META: Record<CommunicationChannel, { label: string; hint: string; accent: string }> = {
@@ -187,7 +196,7 @@ const SCENE_INFO: Record<string, { name: string; budget: number; difficulty: num
     name: '项目一 · 单单位内部竞标',
     budget: 100,
     difficulty: 1,
-    description: '围绕客户的真实组织需求建立联系、摸清决策链，并用可靠方案推动项目。过程指标全部隐藏，请根据人物的语言和行动判断局势。',
+    description: '围绕客户的真实组织需求建立联系、摸清决策链，并用可靠方案推动项目。根据人物的语言和行动判断项目进展。',
   },
   'project-2': { name: '项目二 · 国产化改造项目', budget: 300, difficulty: 2, description: '协调甲方与设计院，推动复杂技术改造项目。' },
   'project-3': { name: '项目三 · 大型央企升级项目', budget: 1000, difficulty: 3, description: '识别多部门制衡关系，建立可靠的高层沟通路径。' },
@@ -208,15 +217,21 @@ const STATUS_LABELS: Record<string, string> = {
   completed: '已完成',
 };
 const PREPARATION_OPTIONS = [
-  { type: 'visit_preparation', title: '拜访前准备', minutes: 0, cost: 3, description: '完全由你思考并写明要准备的内容' },
+  { type: 'visit_preparation', title: '拜访前准备', minutes: 0, cost: 3 },
 ] as const;
-
+const NPC_FALLBACK_IMAGES: Record<string, string> = {
+  'P1-001': '/assets/people/zhang-jianguo.png',
+  'P1-002': '/assets/people/li-minghui.png',
+  'P1-003': '/assets/people/wang-defu.png',
+  'P1-004': '/assets/people/zhao-xiaochen.png',
+  'P1-005': '/assets/people/liu-siqi.png',
+};
 const PHASE_GUIDANCE = [
   { goal: '建立触点、了解项目', hint: '先选择一位人物搜集公开资料，再带着明确目标联系对方。' },
   { goal: '补全决策链', hint: '核实谁影响流程、谁能推动落地，不要只停留在表面关系。' },
   { goal: '关键人攻坚', hint: '把已知事实转化为针对性问题和有效拜访。' },
   { goal: '方案验证与异议处理', hint: '用证据回应客户价值、竞品比较和实施风险。' },
-  { goal: '决策闭环', hint: '检查承诺、待办、风险和关键人物支持，再决定是否提交。' },
+  { goal: '决策闭环', hint: '检查承诺、待办和风险，再决定是否提交。' },
 ] as const;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -278,6 +293,70 @@ function formatDuration(minutes: number): string {
 
 function formatMessageTime(timestamp: number): string {
   return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(timestamp));
+}
+
+function callOutcomeLabel(outcome: CallHistoryRecord['outcome']): string {
+  const labels: Record<CallHistoryRecord['outcome'], string> = {
+    connected: '已接通',
+    unanswered: '未接通',
+    declined: '已拒接',
+    call_later: '建议稍后联系',
+  };
+  return labels[outcome];
+}
+
+function imageCandidates(imageAssets: DesignerImageAssetMap, npcId: string, expression?: string): string[] {
+  return [...new Set([
+    expression ? imageAssets[`person_expression:${npcId}:${expression}`] : undefined,
+    imageAssets[`person_intro:${npcId}`],
+    NPC_FALLBACK_IMAGES[npcId],
+  ].filter((value): value is string => Boolean(value)))];
+}
+
+function sceneImageCandidates(imageAssets: DesignerImageAssetMap, npcId: string, location: string): string[] {
+  const locationKey = /电梯/.test(location) ? 'elevator' : /酒馆|酒吧|酒/.test(location) ? 'bar' : /饭店|餐厅|餐馆|餐/.test(location) ? 'restaurant' : 'office';
+  const keys = npcId === 'P1-001'
+    ? ['visit_scene:leader_office', 'visit_scene:office']
+    : [`visit_scene:${locationKey}`, 'visit_scene:office'];
+  return [...new Set([...keys.map((key) => imageAssets[key]), '/images/game/visit-meeting-room-empty-v1.png'].filter((value): value is string => Boolean(value)))];
+}
+
+function PersonPortrait({
+  npcId,
+  name,
+  imageAssets,
+  className,
+  expression,
+  sizes,
+  priority = false,
+}: {
+  npcId: string;
+  name: string;
+  imageAssets: DesignerImageAssetMap;
+  className: string;
+  expression?: string;
+  sizes: string;
+  priority?: boolean;
+}) {
+  const sources = imageCandidates(imageAssets, npcId, expression);
+  const sourceKey = sources.join('|');
+  const [failedSources, setFailedSources] = useState<string[]>([]);
+  useEffect(() => setFailedSources([]), [sourceKey]);
+  const source = sources.find((candidate) => !failedSources.includes(candidate));
+
+  return (
+    <div className={className} aria-label={`${name}头像`}>
+      {source ? <Image src={source} alt={name} fill sizes={sizes} unoptimized priority={priority} onError={() => setFailedSources((current) => current.includes(source) ? current : [...current, source])} /> : <span className="select-none">{name.slice(0, 1)}</span>}
+    </div>
+  );
+}
+
+function VisitBackdrop({ sources }: { sources: string[] }) {
+  const sourceKey = sources.join('|');
+  const [failedSources, setFailedSources] = useState<string[]>([]);
+  useEffect(() => setFailedSources([]), [sourceKey]);
+  const source = sources.find((candidate) => !failedSources.includes(candidate));
+  return <>{source ? <Image src={source} alt="拜访场景" fill sizes="100vw" unoptimized priority className={styles.visitBackdropImage} onError={() => setFailedSources((current) => current.includes(source) ? current : [...current, source])} /> : null}<div className={styles.visitBackdropFallback} /></>;
 }
 
 function simulationRecord(state: GameRuntimeState | null): Record<string, unknown> | null {
@@ -434,6 +513,7 @@ function getActiveMeeting(state: GameRuntimeState | null, appointments: Appointm
     durationMinutes: firstNumber(raw, ['durationMinutes', 'duration'], VISIT_DURATIONS[visitType]),
     workTopicOpenedBy: firstString(raw, ['workTopicOpenedBy', 'topicOpenedBy']) || undefined,
     usedPreparationIds: firstArray(raw, ['usedPreparationIds']).filter((id): id is string => typeof id === 'string'),
+    completedTasks: firstArray(raw, ['completedTasks']).map((value) => typeof value === 'string' ? value : firstString(asRecord(value), ['type', 'name'])).filter(Boolean),
   };
 }
 
@@ -467,6 +547,9 @@ function commandResultMessage(type: string, value: unknown): string {
   if (type === 'follow_up') return '材料或跟进消息已送出';
   if (type === 'update_appointment') return '预约状态已更新';
   if (type === 'research_public_info') return '人物公开信息已整理';
+  if (type === 'work_plan') return '工作计划已提交并记录';
+  if (type === 'postal') return '邮寄材料已送出并记录';
+  if (type === 'brief_visit') return '拜访方案评估已生成';
   return '操作已完成';
 }
 
@@ -493,12 +576,15 @@ function GameInner() {
   const [savePickerError, setSavePickerError] = useState('');
   const [loadingSave, setLoadingSave] = useState(false);
   const [npcs, setNpcs] = useState<NpcProfile[]>([]);
+  const [designerImageAssets, setDesignerImageAssets] = useState<DesignerImageAssetMap>({});
   const [selectedNpc, setSelectedNpc] = useState<string | null>(null);
-  const [phoneTab, setPhoneTab] = useState<PhoneTab>('contacts');
-  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('conversation');
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('global_plan');
   const [communicationChannel, setCommunicationChannel] = useState<CommunicationChannel>('email');
   const [phoneCallActive, setPhoneCallActive] = useState(false);
-  const [actionNpcId, setActionNpcId] = useState<string | null>(null);
+  const [phoneCallStartedAt, setPhoneCallStartedAt] = useState<number | null>(null);
+  const [callHistory, setCallHistory] = useState<CallHistoryRecord[]>([]);
+  const [callHistoryStatus, setCallHistoryStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [callHistoryRefreshKey, setCallHistoryRefreshKey] = useState(0);
   const [publicInfoNpcId, setPublicInfoNpcId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
@@ -506,23 +592,54 @@ function GameInner() {
   const [commandFeedback, setCommandFeedback] = useState('');
   const [showResourceDetails, setShowResourceDetails] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const [preparationType] = useState<(typeof PREPARATION_OPTIONS)[number]['type']>('visit_preparation');
+  const preparationType = 'visit_preparation' as const;
   const [preparationText, setPreparationText] = useState('');
   const [preparationAppointmentId, setPreparationAppointmentId] = useState('');
   const [emailAttachments, setEmailAttachments] = useState<EmailAttachmentDraft[]>([]);
+  const [globalPlanDraft, setGlobalPlanDraft] = useState('');
+  const [npcPlanDraft, setNpcPlanDraft] = useState('');
+  const [postalDraft, setPostalDraft] = useState('');
+  const [postalAttachmentTitle, setPostalAttachmentTitle] = useState('');
+  const [postalAttachmentContent, setPostalAttachmentContent] = useState('');
+  const [visitBriefDraft, setVisitBriefDraft] = useState('');
   const [publicInfoRecord, setPublicInfoRecord] = useState<GamePublicResearchRecord | undefined>();
   const [invitationResult, setInvitationResult] = useState<InvitationResultView | null>(null);
   const [showEndDayCheck, setShowEndDayCheck] = useState(false);
   const [showSubmissionCheck, setShowSubmissionCheck] = useState(false);
+  const [showBidRuleProposal, setShowBidRuleProposal] = useState(false);
+  const [proposalNpcId, setProposalNpcId] = useState('');
+  const [proposalText, setProposalText] = useState('');
   const [minutesDraft, setMinutesDraft] = useState<MeetingMinutesDraft | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const phoneCallEndedByUserRef = useRef(false);
   const typewriterTimerRef = useRef<number | null>(null);
   const typewriterQueueRef = useRef<string[]>([]);
   const commandBusyRef = useRef(false);
   const retryCommandRef = useRef<{ signature: string; commandId: string } | null>(null);
   const retryChatRef = useRef<{ signature: string; commandId: string } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/designer/image-assets', { cache: 'no-store' })
+      .then(async (response) => response.ok ? response.json() : null)
+      .then((data) => {
+        if (cancelled || !Array.isArray(data?.assets)) return;
+        const assets: DesignerImageAssetMap = {};
+        for (const item of data.assets) {
+          const asset = asRecord(item);
+          const slotKey = firstString(asset, ['slotKey']);
+          const imageUrl = firstString(asset, ['imageUrl']);
+          if (slotKey && imageUrl) assets[slotKey] = imageUrl;
+        }
+        setDesignerImageAssets(assets);
+      })
+      .catch(() => {
+        // Local character portraits and the local visit scene remain available if designer assets are offline.
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const addEmailAttachment = () => {
     setEmailAttachments((current) => current.length >= 8
@@ -538,17 +655,65 @@ function GameInner() {
     setEmailAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index));
   };
 
-  const hasInvalidEmailAttachment = emailAttachments.some((item) => !item.fileName.trim() || !item.description.trim());
+  const hasInvalidChatAttachment = emailAttachments.some((item) => !item.fileName.trim() || !item.description.trim());
 
   const round = gameState?.currentRound ?? 1;
   const coins = gameState?.actionPoints ?? 0;
-  const simulation = getSimulationSummary(gameState);
   const appointments = getAppointments(gameState);
   const preparations = getPreparations(gameState);
   const notifications = getNotifications(gameState);
   const meetingMinutes = getMeetingMinutes(gameState);
+  const workPlans = gameState?.workPlans ?? [];
+  const postalRecords = gameState?.postalRecords ?? [];
+  const visitBriefs = gameState?.visitBriefs ?? [];
   const activeMeeting = getActiveMeeting(gameState, appointments);
+  const recentUpdates = [...notifications].reverse().slice(0, 5);
+  const competitorClaims = [...(gameState?.competitorClaims ?? [])].reverse().slice(0, 3);
+  const publicInfoItems = (npcId: string) => {
+    const researched = gameState?.publicResearch?.[npcId];
+    const disclosed = (gameState?.workPlans ?? []).flatMap((plan) => (plan.disclosures ?? [])
+      .filter((item) => item.npcId === npcId)
+      .flatMap((item) => [...item.facts, ...item.clues]));
+    return [...new Set([...(researched?.facts ?? []), ...(researched?.weakSignals ?? []), ...disclosed])];
+  };
+  const planDisclosures = (plan: GameRuntimeState['workPlans'][number], npcId?: string) => plan.disclosures
+    .filter((entry) => !npcId || entry.npcId === npcId)
+    .filter((entry) => entry.facts.length > 0 || entry.clues.length > 0);
+  const contactStatus = (npcId: string) => {
+    if (activeMeeting?.npcId === npcId) return '正在拜访';
+    if (appointments.some((item) => item.npcId === npcId && item.status === 'completed')) return '已完成拜访';
+    if (appointments.some((item) => item.npcId === npcId && ['pending', 'accepted', 'countered'].includes(item.status))) return '已有拜访预约';
+    const status = gameState?.npcContacts?.[npcId]?.status;
+    if (status === 'online') return '工作微信已添加';
+    if (status && status !== 'known') return '已建立接触';
+    return '尚未有效接触';
+  };
+  const peopleByLevel = {
+    senior: npcs.filter((npc) => npc.category === '高层'),
+    middle: npcs.filter((npc) => npc.category === '中层'),
+    frontline: npcs.filter((npc) => npc.category === '一线'),
+  };
+  const organizationRows = peopleByLevel.senior.length + peopleByLevel.middle.length + peopleByLevel.frontline.length === npcs.length
+    && peopleByLevel.senior.length === 1 && peopleByLevel.middle.length === 2 && peopleByLevel.frontline.length === 2
+    ? [peopleByLevel.senior, peopleByLevel.middle, peopleByLevel.frontline]
+    : [npcs.slice(0, 1), npcs.slice(1, 3), npcs.slice(3)];
+  const competitorClaimLabels: Record<string, string> = {
+    unverified: '待核实',
+    corroborated: '已印证',
+    contradicted: '存在矛盾',
+    false: '已证伪',
+  };
+  const hasContacted = (npcId: string) => {
+    const root = asRecord(gameState);
+    const contactedIds = firstArray(root, ['contactedNpcIds', 'metNpcIds']);
+    return gameState?.npcContacts?.[npcId]?.status !== 'known' || contactedIds.includes(npcId) || activeMeeting?.npcId === npcId;
+  };
   const visibleChannelMessages = messages.filter((message) => message.channel === (activeMeeting ? 'offline' : communicationChannel));
+  const currentPhoneMessages = phoneCallStartedAt === null
+    ? []
+    : messages.filter((message) => message.channel === 'work_phone'
+      && message.ts >= phoneCallStartedAt
+      && message.content !== '[电话呼出]');
   const offlineMessages = messages.filter((message) => message.channel === 'offline');
   const latestNpcMeetingMessage = [...offlineMessages].reverse().find((message) => message.role === 'assistant');
   const latestPlayerMeetingMessage = [...offlineMessages].reverse().find((message) => message.role === 'user');
@@ -567,6 +732,9 @@ function GameInner() {
     .sort((a, b) => a.stage - b.stage || a.scheduledMinute - b.scheduledMinute)[0];
   const todayUnfinishedAppointments = appointments.filter((item) => item.stage === round && ['pending', 'accepted', 'countered'].includes(item.status));
   const unreadFollowUps = notifications.filter((item) => !item.read && item.target === 'follow_up');
+  const proposalNpcOptions = activeMeeting
+    ? npcs.filter((npc) => npc.id === activeMeeting.npcId)
+    : npcs.filter((npc) => hasContacted(npc.id));
   const submissionWarnings = [
     !gameState?.unlockedClues?.includes('decision_process') ? '尚未核实完整决策链' : '',
     meetingMinutes.length === 0 ? '尚未完成任何线下拜访' : '',
@@ -624,7 +792,9 @@ function GameInner() {
       const loaded: NpcProfile[] = Array.isArray(npcData.data) ? npcData.data : [];
       if (cancelled) return;
       setNpcs(loaded);
-      setSelectedNpc(restored!.state.activeMeeting?.npcId ?? loaded[0]?.id ?? null);
+      setSelectedNpc(restored!.state.activeMeeting?.npcId ?? loaded.find((npc) => npc.id === 'P1-001')?.id ?? loaded[0]?.id ?? 'P1-001');
+      setWorkspaceMode('conversation');
+      setCommunicationChannel('email');
     };
 
     bootstrap().catch((error) => {
@@ -654,6 +824,9 @@ function GameInner() {
           ts: new Date(message.createdAt).getTime(),
           deliveryStatus: message.metadata?.deliveryStatus as Message['deliveryStatus'],
           channel: message.metadata?.channel as Message['channel'],
+          attachments: Array.isArray(message.metadata?.attachments)
+            ? message.metadata.attachments.filter((item): item is ChatAttachmentView => Boolean(item) && typeof item === 'object' && typeof (item as Record<string, unknown>).fileName === 'string' && typeof (item as Record<string, unknown>).description === 'string')
+            : undefined,
           emailAttachments: Array.isArray(message.metadata?.emailAttachments)
             ? message.metadata.emailAttachments.filter((item): item is EmailAttachmentDraft => Boolean(item) && typeof item === 'object' && typeof (item as Record<string, unknown>).fileName === 'string' && typeof (item as Record<string, unknown>).description === 'string')
             : undefined,
@@ -664,14 +837,60 @@ function GameInner() {
   }, [gameSessionId, selectedNpc]);
 
   useEffect(() => {
-    if (activeMeeting) return;
-    const preferred = selectedContact?.initialChannel;
-    setCommunicationChannel(preferred === 'work_phone' ? 'work_phone' : 'email');
-  }, [activeMeeting, selectedContact?.initialChannel, selectedContact?.status]);
+    if (!gameSessionId || !selectedNpc) {
+      setCallHistory([]);
+      setCallHistoryStatus('idle');
+      return;
+    }
+    let cancelled = false;
+    setCallHistory([]);
+    setCallHistoryStatus('loading');
+    fetch(`/api/game/sessions/${gameSessionId}/call-history?npcId=${encodeURIComponent(selectedNpc)}`, {
+      headers: { 'x-session': localStorage.getItem('weixun_session') || '' },
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('通话记录加载失败');
+        return response.json();
+      })
+      .then((data) => {
+        if (cancelled || !Array.isArray(data?.calls)) return;
+        const records = data.calls.flatMap((value: unknown): CallHistoryRecord[] => {
+          const item = asRecord(value);
+          const id = firstString(item, ['id']);
+          const npcId = firstString(item, ['npcId']);
+          const outcome = firstString(item, ['outcome']);
+          const round = firstNumber(item, ['round']);
+          const createdAt = firstString(item, ['createdAt']);
+          if (!id || !npcId || !createdAt || !['connected', 'unanswered', 'declined', 'call_later'].includes(outcome)) return [];
+          return [{ id, npcId, outcome: outcome as CallHistoryRecord['outcome'], round, createdAt }];
+        });
+        setCallHistory(records);
+        setCallHistoryStatus('ready');
+      })
+      .catch(() => {
+        if (!cancelled) setCallHistoryStatus('error');
+      });
+    return () => { cancelled = true; };
+  }, [gameSessionId, selectedNpc, callHistoryRefreshKey]);
 
   useEffect(() => {
     setEmailAttachments([]);
   }, [selectedNpc]);
+
+  useEffect(() => {
+    setPhoneCallActive(false);
+    setPhoneCallStartedAt(null);
+    setInput('');
+  }, [gameSessionId, selectedNpc]);
+
+  useEffect(() => {
+    if (workspaceMode === 'conversation' || !phoneCallActive) return;
+    phoneCallEndedByUserRef.current = true;
+    abortRef.current?.abort();
+    setPhoneCallActive(false);
+    setPhoneCallStartedAt(null);
+    setInput('');
+  }, [workspaceMode, phoneCallActive]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -702,7 +921,9 @@ function GameInner() {
       setGameSessionId(restored.id);
       setGameState(restored.state);
       setNpcs(loaded);
-      setSelectedNpc(restored.state.activeMeeting?.npcId ?? loaded[0]?.id ?? null);
+      setSelectedNpc(restored.state.activeMeeting?.npcId ?? loaded.find((npc) => npc.id === 'P1-001')?.id ?? loaded[0]?.id ?? 'P1-001');
+      setWorkspaceMode('conversation');
+      setCommunicationChannel('email');
     } catch (error) {
       setSavePickerError(error instanceof Error ? error.message : '存档读取失败');
     } finally {
@@ -763,7 +984,24 @@ function GameInner() {
       const nextState = data?.state ?? data?.gameSession?.state;
       if (nextState) applyServerState(nextState);
       retryCommandRef.current = null;
-      setCommandFeedback(commandResultMessage(type, data?.result));
+      if (type === 'propose_bid_rule') {
+        // The outcome is intentionally not shown here; the NPC can disclose it in conversation.
+        setShowBidRuleProposal(false);
+        setProposalText('');
+        setCommandFeedback('已将你的想法传达给客户。');
+      } else if (type === 'request_wechat') {
+        const status = firstString(asRecord(data?.result), ['status']);
+        const statusLabels: Record<string, string> = {
+          accepted: '客户接受了工作微信申请，现在可以开始微信沟通。',
+          pending: '工作微信申请已送达，等待客户确认。',
+          later: '客户表示稍后再处理工作微信申请。',
+          rejected: '客户暂不接受工作微信申请。',
+        };
+        setCommandFeedback(statusLabels[status] ?? commandResultMessage(type, data?.result));
+        if (status === 'accepted') setCommunicationChannel('online');
+      } else {
+        setCommandFeedback(commandResultMessage(type, data?.result));
+      }
       if (type === 'invite' && nextState) {
         const result = asRecord(data?.result);
         const appointmentId = firstString(firstRecord(result, ['appointment']), ['id', 'appointmentId']);
@@ -784,6 +1022,19 @@ function GameInner() {
       if (nextState?.status && nextState.status !== 'playing') router.push(`/result?sessionId=${gameSessionId}`);
       return true;
     } catch (error) {
+      if (type === 'propose_bid_rule') {
+        // Keep the player's text available for editing without surfacing internal decision state.
+        const code = error instanceof Error ? error.message : '';
+        const message = code === 'PROPOSAL_DIRECTION_UNCLEAR'
+          ? '请换种说法，具体说明你希望客户关注的项目要求。'
+          : code === 'NPC_RULE_AUTHORITY_REQUIRED'
+            ? '对方暂时不便继续讨论这个话题，可在后续交流中再沟通。'
+            : code === 'RULE_PROPOSAL_ALREADY_MADE'
+              ? '你已经和这位联系人沟通过类似的项目想法。'
+              : '这次沟通未能继续，请稍后再试。';
+        alert(message);
+        return false;
+      }
       alert(error instanceof Error ? error.message : '操作失败');
       return false;
     } finally {
@@ -802,16 +1053,17 @@ function GameInner() {
     const channel: Message['channel'] = communication?.channel ?? (activeMeeting?.npcId === selectedNpc
       ? 'offline'
       : communicationChannel);
-    if (channel === 'email' && hasInvalidEmailAttachment) return;
-    const outgoingEmailAttachments = channel === 'email'
+    const canAttach = channel === 'email' || channel === 'online';
+    if (canAttach && hasInvalidChatAttachment) return;
+    const outgoingAttachments = canAttach
       ? emailAttachments.map((item) => ({ fileName: item.fileName.trim(), description: item.description.trim() }))
       : [];
-    const chatSignature = `${selectedNpc}:${intent}:${channel}:${gameState.version}:${content.trim()}:${JSON.stringify(outgoingEmailAttachments)}`;
+    const chatSignature = `${selectedNpc}:${intent}:${channel}:${gameState.version}:${content.trim()}:${JSON.stringify(outgoingAttachments)}`;
     const chatCommandId = retryChatRef.current?.signature === chatSignature
       ? retryChatRef.current.commandId
       : makeCommandId();
     retryChatRef.current = { signature: chatSignature, commandId: chatCommandId };
-    const userMessage: Message = { role: 'user', content: content.trim(), ts: Date.now(), deliveryStatus: 'sent', channel, emailAttachments: outgoingEmailAttachments };
+    const userMessage: Message = { role: 'user', content: content.trim(), ts: Date.now(), deliveryStatus: 'sent', channel, attachments: outgoingAttachments };
     // The scene renderer filters on channel. Preserve it on the optimistic
     // NPC placeholder so a successful face-to-face reply is visible directly,
     // not only after reloading the persisted conversation history.
@@ -856,7 +1108,7 @@ function GameInner() {
           expectedVersion: gameState.version,
           contextType: activeMeeting ? `${activeMeeting.visitType}_visit` : 'online',
           appointmentId: activeMeeting?.appointmentId,
-          emailAttachments: outgoingEmailAttachments,
+          attachments: outgoingAttachments,
           usedPreparationIds: deliveredPreparationIds,
         }),
         signal: abortRef.current.signal,
@@ -894,11 +1146,26 @@ function GameInner() {
               applyServerState(event.state);
               retryChatRef.current = null;
               turnCommitted = true;
+              if (intent === 'call_connect') {
+                setCallHistoryRefreshKey((current) => current + 1);
+                if (event.callConnected === false) {
+                  setPhoneCallActive(false);
+                  setPhoneCallStartedAt(null);
+                  setInput('');
+                }
+              }
               if (event.deliveryStatus === 'unanswered') {
                 setMessages((current) => current.map((item) => item.ts === userMessage.ts ? { ...item, deliveryStatus: 'unanswered' } : item));
                 setMessages((current) => current.map((item) => item.ts === assistantMessage.ts ? { ...item, content: channel === 'work_phone' ? '（电话暂未接通，可以稍后换一种方式联系。）' : '（消息已送达，暂未收到回复。）' } : item));
               } else if (event.deliveryStatus === 'replied') {
                 setMessages((current) => current.map((item) => item.ts === userMessage.ts ? { ...item, deliveryStatus: 'replied' } : item));
+              }
+              if (Array.isArray(event.attachments)) {
+                const returnedAttachments = event.attachments.filter((item: unknown): item is ChatAttachmentView => {
+                  const attachment = asRecord(item);
+                  return Boolean(attachment && typeof attachment.fileName === 'string' && typeof attachment.description === 'string');
+                });
+                setMessages((current) => current.map((item) => item.ts === userMessage.ts ? { ...item, attachments: returnedAttachments } : item));
               }
               if (event.invitation === true) {
                 const appointmentRecord = asRecord(event.appointment);
@@ -912,11 +1179,16 @@ function GameInner() {
                   setInvitationResult({ appointment, npcName: profile.name, npcTitle: profile.title, feedback });
                 }
               }
-              if (channel === 'email' && outgoingEmailAttachments.length > 0) setEmailAttachments([]);
+              if (canAttach && outgoingAttachments.length > 0) setEmailAttachments([]);
             }
             if (event.type === 'error' && !received) {
               const detail = typeof event.code === 'string' ? ` ${event.code}` : '';
               setMessages((current) => current.map((item) => item.ts === assistantMessage.ts ? { ...item, content: `（${event.error || '服务暂时不可用'}${detail}）` } : item));
+              if (intent === 'call_connect') {
+                setPhoneCallActive(false);
+                setPhoneCallStartedAt(null);
+                setInput('');
+              }
             }
           } catch {
             // 忽略无法识别的 SSE 心跳片段。
@@ -924,7 +1196,7 @@ function GameInner() {
         }
       }
       networkComplete = true;
-      if (!turnCommitted && !communication?.hidePlayerMessage) setInput((current) => current || content.trim());
+      if (!turnCommitted && !communication?.hidePlayerMessage && !(channel === 'work_phone' && phoneCallEndedByUserRef.current)) setInput((current) => current || content.trim());
       finishIfReady();
     } catch (error) {
       console.error(error);
@@ -933,7 +1205,12 @@ function GameInner() {
       typewriterTimerRef.current = null;
       const reason = error instanceof Error ? error.message : '未知错误';
       setMessages((current) => current.map((item) => item.ts === assistantMessage.ts ? { ...item, content: `（本次未推进：${reason}。请重试。）` } : item));
-      if (!communication?.hidePlayerMessage) setInput((current) => current || content.trim());
+      if (intent === 'call_connect') {
+        setPhoneCallActive(false);
+        setPhoneCallStartedAt(null);
+        setInput('');
+      }
+      if (!communication?.hidePlayerMessage && !(channel === 'work_phone' && phoneCallEndedByUserRef.current)) setInput((current) => current || content.trim());
       setStreaming(false);
     }
   };
@@ -964,18 +1241,17 @@ function GameInner() {
     setIsRecording(true);
   };
 
-  const hasContacted = (npcId: string) => {
-    const root = asRecord(gameState);
-    const contactedIds = firstArray(root, ['contactedNpcIds', 'metNpcIds']);
-    return gameState?.npcContacts?.[npcId]?.status !== 'known' || contactedIds.includes(npcId) || activeMeeting?.npcId === npcId;
-  };
-
   const npcUnread = (npcId: string) => notifications.filter((item) => !item.read && item.npcId === npcId).length;
   const openContact = (npcId: string) => {
     if (activeMeeting && activeMeeting.npcId !== npcId) return;
+    if (phoneCallActive) {
+      phoneCallEndedByUserRef.current = true;
+      abortRef.current?.abort();
+    }
     setSelectedNpc(npcId);
+    setCommunicationChannel('email');
+    setPhoneCallActive(false);
     setWorkspaceMode('conversation');
-    setActionNpcId(npcId);
   };
 
   const finishStage = async () => {
@@ -1023,6 +1299,77 @@ function GameInner() {
     }
   };
 
+  const submitWorkPlan = async (scope: 'global' | 'npc') => {
+    const content = (scope === 'global' ? globalPlanDraft : npcPlanDraft).trim();
+    if (content.length < 10) {
+      setCommandFeedback('请至少写 10 个字，说明计划目标与拟采取的动作。');
+      return;
+    }
+    if (scope === 'npc' && !selectedNpc) return;
+    const success = await runCommand('work_plan', { scope, npcId: scope === 'npc' ? selectedNpc : undefined, content });
+    if (success) {
+      if (scope === 'global') setGlobalPlanDraft('');
+      else setNpcPlanDraft('');
+    }
+  };
+
+  const submitPostal = async () => {
+    if (!selectedNpc || !postalDraft.trim()) {
+      setCommandFeedback('请填写邮寄说明。');
+      return;
+    }
+    const hasTitle = postalAttachmentTitle.trim().length > 0;
+    const hasContent = postalAttachmentContent.trim().length > 0;
+    if (hasTitle !== hasContent) {
+      setCommandFeedback('如需附带材料，请同时填写材料名称和内容简介。');
+      return;
+    }
+    const success = await runCommand('postal', {
+      npcId: selectedNpc,
+      content: postalDraft.trim(),
+      ...(hasTitle && hasContent ? { attachment: { title: postalAttachmentTitle.trim(), content: postalAttachmentContent.trim() } } : {}),
+    });
+    if (success) {
+      setPostalDraft('');
+      setPostalAttachmentTitle('');
+      setPostalAttachmentContent('');
+    }
+  };
+
+  const submitVisitBrief = async () => {
+    if (!selectedNpc || visitBriefDraft.trim().length < 10) {
+      setCommandFeedback('请至少写 10 个字，说明拜访对象、目标和拟沟通内容。');
+      return;
+    }
+    const success = await runCommand('brief_visit', { npcId: selectedNpc, content: visitBriefDraft.trim() });
+    if (success) setVisitBriefDraft('');
+  };
+
+  const startDirectVisit = async (skipPreparation = false) => {
+    if (!selectedNpc || activeMeeting) return;
+    const readyIds = selectedPreparations.filter((item) => item.status === 'ready').map((item) => item.id);
+    if (!hasContacted(selectedNpc)) {
+      setCommandFeedback('请先通过邮件、电话或微信与该联系人建立接触，再安排直接拜访。');
+      return;
+    }
+    if (!readyIds.length && !skipPreparation) {
+      setCommandFeedback('直接拜访前请先完成拜访准备，或明确选择未准备登门。');
+      return;
+    }
+    if (skipPreparation && !window.confirm('未做准备直接登门会额外消耗行动点并带来关系风险。仍要继续吗？')) return;
+    const success = await runCommand('start_visit', { npcId: selectedNpc, preparationIds: readyIds, ...(skipPreparation ? { skipPreparation: true } : {}) });
+    if (success) setWorkspaceMode('conversation');
+  };
+
+  const startScheduledVisit = async (appointment: AppointmentView) => {
+    const preparationIds = preparations.filter((item) => item.npcId === appointment.npcId && item.status === 'ready').map((item) => item.id);
+    const success = await runCommand('start_visit', { appointmentId: appointment.id, preparationIds });
+    if (success) {
+      setSelectedNpc(appointment.npcId);
+      setWorkspaceMode('conversation');
+    }
+  };
+
   const openMinutesEditor = (minutes: MeetingMinutesView) => setMinutesDraft({
     id: minutes.id,
     summary: minutes.summary,
@@ -1048,53 +1395,64 @@ function GameInner() {
 
   const selectedNpcName = selectedProfile?.name ?? '联系人';
   const openOrResearchPublicInfo = async (npcId: string) => {
-    setActionNpcId(null);
     setPublicInfoRecord(undefined);
     const success = await runCommand('research_public_info', { npcId });
     if (success) setPublicInfoNpcId(npcId);
   };
+  const renderMessageAttachments = (message: Message) => {
+    if (message.role !== 'user') return null;
+    const attachments: ChatAttachmentView[] = message.attachments ?? message.emailAttachments ?? [];
+    if (!attachments?.length) return null;
+    return <div className="mx-4 mb-4 rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="text-[10px] font-semibold text-blue-900">附件 · {attachments.length} 个</div><div className="mt-2 space-y-2">{attachments.map((attachment, index) => <div key={`${attachment.fileName}-${index}`} className="rounded-lg bg-white px-3 py-2 text-[11px] text-slate-700"><div className="font-semibold text-slate-900">{attachment.fileName}</div><div className="mt-1 leading-5">{attachment.description}</div><div className="mt-2 inline-flex rounded-full bg-slate-100 px-2 py-1 text-[9px] font-semibold text-slate-600">{attachment.viewed === true ? '客户已查看' : attachment.viewed === false ? '客户尚未查看' : '查看状态待更新'}</div>{attachment.impact && <div className="mt-1 text-[10px] leading-4 text-slate-600">{attachment.impact}</div>}</div>)}</div></div>;
+  };
 
   return (
-    <div className="min-h-screen bg-[#EEF2F7] text-slate-900 flex flex-col">
-      <header className="border-b border-slate-800 bg-[#0B1736] px-4 py-3 text-white shadow-lg lg:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-500 text-white shadow-lg shadow-blue-950/30"><Building2 className="h-4 w-4" /></div>
+    <div className={`${styles.gamePage} min-h-screen flex flex-col`}>
+      <header className={`${styles.topbar} ${activeMeeting ? 'hidden' : ''}`}>
+        <div className={styles.headerTop}>
+          <div className={styles.brand}>
+            <div className={styles.brandIcon}><Building2 className="h-5 w-5" /></div>
             <div>
-              <div className="text-sm font-bold">{scene.name}</div>
-              <div className="text-[11px] text-slate-300">销售作战台 · 难度 {'★'.repeat(scene.difficulty)}</div>
+              <div className={styles.brandTitle}>{scene.name}</div>
+              <div className={styles.brandCaption}>销售作战台 · 正式项目 · 难度 {'★'.repeat(scene.difficulty)}</div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-white/10 px-3 py-2 text-xs backdrop-blur">
-            <span className="font-semibold text-blue-200">第{round}阶段 · {getPhaseName(round)}</span>
-            <span className="text-white/20">|</span>
-            <span className="flex items-center gap-1"><Sparkles className="h-3.5 w-3.5 text-amber-500" />行动点 <strong>{coins}</strong></span>
+          <div className={styles.headerStatus}>
+            <div className={styles.stagePill}><span>当前阶段</span><strong>第{round}阶段 · {getPhaseName(round)}</strong></div>
+            <div className={styles.topAp}><Sparkles className="h-4 w-4" /><span>行动点</span><strong>{coins}</strong></div>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setShowEndDayCheck(true)} disabled={Boolean(commandBusy) || streaming || Boolean(activeMeeting) || Boolean(gameState?.submissionReady)} className="rounded-lg border border-white/20 bg-white/5 px-3 py-2 text-xs font-semibold hover:bg-white/10 disabled:opacity-40">{round < 5 ? '结束本阶段' : '进入提交检查'}</button>
-            <button onClick={() => setShowSubmissionCheck(true)} disabled={Boolean(commandBusy) || streaming || Boolean(activeMeeting)} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-40">提交项目</button>
+          <div className={styles.headerActions}>
+            <button onClick={() => setShowEndDayCheck(true)} disabled={Boolean(commandBusy) || streaming || Boolean(activeMeeting) || Boolean(gameState?.submissionReady)}>{round < 5 ? '结束本阶段' : '进入提交检查'}</button>
+            <button onClick={() => setShowSubmissionCheck(true)} disabled={Boolean(commandBusy) || streaming || Boolean(activeMeeting)}>提交项目</button>
+          </div>
+        </div>
+        <div className={styles.headerBottom}>
+          <div className={styles.phaseSteps} aria-label={`当前阶段进度，第${round}阶段，共5阶段`}>
+            {Array.from({ length: 5 }, (_, index) => {
+              const phase = index + 1;
+              const className = phase < round ? styles.phaseStepDone : phase === round ? styles.phaseStepCurrent : '';
+              return <div key={phase} className={`${styles.phaseStep} ${className}`}><span className={styles.phaseDot} /><span className={styles.phaseLabel}>{getPhaseName(phase)}</span>{phase < 5 && <span className={`${styles.phaseConnector} ${phase < round ? styles.phaseConnectorDone : ''}`} />}</div>;
+            })}
           </div>
         </div>
         {nextAppointment && (
-          <div className="mt-2 flex items-center gap-2 text-[11px] text-slate-300">
-            <CalendarClock className="h-3.5 w-3.5 text-blue-300" />
+          <div className={styles.nextAppointment}>
+            <CalendarClock className="h-3.5 w-3.5" />
             可执行拜访：{npcs.find((npc) => npc.id === nextAppointment.npcId)?.name ?? '联系人'} · {VISIT_LABELS[nextAppointment.visitType]}
           </div>
         )}
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 p-4 lg:grid-cols-[340px_minmax(0,1fr)] xl:grid-cols-[260px_370px_minmax(500px,1fr)]">
-        <aside className="hidden min-h-0 flex-col gap-4 overflow-y-auto xl:flex">
+      <div className={`${styles.workspace} min-h-0 flex-1 ${activeMeeting ? 'hidden' : ''}`}>
+        <aside className={styles.sideColumn}>
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="mb-2 text-xs font-bold text-slate-900">项目现场</div>
+            <div className="mb-2 text-xs font-bold text-slate-900">项目背景</div>
             <p className="text-xs leading-5 text-slate-600">{scene.description}</p>
             <div className="mt-3 rounded-xl bg-slate-50 p-3 text-xs">
               <div className="text-slate-500">公开预算</div>
               <div className="mt-1 text-lg font-bold text-blue-700">{scene.budget} 万</div>
             </div>
-            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-5 text-amber-900">
-              态度、支持度和中标条件已隐藏。请从回复速度、措辞、邀约结果和对方是否主动联系来判断局势。
-            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-slate-500"><span className="rounded-full bg-slate-100 px-2 py-1">{npcs.length} 位关键人物</span><span className="rounded-full bg-slate-100 px-2 py-1">5 个阶段</span></div>
           </section>
           <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-sm">
             <div className="text-[10px] font-semibold tracking-[0.16em] text-blue-600">本阶段建议目标</div>
@@ -1102,163 +1460,92 @@ function GameInner() {
             <p className="mt-2 text-[11px] leading-5 text-blue-800">{PHASE_GUIDANCE[Math.min(round, 5) - 1].hint}</p>
           </section>
           <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <button onClick={() => setShowResourceDetails((value) => !value)} className="flex w-full items-center justify-between text-left text-xs font-bold">
-              <span className="flex items-center gap-2"><WalletCards className="h-4 w-4 text-blue-600" />资源明细</span>
-              <ChevronRight className={`h-4 w-4 transition ${showResourceDetails ? 'rotate-90' : ''}`} />
-            </button>
-            {showResourceDetails && (
-              <div className="mt-3 space-y-2 border-t border-slate-100 pt-3 text-xs text-slate-600">
-                <div className="flex justify-between"><span>资源限制</span><strong>仅行动点</strong></div>
-                <div className="flex justify-between"><span>累计消耗行动点</span><strong>{simulation.totalSpent}</strong></div>
-              </div>
-            )}
+            <div className="mb-3 flex items-center justify-between"><div className="text-xs font-bold text-slate-900">信息更新</div><span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-700">{notifications.length}</span></div>
+            <div className="space-y-2">
+              {recentUpdates.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-3 text-center text-[11px] text-slate-500">暂无项目动态</div>}
+              {recentUpdates.map((notification) => <button key={notification.id} onClick={async () => { if (!notification.read) await runCommand('mark_notification_read', { notificationId: notification.id }); if (notification.npcId && (!activeMeeting || activeMeeting.npcId === notification.npcId)) { setSelectedNpc(notification.npcId); setWorkspaceMode('conversation'); } }} className={`w-full rounded-xl border p-3 text-left ${notification.read ? 'border-slate-200 bg-slate-50' : 'border-blue-200 bg-blue-50'}`}><div className="flex items-center justify-between gap-2"><span className="text-[11px] font-bold text-slate-800">{notification.title}</span>{!notification.read && <span className="h-2 w-2 rounded-full bg-red-500" />}</div><p className="mt-1 text-[10px] leading-4 text-slate-600">{notification.body}</p>{notification.createdLabel && <div className="mt-1 text-[9px] text-slate-400">{notification.createdLabel}</div>}</button>)}
+            </div>
           </section>
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm">
-            <span className="flex items-center gap-2 text-xs font-bold"><Users className="h-4 w-4 text-blue-600" />竞品情报</span>
-            <span className="mt-2 block text-[11px] leading-5 text-slate-500">竞品推进状态不可直接查看，只能在与客户沟通时询问并自行判断真伪。</span>
-          </div>
+          <section className="rounded-2xl border border-amber-200 bg-white p-4 shadow-sm">
+            <div className="mb-2 flex items-center justify-between"><div className="text-xs font-bold text-slate-900">竞品压力线索</div><Users className="h-4 w-4 text-amber-700" /></div>
+            <p className="mb-3 text-[10px] leading-4 text-slate-500">客户沟通中出现的竞品说法仍需核实。</p>
+            {competitorClaims.length === 0 ? <div className="rounded-xl border border-dashed border-amber-200 bg-amber-50/50 p-3 text-[10px] text-slate-500">尚未收集到竞品相关说法</div> : <div className="space-y-2">{competitorClaims.map((claim) => <button key={claim.id} onClick={() => { if (!activeMeeting || activeMeeting.npcId === claim.npcId) { setSelectedNpc(claim.npcId); setWorkspaceMode('conversation'); } }} className="w-full rounded-xl border border-amber-100 bg-amber-50/70 p-3 text-left"><div className="flex items-center justify-between gap-2"><span className="text-[9px] text-amber-800">第{claim.stage}阶段 · {npcs.find((npc) => npc.id === claim.npcId)?.name ?? '客户联系人'}</span><span className="rounded-full bg-white px-2 py-0.5 text-[9px] text-amber-800">{competitorClaimLabels[claim.truthStatus] ?? '待核实'}</span></div><p className="mt-1 text-[10px] leading-4 text-slate-700">{claim.statement}</p></button>)}</div>}
+          </section>
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-2 flex items-center justify-between"><div className="text-xs font-bold text-slate-900">拜访预约</div><span className="text-[10px] text-slate-400">{appointments.length}</span></div>
+            <div className="space-y-2">{appointments.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-3 text-center text-[10px] text-slate-500">尚无预约</div>}{appointments.map((appointment) => <div key={appointment.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3"><button onClick={() => { if (!activeMeeting || activeMeeting.npcId === appointment.npcId) { setSelectedNpc(appointment.npcId); setWorkspaceMode('conversation'); } }} className="flex w-full items-center justify-between gap-2 text-left"><span className="text-[10px] font-bold">{npcs.find((npc) => npc.id === appointment.npcId)?.name ?? '联系人'} · {VISIT_LABELS[appointment.visitType]}</span><span className="rounded-full bg-white px-2 py-0.5 text-[9px]">{STATUS_LABELS[appointment.status] ?? appointment.status}</span></button><div className="mt-1 text-[9px] text-slate-500">第{appointment.stage}阶段 · {appointment.scheduledLabel ?? formatClock(appointment.scheduledMinute)} · {appointment.location}</div>{appointment.conditions.length > 0 && <div className="mt-1 text-[9px] text-amber-800">前置条件：{appointment.conditions.join('；')}</div>}{appointment.status === 'countered' && <div className="mt-2 flex gap-2"><button onClick={() => void runCommand('update_appointment', { appointmentId: appointment.id, action: 'cancel' })} disabled={Boolean(commandBusy)} className="rounded-lg border border-amber-300 bg-white px-2 py-1 text-[9px] font-semibold">取消</button><button onClick={() => void runCommand('update_appointment', { appointmentId: appointment.id, action: 'accept_counter' })} disabled={Boolean(commandBusy)} className="rounded-lg bg-amber-600 px-2 py-1 text-[9px] font-semibold text-white">接受改期</button></div>}{appointment.status === 'accepted' && <button onClick={() => void startScheduledVisit(appointment)} disabled={Boolean(commandBusy) || streaming || appointment.stage !== round || Boolean(activeMeeting)} className="mt-2 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[9px] font-semibold text-white disabled:opacity-40">{appointment.stage === round ? '开始拜访' : `第${appointment.stage}阶段执行`}</button>}</div>)}</div>
+          </section>
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div className="mb-2 flex items-center justify-between"><div className="text-xs font-bold text-slate-900">拜访纪要与准备</div><span className="text-[10px] text-slate-400">{meetingMinutes.length} 份纪要 · {preparations.length} 项准备</span></div>{meetingMinutes.slice(-2).reverse().map((minutes) => <button key={minutes.id} onClick={() => { setSelectedNpc(minutes.npcId); setWorkspaceMode('follow_up'); }} className="mb-2 w-full rounded-xl border border-slate-200 p-3 text-left"><div className="text-[10px] font-semibold">{npcs.find((npc) => npc.id === minutes.npcId)?.name ?? '联系人'} · {VISIT_LABELS[minutes.visitType]}纪要</div><p className="mt-1 line-clamp-2 text-[9px] leading-4 text-slate-500">{minutes.summary}</p></button>)}{preparations.slice(-3).reverse().map((item) => <div key={item.id} className="mt-2 rounded-xl bg-slate-50 p-2 text-[9px] text-slate-600">{item.title} · {item.status === 'used' ? '已使用' : '可用于拜访'}</div>)}{meetingMinutes.length === 0 && preparations.length === 0 && <div className="text-[10px] text-slate-500">完成拜访并准备行动后会记录在这里。</div>}</section>
         </aside>
 
-        <section className="relative flex min-h-[680px] w-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">
-          <div className="border-b border-slate-200 bg-white px-4 py-3">
-            <div className="flex items-center justify-between">
-              <div><div className="text-base font-bold">客户关系</div><div className="text-[10px] text-slate-500">联系人、回执与行动记录</div></div>
-              <button onClick={() => { setPhoneTab('messages'); setActionNpcId(null); }} aria-label={`查看消息，${unreadCount}条未读`} className="relative flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-blue-700 hover:bg-blue-100"><Bell className="h-4 w-4" />{unreadCount > 0 && <span className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-red-500 px-1 text-center text-[9px] text-white">{unreadCount}</span>}</button>
-            </div>
+        <section className={styles.organizationColumn}>
+          <div className={styles.organizationHeader}><div className="text-base font-bold text-slate-900">客户组织关系</div><p className="mt-1 text-[10px] text-slate-500">点击人物卡片查看公开信息并选择沟通对象。</p></div>
+          <div className={styles.organizationCanvas}>
+            <svg className={styles.organizationLines} viewBox="0 0 600 420" preserveAspectRatio="none" aria-hidden="true"><path d="M300 95V122H155V145 M300 122H445V145 M155 257V280H445 M445 280V300 M155 280V300" /></svg>
+            <div className={styles.organizationGrid}>{organizationRows.map((row, rowIndex) => <div className={styles.organizationRow} key={`org-row-${rowIndex}`}>{row.map((npc) => { const infoCount = publicInfoItems(npc.id).length; const unread = npcUnread(npc.id); return <button key={npc.id} onClick={() => openContact(npc.id)} disabled={Boolean(activeMeeting && activeMeeting.npcId !== npc.id)} className={`${styles.personNode} ${selectedNpc === npc.id ? styles.personNodeSelected : ''} disabled:cursor-not-allowed disabled:opacity-45`}><div className={styles.personHead}><PersonPortrait npcId={npc.id} name={npc.name} imageAssets={designerImageAssets} className={styles.personAvatar} sizes="55px" /><span className={styles.personIdentity}><span className={styles.personName}>{npc.name}</span><span className={styles.personTitle}>{npc.title}</span></span>{unread > 0 && <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-red-500" />}</div><div className={styles.personStatus}><i className={styles.statusDot} />{contactStatus(npc.id)}</div><div className={styles.personMeta}><span>{infoCount} 条公开信息</span>{appointments.some((item) => item.npcId === npc.id && ['pending', 'accepted', 'countered'].includes(item.status)) && <span className={styles.appointmentTag}>已有预约</span>}</div></button>; })}</div>)}</div>
           </div>
-          <div className="grid grid-cols-3 border-b border-slate-200 bg-white">
-            {([
-              ['contacts', Users, '联系人'],
-              ['messages', Inbox, '消息'],
-              ['tasks', ListTodo, '待办'],
-            ] as const).map(([tab, Icon, label]) => (
-              <button key={tab} onClick={() => { setPhoneTab(tab); setActionNpcId(null); }} className={`relative flex items-center justify-center gap-1.5 py-3 text-xs font-semibold ${phoneTab === tab ? 'border-b-2 border-blue-600 text-blue-700' : 'text-slate-500'}`}>
-                <Icon className="h-3.5 w-3.5" />{label}
-                {tab === 'messages' && unreadCount > 0 && <span className="absolute right-6 top-2 h-2 w-2 rounded-full bg-red-500" />}
-              </button>
-            ))}
-          </div>
-          <div className="relative min-h-0 flex-1 overflow-y-auto p-3">
-            {phoneTab === 'contacts' && (
-              <div className="space-y-2">
-                {npcs.map((npc) => {
-                  const contacted = hasContacted(npc.id);
-                  const unread = npcUnread(npc.id);
-                  return (
-                    <div key={npc.id} className={`overflow-hidden rounded-2xl border transition ${selectedNpc === npc.id ? 'border-blue-300 bg-blue-50' : 'border-slate-200 bg-white hover:border-blue-200'} ${activeMeeting && activeMeeting.npcId !== npc.id ? 'opacity-40' : ''}`}>
-                      <button onClick={() => openContact(npc.id)} disabled={Boolean(activeMeeting && activeMeeting.npcId !== npc.id)} className="flex w-full items-center gap-3 p-3 text-left disabled:cursor-not-allowed">
-                        <div className={`relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-full ${contacted ? 'bg-gradient-to-br from-blue-500 to-indigo-700 text-lg font-bold text-white' : 'bg-slate-200 text-slate-500'}`}>
-                          {contacted ? npc.name.slice(0, 1) : <UserRound className="h-6 w-6" />}
-                          {unread > 0 && <span className="absolute right-0 top-0 h-3 w-3 rounded-full border-2 border-white bg-red-500" />}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2"><span className="truncate text-sm font-bold">{npc.name}</span><MoreHorizontal className="h-4 w-4 text-slate-400" /></div>
-                          <div className="truncate text-[11px] text-slate-500">{npc.title}</div>
-                          <div className="mt-1 text-[10px] text-slate-400">{contacted ? '已建立接触' : '尚未有效接触'}</div>
-                        </div>
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {phoneTab === 'messages' && (
-              <div className="space-y-2">
-                {notifications.length === 0 && <EmptyPhoneState icon={Mail} title="暂无主动消息" description="NPC的邀约回复、材料催办和项目变化会出现在这里。" />}
-                {[...notifications].reverse().map((notification) => (
-                  <button key={notification.id} onClick={async () => {
-                    if (!notification.read) await runCommand('mark_notification_read', { notificationId: notification.id });
-                    if (notification.npcId && (!activeMeeting || activeMeeting.npcId === notification.npcId)) { setSelectedNpc(notification.npcId); setWorkspaceMode('conversation'); }
-                  }} className={`w-full rounded-2xl border p-3 text-left ${notification.read ? 'border-slate-200 bg-white' : 'border-blue-200 bg-blue-50'}`}>
-                    <div className="flex items-center justify-between gap-2"><span className="text-xs font-bold">{notification.title}</span>{!notification.read && <span className="h-2 w-2 rounded-full bg-red-500" />}</div>
-                    <p className="mt-1 text-[11px] leading-5 text-slate-600">{notification.body}</p>
-                    {notification.createdLabel && <div className="mt-1 text-[9px] text-slate-400">{notification.createdLabel}</div>}
-                  </button>
-                ))}
-              </div>
-            )}
-            {phoneTab === 'tasks' && (
-              <div className="space-y-4">
-                <div>
-                  <div className="mb-2 flex items-center justify-between text-[11px] font-bold"><span>预约</span><span className="text-slate-400">{appointments.length}</span></div>
-                  <div className="space-y-2">
-                    {appointments.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-3 text-center text-[11px] text-slate-500">尚无预约</div>}
-                    {appointments.map((appointment) => (
-                      <button key={appointment.id} onClick={() => { if (!activeMeeting || activeMeeting.npcId === appointment.npcId) { setSelectedNpc(appointment.npcId); setWorkspaceMode('conversation'); } }} disabled={Boolean(activeMeeting && activeMeeting.npcId !== appointment.npcId)} className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left disabled:opacity-40">
-                        <div className="flex items-center justify-between"><span className="text-xs font-bold">{VISIT_LABELS[appointment.visitType]}</span><span className="rounded-full bg-slate-100 px-2 py-0.5 text-[9px]">{STATUS_LABELS[appointment.status] ?? appointment.status}</span></div>
-                        <div className="mt-1 text-[10px] text-slate-500">{VISIT_LABELS[appointment.visitType]} · 接受后本阶段直接执行</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <div className="mb-2 flex items-center justify-between text-[11px] font-bold"><span>已准备</span><span className="text-slate-400">{preparations.length}</span></div>
-                  <div className="space-y-2">
-                    {preparations.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-3 text-center text-[11px] text-slate-500">尚未准备材料或礼品</div>}
-                    {preparations.map((preparation) => <div key={preparation.id} className="rounded-xl border border-slate-200 bg-white p-3 text-[11px]"><div className="font-semibold">{preparation.title}</div><div className="mt-1 text-slate-400">{preparation.status === 'used' ? '已使用' : '可在拜访中使用'}</div></div>)}
-                  </div>
-                </div>
-                <div>
-                  <div className="mb-2 flex items-center justify-between text-[11px] font-bold"><span>拜访纪要</span><span className="text-slate-400">{meetingMinutes.length}</span></div>
-                  <div className="space-y-2">
-                    {meetingMinutes.length === 0 && <div className="rounded-xl border border-dashed border-slate-300 p-3 text-center text-[11px] text-slate-500">完成拜访后自动生成</div>}
-                    {meetingMinutes.map((minutes) => (
-                      <button key={minutes.id} onClick={() => { if (!activeMeeting || activeMeeting.npcId === minutes.npcId) { setSelectedNpc(minutes.npcId); setWorkspaceMode('conversation'); } }} disabled={Boolean(activeMeeting && activeMeeting.npcId !== minutes.npcId)} className="w-full rounded-xl border border-slate-200 bg-white p-3 text-left text-[10px] disabled:opacity-40">
-                        <div className="flex items-center justify-between gap-2"><span className="text-xs font-bold">{VISIT_LABELS[minutes.visitType]}纪要</span><span className="text-slate-400">第{minutes.nextStepRound}阶段 {formatClock(minutes.nextStepMinute)}</span></div>
-                        <p className="mt-1 leading-4 text-slate-600">{minutes.summary}</p>
-                        {minutes.confirmedItems.length > 0 && <div className="mt-2"><strong>确认事项：</strong>{minutes.confirmedItems.join('；')}</div>}
-                        {minutes.npcCommitments.length > 0 && <div className="mt-1"><strong>客户承诺：</strong>{minutes.npcCommitments.join('；')}</div>}
-                        <div className="mt-1"><strong>我方承诺：</strong>{minutes.playerCommitments.join('；')}</div>
-                        {minutes.pendingMaterials.length > 0 && <div className="mt-1 text-amber-700"><strong>待补材料：</strong>{minutes.pendingMaterials.join('、')}</div>}
-                        <div className="mt-2 rounded-lg bg-slate-50 px-2 py-1.5 text-slate-500">下一步：{minutes.nextStep} · {minutes.owner}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-          {actionNpcId && phoneTab === 'contacts' && (
-            <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/30 p-4 backdrop-blur-[2px]" onClick={() => setActionNpcId(null)}>
-              <div className="w-full max-w-[330px] rounded-2xl border border-white/70 bg-white p-5 shadow-[0_24px_64px_rgba(15,23,42,.28)]" onClick={(event) => event.stopPropagation()}>
-                <div className="mb-4 flex items-center justify-between"><div><div className="text-base font-bold">{npcs.find((npc) => npc.id === actionNpcId)?.name}</div><div className="mt-0.5 text-[11px] text-slate-500">选择下一步行动</div></div><button onClick={() => setActionNpcId(null)} aria-label="关闭行动选择" className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"><X className="h-4 w-4" /></button></div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button onClick={() => { setSelectedNpc(actionNpcId); setCommunicationChannel('email'); setWorkspaceMode('conversation'); setActionNpcId(null); }} className="rounded-xl bg-blue-50 p-3 text-center text-[11px] font-semibold text-blue-700 hover:bg-blue-100"><Mail className="mx-auto mb-1.5 h-5 w-5" />电话 / 邮件</button>
-                  <button onClick={async () => { const ok = await runCommand('request_wechat', { npcId: actionNpcId, message: '您好，我是本项目的供应商联系人，希望添加您的工作微信，方便后续沟通。' }); if (ok) setActionNpcId(null); }} disabled={Boolean(commandBusy) || gameState?.npcContacts[actionNpcId]?.status === 'known' || gameState?.npcContacts[actionNpcId]?.status === 'online'} className="rounded-xl bg-emerald-50 p-3 text-center text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-40"><MessageCircle className="mx-auto mb-1.5 h-5 w-5" />申请工作微信</button>
-                  <button onClick={() => void openOrResearchPublicInfo(actionNpcId)} disabled={Boolean(commandBusy) || Boolean(activeMeeting)} className="rounded-xl bg-violet-50 p-3 text-center text-[11px] font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-40"><Search className="mx-auto mb-1.5 h-5 w-5" />搜索公开信息</button>
-                  <button onClick={() => { setSelectedNpc(actionNpcId); setWorkspaceMode('preparation'); setActionNpcId(null); }} disabled={Boolean(activeMeeting)} className="rounded-xl bg-amber-50 p-3 text-center text-[11px] font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40"><FileText className="mx-auto mb-1.5 h-5 w-5" />拜访准备</button>
-                </div>
-              </div>
-            </div>
-          )}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-4 py-3 text-[10px] text-slate-500"><span>人物层级通过连线表示；已获取信息会随项目状态更新。</span>{selectedNpc && <button onClick={() => void openOrResearchPublicInfo(selectedNpc)} disabled={Boolean(commandBusy) || Boolean(activeMeeting)} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 font-semibold text-blue-700 disabled:opacity-40">搜索公开信息 · 2行动点</button>}</div>
         </section>
-
-        <main className="flex min-h-[680px] min-w-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <main className={`${styles.rightColumn} flex min-h-[680px] min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm`}>
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
             <div className="flex items-center gap-3">
-              <div className={`flex h-11 w-11 items-center justify-center rounded-full ${selectedNpc && hasContacted(selectedNpc) ? 'bg-gradient-to-br from-blue-500 to-indigo-700 font-bold text-white' : 'bg-slate-200 text-slate-500'}`}>{selectedNpc && hasContacted(selectedNpc) ? selectedNpcName.slice(0, 1) : <UserRound className="h-5 w-5" />}</div>
-              <div><div className="text-sm font-bold">{selectedNpcName}</div><div className="text-[11px] text-slate-500">{selectedProfile?.title ?? '请在客户关系栏选择联系人'}{selectedContact ? ` · ${selectedContact.status === 'known' ? '待建联' : '已建立联系'}` : ''}</div></div>
+              {selectedNpc ? <PersonPortrait npcId={selectedNpc} name={selectedNpcName} imageAssets={designerImageAssets} className={styles.contactAvatar} sizes="54px" /> : <div className={styles.contactAvatar}><UserRound className="h-5 w-5" /></div>}
+              <div><div className="text-sm font-bold">{selectedNpc ? selectedNpcName : '整体工作计划'}</div><div className="text-[11px] text-slate-500">{selectedProfile?.title ?? '制定项目推进节奏与关键行动'}</div></div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {activeMeeting?.npcId === selectedNpc && <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-semibold text-emerald-700">{VISIT_LABELS[activeMeeting.visitType]} · {activeMeeting.turnCount}/{activeMeeting.maxTurns}轮</span>}
+              {!activeMeeting && <button onClick={() => setWorkspaceMode('global_plan')} className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold ${workspaceMode === 'global_plan' ? 'border-blue-300 bg-blue-50 text-blue-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>整体计划</button>}
+              {selectedNpc && hasContacted(selectedNpc) && <button onClick={() => { setProposalNpcId(activeMeeting?.npcId ?? selectedNpc); setProposalText(''); setShowBidRuleProposal(true); }} disabled={Boolean(commandBusy) || streaming || Boolean(gameState?.submissionReady) || coins < BID_RULE_PROPOSAL_COST} className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-40">表达项目想法 · {BID_RULE_PROPOSAL_COST}行动点</button>}
               {selectedNpc && latestCompletedAppointment && !activeMeeting && <button onClick={() => setWorkspaceMode('follow_up')} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-[11px] font-semibold text-violet-700 hover:bg-violet-100">会后待办</button>}
               {selectedNpc && <button onClick={() => setWorkspaceMode('preparation')} disabled={Boolean(activeMeeting)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">准备</button>}
             </div>
           </div>
 
+          {selectedNpc && !activeMeeting && <div className={styles.actionStrip}>
+            <button onClick={() => { if (phoneCallActive) { phoneCallEndedByUserRef.current = true; abortRef.current?.abort(); } setCommunicationChannel('email'); setPhoneCallActive(false); setPhoneCallStartedAt(null); setInput(''); setWorkspaceMode('conversation'); }} className={`${styles.actionButton} ${workspaceMode === 'conversation' && communicationChannel === 'email' ? styles.actionButtonActive : ''}`}><Mail className="h-4 w-4" /><span>邮件</span></button>
+            <button onClick={() => { if (phoneCallActive) { phoneCallEndedByUserRef.current = true; abortRef.current?.abort(); } setCommunicationChannel('work_phone'); setPhoneCallActive(false); setPhoneCallStartedAt(null); setInput(''); setWorkspaceMode('conversation'); }} className={`${styles.actionButton} ${workspaceMode === 'conversation' && communicationChannel === 'work_phone' ? styles.actionButtonActive : ''}`}><Phone className="h-4 w-4" /><span>电话</span></button>
+            <button onClick={() => { if (phoneCallActive) { phoneCallEndedByUserRef.current = true; abortRef.current?.abort(); } setWorkspaceMode('conversation'); setPhoneCallActive(false); setPhoneCallStartedAt(null); setInput(''); if (selectedContact?.wechatStatus === 'accepted' || selectedContact?.status === 'online') { setCommunicationChannel('online'); return; } if (selectedContact?.status === 'connected') { void runCommand('request_wechat', { npcId: selectedNpc, message: '希望添加您的工作微信，便于继续沟通项目安排。' }); return; } setCommandFeedback('请先通过邮件或电话建立联系，再申请添加工作微信。'); }} disabled={Boolean(commandBusy) || (selectedContact?.onlineRequestedRound === round && selectedContact?.wechatStatus !== 'accepted')} className={`${styles.actionButton} ${workspaceMode === 'conversation' && communicationChannel === 'online' ? styles.actionButtonActive : ''}`}><MessageCircle className="h-4 w-4" /><span>{selectedContact?.wechatStatus === 'accepted' || selectedContact?.status === 'online' ? '微信' : selectedContact?.status === 'connected' ? '申请微信' : '微信'}</span></button>
+            <button onClick={() => { if (phoneCallActive) { phoneCallEndedByUserRef.current = true; abortRef.current?.abort(); } setPhoneCallActive(false); setPhoneCallStartedAt(null); setInput(''); setWorkspaceMode('postal'); }} className={`${styles.actionButton} ${workspaceMode === 'postal' ? styles.actionButtonActive : ''}`}><PackageCheck className="h-4 w-4" /><span>邮寄</span></button>
+            <button onClick={() => { if (phoneCallActive) { phoneCallEndedByUserRef.current = true; abortRef.current?.abort(); } setPhoneCallActive(false); setPhoneCallStartedAt(null); setInput(''); setWorkspaceMode('visit'); }} className={`${styles.actionButton} ${workspaceMode === 'visit' || workspaceMode === 'preparation' ? styles.actionButtonActive : ''}`}><MapPin className="h-4 w-4" /><span>拜访</span></button>
+          </div>}
+
+          {selectedNpc && !activeMeeting && <section className={styles.npcPlanPanel}>
+            <div className={styles.npcPlanHeader}><strong>{selectedNpcName} · 联系人补充记录（可选）</strong><span>信息记录 · 1行动点</span></div>
+            <div className={styles.npcPlanForm}><textarea value={npcPlanDraft} onChange={(event) => setNpcPlanDraft(event.target.value)} maxLength={4000} rows={2} placeholder={`记录与 ${selectedNpcName} 相关的已知事项、待确认问题或后续安排……`} /><button onClick={() => void submitWorkPlan('npc')} disabled={Boolean(commandBusy) || npcPlanDraft.trim().length < 10 || coins < 1}>{commandBusy === 'work_plan' ? '记录中…' : '提交记录'}</button></div>
+            {workPlans.filter((plan) => plan.scope === 'npc' && plan.npcId === selectedNpc).slice(-1).map((plan) => <div key={plan.id} className={styles.npcPlanHistory}><span>第{plan.createdRound}阶段 · 已记录</span><p>{plan.content}</p></div>)}
+          </section>}
+
+          {commandFeedback && <div className="border-b border-emerald-100 bg-emerald-50 px-5 py-2 text-xs text-emerald-800"><Check className="mr-1.5 inline h-3.5 w-3.5" />{commandFeedback}</div>}
+
+          {workspaceMode === 'global_plan' && !activeMeeting && (
+            <div className="flex-1 overflow-y-auto bg-slate-50 p-5 sm:p-6">
+              <div className="mx-auto max-w-3xl">
+                <section className="rounded-2xl border border-blue-100 bg-white p-5 shadow-sm">
+                  <div className="flex items-start justify-between gap-3"><div><div className="text-xs font-semibold tracking-[0.14em] text-blue-600">PROJECT WORK PLAN</div><h2 className="mt-1 text-lg font-bold text-slate-900">整体工作计划</h2><p className="mt-1 text-xs leading-5 text-slate-500">把阶段目标、关键人物、行动顺序和验证方式写清楚。计划关键词可能帮助你发现受控披露的项目线索。</p></div><span className="rounded-full bg-blue-50 px-3 py-1 text-[10px] font-semibold text-blue-700">每次 1 行动点</span></div>
+                  <textarea value={globalPlanDraft} onChange={(event) => setGlobalPlanDraft(event.target.value)} maxLength={4000} rows={7} placeholder="例如：本阶段先核实项目决策链与预算来源，再安排技术交流验证兼容性，最后针对招标评分项提交可量化方案。" className="mt-4 w-full resize-y rounded-xl border border-slate-200 px-4 py-3 text-sm leading-6 outline-none focus:border-blue-400" />
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2"><span className="text-[10px] text-slate-400">{globalPlanDraft.trim().length}/4000 字 · 至少 10 字</span><button onClick={() => void submitWorkPlan('global')} disabled={Boolean(commandBusy) || globalPlanDraft.trim().length < 10 || coins < 1} className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-40">{commandBusy === 'work_plan' ? '提交中…' : '提交整体计划'}</button></div>
+                </section>
+                <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><h3 className="text-sm font-bold">计划记录</h3><span className="text-[10px] text-slate-400">{workPlans.filter((plan) => plan.scope === 'global').length} 份</span></div>{workPlans.filter((plan) => plan.scope === 'global').length === 0 ? <p className="mt-3 text-xs text-slate-500">提交后，计划、系统建议和已解锁线索会保存在这里。</p> : <div className="mt-3 space-y-3">{workPlans.filter((plan) => plan.scope === 'global').slice(-3).reverse().map((plan) => <article key={plan.id} className="rounded-xl border border-slate-100 bg-slate-50 p-4"><div className="flex items-center justify-between text-[10px] text-slate-500"><span>第{plan.createdRound}阶段 · 整体计划</span><span>消耗 {plan.costPoints} 行动点</span></div><p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-slate-700">{plan.content}</p>{plan.recommendations.length > 0 && <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 p-3"><div className="text-[10px] font-bold text-blue-800">系统建议</div><ul className="mt-1 list-disc space-y-1 pl-4 text-[10px] leading-4 text-blue-900">{plan.recommendations.map((item, index) => <li key={`${plan.id}-recommendation-${index}`}>{item}</li>)}</ul></div>}{planDisclosures(plan).map((disclosure) => <div key={`${plan.id}-disclosure-${disclosure.npcId}`} className="mt-3 rounded-lg border border-violet-100 bg-violet-50 p-3"><div className="text-[10px] font-bold text-violet-900">{npcs.find((npc) => npc.id === disclosure.npcId)?.name ?? '联系人'} · 已获取信息</div>{disclosure.facts.map((fact, index) => <p key={`${plan.id}-fact-${index}`} className="mt-1 text-[10px] leading-4 text-violet-900">· {fact}</p>)}{disclosure.clues.map((clue, index) => <p key={`${plan.id}-clue-${index}`} className="mt-1 text-[10px] leading-4 text-violet-800">线索：{clue}</p>)}</div>)}</article>)}</div>}</section>
+              </div>
+            </div>
+          )}
+
+          {workspaceMode === 'npc_plan' && selectedNpc && !activeMeeting && (
+            <div className="flex-1 overflow-y-auto bg-slate-50 p-5 sm:p-6"><div className="mx-auto max-w-3xl"><section className="rounded-2xl border border-blue-100 bg-white p-5 shadow-sm"><div className="text-xs font-semibold tracking-[0.14em] text-blue-600">CONTACT PLAN</div><h2 className="mt-1 text-lg font-bold">{selectedNpcName} · 人物补充计划</h2><p className="mt-1 text-xs text-slate-500">围绕该人物的职责、关注点和下一步互动制定计划；计划中的线索关键词可能解锁已知信息。</p><textarea value={npcPlanDraft} onChange={(event) => setNpcPlanDraft(event.target.value)} maxLength={4000} rows={7} placeholder="写明希望核实的问题、沟通方式、需要准备的证据和下一步安排。" className="mt-4 w-full resize-y rounded-xl border border-slate-200 px-4 py-3 text-sm leading-6 outline-none focus:border-blue-400" /><div className="mt-3 flex items-center justify-between"><span className="text-[10px] text-slate-400">{npcPlanDraft.trim().length}/4000 字 · 至少 10 字</span><button onClick={() => void submitWorkPlan('npc')} disabled={Boolean(commandBusy) || npcPlanDraft.trim().length < 10 || coins < 1} className="rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-40">提交人物计划</button></div></section><section className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h3 className="text-sm font-bold">相关计划记录</h3>{workPlans.filter((plan) => plan.scope === 'npc' && plan.npcId === selectedNpc).slice(-3).reverse().map((plan) => <article key={plan.id} className="mt-3 rounded-xl bg-slate-50 p-4"><div className="text-[10px] text-slate-500">第{plan.createdRound}阶段</div><p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-slate-700">{plan.content}</p>{plan.recommendations.length > 0 && <ul className="mt-2 list-disc pl-4 text-[10px] leading-4 text-blue-800">{plan.recommendations.map((item, index) => <li key={`${plan.id}-r-${index}`}>{item}</li>)}</ul>}{planDisclosures(plan, selectedNpc).map((disclosure) => <div key={`${plan.id}-detail-${disclosure.npcId}`} className="mt-2 rounded-lg border border-violet-100 bg-violet-50 p-3"><div className="text-[10px] font-bold text-violet-900">人物信息更新</div>{disclosure.facts.map((fact, index) => <p key={`${plan.id}-fact-${index}`} className="mt-1 text-[10px] leading-4 text-violet-900">· {fact}</p>)}{disclosure.clues.map((clue, index) => <p key={`${plan.id}-clue-${index}`} className="mt-1 text-[10px] leading-4 text-violet-800">线索：{clue}</p>)}</div>)}</article>)}</section></div></div>
+          )}
+
+          {workspaceMode === 'postal' && selectedNpc && !activeMeeting && (
+            <div className="flex-1 overflow-y-auto bg-slate-50 p-5 sm:p-6"><div className="mx-auto max-w-2xl"><section className="rounded-2xl border border-amber-100 bg-white p-5 shadow-sm"><div className="text-xs font-semibold tracking-[0.14em] text-amber-700">POSTAL DELIVERY</div><h2 className="mt-1 text-lg font-bold">邮寄材料给 {selectedNpcName}</h2><p className="mt-1 text-xs leading-5 text-slate-500">邮寄会消耗 2 行动点。可选填材料名称和内容简介。</p><Field label="邮寄说明"><textarea value={postalDraft} onChange={(event) => setPostalDraft(event.target.value)} maxLength={2000} rows={5} placeholder="说明寄送目的、希望对方关注的内容及后续沟通安排。" className="w-full resize-y rounded-xl border border-slate-200 px-3 py-2.5 text-sm leading-6" /></Field><Field label="材料名称（可选）"><input value={postalAttachmentTitle} onChange={(event) => setPostalAttachmentTitle(event.target.value)} maxLength={160} placeholder="例如：项目技术方案" className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm" /></Field><Field label="材料内容简介（可选）"><textarea value={postalAttachmentContent} onChange={(event) => setPostalAttachmentContent(event.target.value)} maxLength={2000} rows={3} placeholder="用自然语言概括寄送材料的主要内容。" className="w-full resize-y rounded-xl border border-slate-200 px-3 py-2.5 text-sm leading-6" /></Field><button onClick={() => void submitPostal()} disabled={Boolean(commandBusy) || streaming || !postalDraft.trim() || coins < 2 || (postalAttachmentTitle.trim().length > 0) !== (postalAttachmentContent.trim().length > 0)} className="mt-4 w-full rounded-xl bg-amber-600 py-3 text-sm font-bold text-white disabled:opacity-40">确认邮寄 · 2 行动点</button></section><section className="mt-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h3 className="text-sm font-bold">邮寄记录</h3>{postalRecords.filter((record) => record.npcId === selectedNpc).slice(-3).reverse().map((record) => <article key={record.id} className="mt-3 rounded-xl bg-slate-50 p-3 text-xs"><div className="text-[10px] text-slate-500">第{record.createdRound}阶段 · {record.costPoints}行动点</div><p className="mt-1 whitespace-pre-wrap leading-5 text-slate-700">{record.content}</p>{record.attachment && <div className="mt-2 border-l-2 border-amber-300 pl-2 text-[10px] text-slate-500">附件：{record.attachment.title} · {record.attachment.content}</div>}</article>)}</section></div></div>
+          )}
+
+          {workspaceMode === 'visit' && selectedNpc && !activeMeeting && (
+            <div className="flex-1 overflow-y-auto bg-slate-50 p-5 sm:p-6"><div className="mx-auto max-w-3xl space-y-4"><section className="rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm"><div className="text-xs font-semibold tracking-[0.14em] text-indigo-600">VISIT OPTIONS</div><h2 className="mt-1 text-lg font-bold">拜访 {selectedNpcName}</h2><p className="mt-1 text-xs leading-5 text-slate-500">可以执行已接受的预约，也可以在完成至少一次联系后直接登门。直接拜访需要提前准备，跳过准备会有额外行动点和关系风险。</p>{selectedAppointments.filter((item) => item.status === 'accepted').map((appointment) => <div key={appointment.id} className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="text-xs"><strong>{VISIT_LABELS[appointment.visitType]}</strong><span className="ml-2 text-slate-600">第{appointment.stage}阶段 · {appointment.location}</span></div><button onClick={() => void startScheduledVisit(appointment)} disabled={Boolean(commandBusy) || streaming || appointment.stage !== round} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40">开始预约拜访</button></div>)}<div className="mt-4 flex flex-wrap gap-2"><button onClick={() => setWorkspaceMode('preparation')} disabled={Boolean(commandBusy)} className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-xs font-bold text-indigo-800">准备拜访 · 3行动点</button><button onClick={() => void startDirectVisit(false)} disabled={Boolean(commandBusy) || streaming || !hasContacted(selectedNpc) || !selectedPreparations.some((item) => item.status === 'ready')} className="rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-bold text-white disabled:opacity-40">准备后直接登门 · 2行动点</button><button onClick={() => void startDirectVisit(true)} disabled={Boolean(commandBusy) || streaming || !hasContacted(selectedNpc) || selectedPreparations.some((item) => item.status === 'ready')} className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs font-bold text-amber-900 disabled:opacity-40">未准备直接登门 · 有额外成本与风险</button></div><div className="mt-3 text-[10px] text-slate-400">已准备材料：{selectedPreparations.filter((item) => item.status === 'ready').map((item) => item.title).join('、') || '暂无'}</div></section><section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="text-xs font-semibold tracking-[0.14em] text-blue-600">VISIT BRIEF</div><h3 className="mt-1 text-sm font-bold">拜访方案评估</h3><p className="mt-1 text-[10px] leading-4 text-slate-500">描述拜访目标与计划，获取风险和下一步建议。这是建议反馈，不会自动开始或完成拜访；消耗 2 行动点。</p><textarea value={visitBriefDraft} onChange={(event) => setVisitBriefDraft(event.target.value)} maxLength={4000} rows={4} placeholder="写下准备如何开场、需要核实哪些问题以及预期的下一步。" className="mt-3 w-full resize-y rounded-xl border border-slate-200 px-3 py-2.5 text-sm leading-6" /><button onClick={() => void submitVisitBrief()} disabled={Boolean(commandBusy) || visitBriefDraft.trim().length < 10 || coins < 2} className="mt-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2.5 text-xs font-bold text-blue-800 disabled:opacity-40">评估拜访方案 · 2行动点</button>{visitBriefs.filter((brief) => brief.npcId === selectedNpc).slice(-1).map((brief) => <div key={brief.id} className="mt-4 rounded-xl bg-slate-50 p-4 text-xs"><div className="text-[10px] text-slate-500">第{brief.createdRound}阶段评估</div><div className="mt-2 grid gap-2 sm:grid-cols-2"><div><strong>优势</strong><ul className="mt-1 list-disc pl-4 text-slate-600">{brief.strengths.map((item, index) => <li key={`${brief.id}-s-${index}`}>{item}</li>)}</ul></div><div><strong>风险</strong><ul className="mt-1 list-disc pl-4 text-slate-600">{brief.risks.map((item, index) => <li key={`${brief.id}-risk-${index}`}>{item}</li>)}</ul></div></div><p className="mt-2 text-blue-800"><strong>下一步：</strong>{brief.nextStep}</p></div>)}</section></div></div>
+          )}
+
           {workspaceMode === 'preparation' && selectedNpc && (
             <div className="flex-1 overflow-y-auto p-6">
               <div className="mx-auto max-w-2xl">
-                <div className="mb-5 flex items-center justify-between"><div><h2 className="text-lg font-bold">为 {selectedNpcName} 做拜访前准备</h2><p className="mt-1 text-xs text-slate-500">不提供准备类型，请自行思考需要准备什么并完整写出。</p></div><button onClick={() => setWorkspaceMode('conversation')} className="rounded-lg border border-slate-200 p-2"><X className="h-4 w-4" /></button></div>
-                <div className="space-y-2">
-                  {PREPARATION_OPTIONS.map((option) => (
-                    <div key={option.type} className="flex w-full items-center gap-3 rounded-xl border border-blue-400 bg-blue-50 p-4 text-left">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 text-blue-700"><FileText className="h-5 w-5" /></div>
-                      <div className="min-w-0 flex-1"><div className="text-sm font-bold">{option.title}</div><div className="mt-1 text-[11px] text-slate-500">{option.description}</div></div>
-                      <div className="text-right text-[10px] text-slate-500"><div>{option.cost}行动点</div></div>
-                    </div>
-                  ))}
-                </div>
+                <div className="mb-5 flex items-center justify-between"><div><h2 className="text-lg font-bold">为 {selectedNpcName} 做拜访前准备</h2><p className="mt-1 text-xs text-slate-500">结合人物职责和已知信息，自由写明材料、问题、证据与拜访目标。消耗 3 行动点。</p></div><button onClick={() => setWorkspaceMode('visit')} className="rounded-lg border border-slate-200 p-2"><X className="h-4 w-4" /></button></div>
                 {selectedAppointments.length > 0 && <Field label="绑定拜访（可选）"><select value={preparationAppointmentId} onChange={(event) => setPreparationAppointmentId(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400"><option value="">作为通用准备</option>{selectedAppointments.filter((item) => ['pending', 'accepted', 'countered'].includes(item.status)).map((item) => <option key={item.id} value={item.id}>{VISIT_LABELS[item.visitType]} · {item.location}</option>)}</select></Field>}
                 <Field label="你的拜访前准备"><textarea value={preparationText} onChange={(event) => setPreparationText(event.target.value)} rows={10} placeholder="请自行写明你准备了哪些信息、材料、案例、问题、证据或其他事项，以及为什么这样准备。" className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm leading-6 outline-none focus:border-blue-400" /></Field>
                 <button onClick={submitPreparation} disabled={Boolean(commandBusy) || preparationText.trim().length < 10} className="mt-5 w-full rounded-xl bg-blue-600 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">{commandBusy === 'prepare' ? '准备中...' : '确认准备'}</button>
@@ -1322,7 +1609,7 @@ function GameInner() {
                   {selectedAppointments.filter((item) => item.status === 'accepted').map((appointment) => (
                     <div key={appointment.id} className="flex flex-wrap items-center justify-between gap-3 text-xs">
                       <div><strong>{VISIT_LABELS[appointment.visitType]}</strong><span className="ml-2 text-slate-600">本阶段可执行 · {appointment.location}</span></div>
-                      <div className="flex gap-2"><button onClick={() => runCommand('update_appointment', { appointmentId: appointment.id, action: 'cancel' })} disabled={Boolean(commandBusy) || streaming} className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 font-semibold text-blue-700 disabled:opacity-40">取消</button><button onClick={() => runCommand('start_visit', { appointmentId: appointment.id })} disabled={Boolean(commandBusy) || streaming || appointment.stage !== round} title={appointment.stage !== round ? `请在第${appointment.stage}阶段开始拜访` : undefined} className="rounded-lg bg-blue-600 px-3 py-1.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"><Play className="mr-1 inline h-3 w-3" />{appointment.stage === round ? '开始拜访' : '等待预约阶段'}</button></div>
+                      <div className="flex gap-2"><button onClick={() => runCommand('update_appointment', { appointmentId: appointment.id, action: 'cancel' })} disabled={Boolean(commandBusy) || streaming} className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 font-semibold text-blue-700 disabled:opacity-40">取消</button><button onClick={() => void startScheduledVisit(appointment)} disabled={Boolean(commandBusy) || streaming || appointment.stage !== round} title={appointment.stage !== round ? `请在第${appointment.stage}阶段开始拜访` : undefined} className="rounded-lg bg-blue-600 px-3 py-1.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"><Play className="mr-1 inline h-3 w-3" />{appointment.stage === round ? '开始拜访' : '等待预约阶段'}</button></div>
                     </div>
                   ))}
                 </div>
@@ -1330,55 +1617,22 @@ function GameInner() {
               {selectedAppointments.some((item) => item.status === 'completed') && !activeMeeting && selectedNpc && (
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-violet-100 bg-violet-50 px-5 py-3 text-xs"><div><strong>拜访已完成</strong><span className="ml-2 text-slate-600">纪要、材料与承诺统一放入会后待办。</span></div><button onClick={() => setWorkspaceMode('follow_up')} className="shrink-0 rounded-lg bg-violet-600 px-3 py-1.5 font-semibold text-white">查看会后待办</button></div>
               )}
-              {activeMeeting?.npcId === selectedNpc && (
-                <section className="relative m-4 min-h-[560px] flex-1 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl">
-                  <div className="absolute inset-0 bg-cover bg-center opacity-95" style={{ backgroundImage: "url('/images/game/visit-meeting-room-empty-v1.png')" }} />
-                  <div className="absolute inset-0 bg-gradient-to-b from-slate-950/10 via-transparent to-slate-950/90" />
-                  <div className="relative flex h-full min-h-[560px] flex-col justify-between p-5">
-                    <div className="flex items-start justify-between gap-4 text-white">
-                      <div><div className="text-xs font-semibold tracking-[0.22em] text-amber-200">线下拜访现场</div><h2 className="mt-1 text-xl font-bold">{selectedAppointments.find((item) => item.id === activeMeeting.appointmentId)?.location || '客户会面场景'}</h2><p className="mt-1 text-xs text-white/75">{VISIT_LABELS[activeMeeting.visitType]} · 第 {activeMeeting.turnCount}/{activeMeeting.maxTurns} 轮</p></div>
-                      <div className="rounded-full bg-slate-950/55 px-3 py-2 text-xs text-white/85 backdrop-blur">正在会面 · {selectedNpcName}</div>
-                    </div>
-                    <div className="mx-auto w-full max-w-4xl space-y-3">
-                      {latestNpcMeetingMessage && (
-                        <div key={latestNpcMeetingMessage.ts} className="flex items-end gap-3 rounded-2xl border border-white/25 bg-slate-950/72 p-3 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-bottom-3 duration-300">
-                          <div className="relative h-32 w-24 shrink-0 overflow-hidden rounded-xl border border-white/30 bg-slate-800 shadow-lg sm:h-40 sm:w-32">
-                            <Image src={latestNpcMeetingMessage.content ? '/emotion-greeting.jpeg' : '/emotion-thinking.jpeg'} alt={`${selectedNpcName}的形象`} fill sizes="128px" className="object-cover object-top" priority />
-                          </div>
-                          <div className="min-w-0 flex-1 rounded-2xl rounded-bl-sm bg-white p-4 text-slate-900 shadow-lg">
-                            <div className="mb-1.5 text-xs font-bold text-amber-700">{selectedNpcName} · {selectedProfile?.title}</div>
-                            <p className="whitespace-pre-wrap text-sm leading-6 sm:text-base">{latestNpcMeetingMessage.content || (streaming ? '正在思考…' : '')}</p>
-                          </div>
-                        </div>
-                      )}
-                      {!latestNpcMeetingMessage && <div className="rounded-xl bg-slate-950/55 px-4 py-3 text-center text-sm text-white/90 backdrop-blur">面谈开始。现场暂时只呈现环境，对方发言时人物形象与台词会同步出现。</div>}
-                      {latestPlayerMeetingMessage && <div className="ml-auto max-w-2xl rounded-xl border border-white/15 bg-slate-950/55 px-4 py-2 text-xs leading-5 text-white/80 backdrop-blur"><strong className="text-blue-200">你刚刚说：</strong>{latestPlayerMeetingMessage.content}</div>}
-                      <div className="flex items-end gap-2 rounded-2xl border border-white/20 bg-slate-950/65 p-3 shadow-2xl backdrop-blur-md"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(input); } }} disabled={streaming} rows={2} placeholder="输入你在现场说的话…" className="min-h-[56px] flex-1 resize-none rounded-xl border border-white/20 bg-white/95 px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-300" /><button onClick={() => sendMessage(input)} disabled={streaming || !input.trim()} className="rounded-xl bg-amber-400 p-3 text-slate-900 disabled:opacity-40"><Send className="h-4 w-4" /></button></div>
-                    </div>
-                  </div>
-                </section>
-              )}
-              {!activeMeeting && selectedNpc && (
-                <div className="border-b border-slate-200 bg-white px-5 py-3">
-                  <div className="flex flex-wrap items-center gap-2"><span className="mr-1 text-xs font-semibold text-slate-500">沟通方式</span>{(Object.keys(CHANNEL_META) as CommunicationChannel[]).map((channel) => <button key={channel} onClick={() => { setCommunicationChannel(channel); setPhoneCallActive(false); }} className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${communicationChannel === channel ? CHANNEL_META[channel].accent : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50'}`}>{channel === 'email' ? <Mail className="mr-1 inline h-3.5 w-3.5" /> : channel === 'work_phone' ? <Phone className="mr-1 inline h-3.5 w-3.5" /> : <MessageCircle className="mr-1 inline h-3.5 w-3.5" />}{CHANNEL_META[channel].label}</button>)}</div>
-                  <div className="mt-2 text-[11px] text-slate-400">{CHANNEL_META[communicationChannel].hint}</div>
-                </div>
-              )}
               <div className={`h-[430px] shrink-0 overflow-y-auto p-5 ${activeMeeting ? 'hidden' : communicationChannel === 'email' ? 'bg-slate-100' : 'bg-slate-950'}`}>
-                {selectedNpc && !activeMeeting && <div className={`mx-auto mb-4 max-w-2xl rounded-2xl border p-4 shadow-sm ${communicationChannel === 'email' ? 'border-slate-200 bg-white text-slate-800' : 'border-violet-200 bg-gradient-to-r from-violet-700 to-indigo-700 text-white'}`}><div className="flex items-center gap-2 text-sm font-bold">{communicationChannel === 'email' ? <Mail className="h-4 w-4" /> : communicationChannel === 'online' ? <MessageCircle className="h-4 w-4" /> : <Phone className="h-4 w-4" />}{communicationChannel === 'email' ? `写给 ${selectedNpcName} 的邮件` : communicationChannel === 'online' ? `与 ${selectedNpcName} 的微信` : `与 ${selectedNpcName} 的工作电话`}</div><div className={`mt-1 text-[11px] ${communicationChannel === 'email' ? 'text-slate-400' : 'text-white/70'}`}>{communicationChannel === 'email' ? '收件人：客户联系人　主题：项目沟通' : communicationChannel === 'online' ? '通过工作微信自然沟通' : '请在关键事实与结论上保持简洁'}</div></div>}
+                {selectedNpc && !activeMeeting && communicationChannel !== 'work_phone' && <div className={`mx-auto mb-4 max-w-2xl rounded-2xl border p-4 shadow-sm ${communicationChannel === 'email' ? 'border-slate-200 bg-white text-slate-800' : 'border-violet-200 bg-gradient-to-r from-violet-700 to-indigo-700 text-white'}`}><div className="flex items-center gap-2 text-sm font-bold">{communicationChannel === 'email' ? <Mail className="h-4 w-4" /> : <MessageCircle className="h-4 w-4" />}{communicationChannel === 'email' ? `写给 ${selectedNpcName} 的邮件` : `与 ${selectedNpcName} 的微信`}</div><div className={`mt-1 text-[11px] ${communicationChannel === 'email' ? 'text-slate-400' : 'text-white/70'}`}>{communicationChannel === 'email' ? '收件人：客户联系人　主题：项目沟通' : '通过工作微信自然沟通'}</div></div>}
                 {!selectedNpc && <EmptyPhoneState icon={Users} title="选择一位联系人" description="从左侧客户关系栏选择人物，再通过电话、邮件或微信自然沟通，必要时提出拜访并准备材料。" />}
-              {selectedNpc && !activeMeeting && communicationChannel === 'work_phone' && <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center text-center text-white"><div className="flex h-24 w-24 items-center justify-center rounded-full bg-gradient-to-br from-violet-400 to-fuchsia-500 text-4xl font-bold shadow-[0_0_50px_rgba(168,85,247,.55)]">{selectedNpcName.slice(0, 1)}</div><h3 className="mt-5 text-xl font-bold">{selectedNpcName}</h3><p className="mt-1 text-sm text-violet-200">{phoneCallActive ? (streaming ? '正在接通…' : '通话已接通') : '准备拨打工作电话'}</p>{phoneCallActive ? <div className="mt-7 w-full rounded-2xl bg-white/10 p-4 text-left"><div className="mb-2 text-xs text-violet-200">本次通话记录</div><div className="max-h-28 space-y-2 overflow-y-auto text-sm">{visibleChannelMessages.filter((message) => message.content !== '[电话呼出]').slice(-3).map((message) => <p key={message.ts} className="leading-5"><strong>{message.role === 'user' ? '我：' : `${selectedNpcName}：`}</strong>{message.content || (streaming ? '…' : '')}</p>)}</div></div> : <button onClick={() => { setPhoneCallActive(true); void sendMessage('[电话呼出]', { intent: 'call_connect', channel: 'work_phone', hidePlayerMessage: true }); }} disabled={!selectedNpc || streaming} className="mt-8 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg hover:bg-emerald-400 disabled:opacity-40"><Phone className="h-6 w-6" /></button>}</div>}
+              {selectedNpc && !activeMeeting && communicationChannel === 'work_phone' && <div className={styles.phonePanel}><div className={styles.phoneCard}><PersonPortrait npcId={selectedNpc} name={selectedNpcName} imageAssets={designerImageAssets} className={styles.phonePortrait} sizes="180px" /><div className={styles.phoneEyebrow}>工作电话 · 正式项目</div><h3>{selectedNpcName}</h3><p>{phoneCallActive ? (streaming ? '正在接通…' : '通话已接通') : '准备拨打工作电话'}</p>{phoneCallActive ? <><div className={styles.phoneLog}><div className={styles.phoneLogTitle}>本次通话</div>{currentPhoneMessages.length > 0 ? currentPhoneMessages.slice(-4).map((message) => <p key={message.ts}><strong>{message.role === 'user' ? '我：' : `${selectedNpcName}：`}</strong>{message.content || (streaming ? '…' : '')}</p>) : <p className={styles.phoneLogEmpty}>{streaming ? '正在接通…' : '等待对方回应…'}</p>}</div><button onClick={() => { phoneCallEndedByUserRef.current = true; abortRef.current?.abort(); setPhoneCallActive(false); setPhoneCallStartedAt(null); setInput(''); setCallHistoryRefreshKey((current) => current + 1); }} className={styles.hangupButton}>挂断</button></> : <><div className={styles.callHistory}><div className={styles.callHistoryTitle}>历史通话记录</div>{callHistoryStatus === 'loading' ? <p className={styles.phoneLogEmpty}>正在加载通话记录…</p> : callHistoryStatus === 'error' ? <div className={styles.callHistoryError}><p>通话记录加载失败，请稍后重试</p><button onClick={() => setCallHistoryRefreshKey((current) => current + 1)}>重试</button></div> : callHistory.length > 0 ? callHistory.map((record) => <div key={record.id} className={styles.callHistoryItem}><span>{formatMessageTime(new Date(record.createdAt).getTime())} · 第{record.round}阶段</span><strong>{callOutcomeLabel(record.outcome)}</strong></div>) : <p className={styles.phoneLogEmpty}>暂无历史通话记录</p>}</div><button onClick={() => { const startedAt = Date.now(); phoneCallEndedByUserRef.current = false; setPhoneCallStartedAt(startedAt); setPhoneCallActive(true); void sendMessage('[电话呼出]', { intent: 'call_connect', channel: 'work_phone', hidePlayerMessage: true }); }} disabled={!selectedNpc || streaming} className={styles.callButton}><Phone className="h-5 w-5" /><span>拨打工作电话</span></button></>}</div></div>}
                 {selectedNpc && !activeMeeting && communicationChannel !== 'work_phone' && visibleChannelMessages.length === 0 && <div className="mx-auto mt-12 max-w-sm rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-center"><MessageCircle className="mx-auto h-8 w-8 text-blue-500" /><div className="mt-3 text-sm font-bold">开始与 {selectedNpcName} 沟通</div><div className="mt-2 text-xs leading-5 text-slate-500">对方的真实态度不会直接显示，请留意措辞、回复节奏与后续行动。</div></div>}
-                 {selectedNpc && !activeMeeting && communicationChannel === 'email' && <div className="mx-auto max-w-2xl space-y-3">{visibleChannelMessages.map((message) => <article key={message.ts} className="rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-100 px-4 py-2 text-[11px] text-slate-500"><div><strong className="text-slate-800">{message.role === 'user' ? '我方' : selectedNpcName}</strong>　收件人：{message.role === 'user' ? selectedNpcName : '我方'}</div><div className="mt-1">主题：项目沟通　·　{formatMessageTime(message.ts)}</div></div><p className="whitespace-pre-wrap px-4 py-3 text-sm leading-6 text-slate-800">{message.content || (streaming ? '正在发送…' : '')}</p>{message.role === 'user' && message.emailAttachments && message.emailAttachments.length > 0 && <div className="mx-4 mb-4 rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="text-[10px] font-semibold text-blue-900">附件 · {message.emailAttachments.length} 个</div><div className="mt-2 space-y-2">{message.emailAttachments.map((attachment, index) => <div key={`${attachment.fileName}-${index}`} className="rounded-lg bg-white px-3 py-2 text-[11px] text-slate-700"><div className="font-semibold text-slate-900">{attachment.fileName}</div><div className="mt-1 leading-5">{attachment.description}</div></div>)}</div></div>}</article>)}</div>}
+                 {selectedNpc && !activeMeeting && communicationChannel === 'email' && <div className="mx-auto max-w-2xl space-y-3">{visibleChannelMessages.map((message) => <article key={message.ts} className="rounded-xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-100 px-4 py-2 text-[11px] text-slate-500"><div><strong className="text-slate-800">{message.role === 'user' ? '我方' : selectedNpcName}</strong>　收件人：{message.role === 'user' ? selectedNpcName : '我方'}</div><div className="mt-1">主题：项目沟通　·　{formatMessageTime(message.ts)}</div></div><p className="whitespace-pre-wrap px-4 py-3 text-sm leading-6 text-slate-800">{message.content || (streaming ? '正在发送…' : '')}</p>{renderMessageAttachments(message)}</article>)}</div>}
+                 {selectedNpc && !activeMeeting && communicationChannel === 'online' && <div className="mx-auto max-w-2xl space-y-3">{visibleChannelMessages.map((message) => <article key={message.ts} className={`rounded-2xl p-3 shadow-sm ${message.role === 'user' ? 'ml-auto max-w-[88%] bg-emerald-100 text-slate-800' : 'mr-auto max-w-[88%] border border-slate-200 bg-white text-slate-800'}`}><div className="mb-1 text-[10px] font-semibold text-slate-500">{message.role === 'user' ? '我方' : selectedNpcName} · {formatMessageTime(message.ts)}</div><p className="whitespace-pre-wrap text-sm leading-6">{message.content || (streaming ? '正在发送…' : '')}</p>{renderMessageAttachments(message)}</article>)}</div>}
                 <div ref={messagesEndRef} />
               </div>
               <div className={`border-t border-slate-200 bg-white p-4 ${activeMeeting ? 'hidden' : ''}`}>
                 {commandFeedback && <div className="mb-2 flex items-center gap-1.5 text-[11px] text-emerald-700"><Check className="h-3.5 w-3.5" />{commandFeedback}</div>}
-                 {communicationChannel === 'email' && <div className="mb-3 rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="flex items-center justify-between gap-3"><div><div className="text-[11px] font-semibold text-blue-900">邮件附件（自然语言描述）</div><div className="mt-1 text-[10px] text-blue-700">填写文件名称和内容简介，不需要先准备或选择系统材料。</div></div><button type="button" onClick={addEmailAttachment} disabled={streaming || emailAttachments.length >= 8} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-blue-700 disabled:opacity-40">添加附件</button></div>{emailAttachments.length > 0 && <div className="mt-3 space-y-2">{emailAttachments.map((attachment, index) => <div key={`${index}-${attachment.fileName}`} className="rounded-xl border border-blue-100 bg-white p-3"><div className="flex items-start gap-2"><div className="min-w-0 flex-1 space-y-2"><input value={attachment.fileName} onChange={(event) => updateEmailAttachment(index, 'fileName', event.target.value)} disabled={streaming} maxLength={160} placeholder="文件名称，例如：项目实施方案.pdf" className="w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs outline-none focus:border-blue-400 disabled:bg-slate-100" /><textarea value={attachment.description} onChange={(event) => updateEmailAttachment(index, 'description', event.target.value)} disabled={streaming} maxLength={1000} rows={2} placeholder="用自然语言描述文件内容，例如：包含分阶段实施计划、交付责任人和验收口径。" className="w-full resize-none rounded-lg border border-slate-200 px-2.5 py-2 text-xs leading-5 outline-none focus:border-blue-400 disabled:bg-slate-100" /></div><button type="button" onClick={() => removeEmailAttachment(index)} disabled={streaming} aria-label="删除附件" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"><X className="h-4 w-4" /></button></div></div>)}</div>}{hasInvalidEmailAttachment && <div className="mt-2 text-[10px] text-amber-700">请补全每个附件的文件名称和内容描述后再发送。</div>}</div>}
-                {communicationChannel === 'work_phone' && !phoneCallActive ? <div className="flex items-center justify-between rounded-xl bg-violet-50 px-4 py-3 text-sm text-violet-900"><span>点击上方绿色按钮拨打电话；接通后可输入通话要点。</span><Phone className="h-4 w-4" /></div> : <div className="flex items-end gap-2">
+                  {(communicationChannel === 'email' || communicationChannel === 'online') && <div className="mb-3 rounded-xl border border-blue-100 bg-blue-50 p-3"><div className="flex items-center justify-between gap-3"><div><div className="text-[11px] font-semibold text-blue-900">{communicationChannel === 'email' ? '邮件附件' : '微信附件'}（自然语言描述）</div><div className="mt-1 text-[10px] text-blue-700">填写文件名称和内容简介；最多 8 项。</div></div><button type="button" onClick={addEmailAttachment} disabled={streaming || emailAttachments.length >= 8} className="rounded-lg border border-blue-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-blue-700 disabled:opacity-40">添加附件</button></div>{emailAttachments.length > 0 && <div className="mt-3 space-y-2">{emailAttachments.map((attachment, index) => <div key={`${index}-${attachment.fileName}`} className="rounded-xl border border-blue-100 bg-white p-3"><div className="flex items-start gap-2"><div className="min-w-0 flex-1 space-y-2"><input value={attachment.fileName} onChange={(event) => updateEmailAttachment(index, 'fileName', event.target.value)} disabled={streaming} maxLength={160} placeholder="文件名称，例如：项目实施方案.pdf" className="w-full rounded-lg border border-slate-200 px-2.5 py-2 text-xs outline-none focus:border-blue-400 disabled:bg-slate-100" /><textarea value={attachment.description} onChange={(event) => updateEmailAttachment(index, 'description', event.target.value)} disabled={streaming} maxLength={1000} rows={2} placeholder="用自然语言描述文件内容，例如：包含分阶段实施计划、交付责任人和验收口径。" className="w-full resize-none rounded-lg border border-slate-200 px-2.5 py-2 text-xs leading-5 outline-none focus:border-blue-400 disabled:bg-slate-100" /></div><button type="button" onClick={() => removeEmailAttachment(index)} disabled={streaming} aria-label="删除附件" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-40"><X className="h-4 w-4" /></button></div></div>)}</div>}{hasInvalidChatAttachment && <div className="mt-2 text-[10px] text-amber-700">请补全每个附件的文件名称和内容描述后再发送。</div>}</div>}
+                {communicationChannel === 'work_phone' && !phoneCallActive ? <div className="flex items-center justify-between rounded-xl bg-violet-50 px-4 py-3 text-sm text-violet-900"><span>请在上方电话面板中拨打；接通后可输入通话要点。</span><Phone className="h-4 w-4" /></div> : <div className="flex items-end gap-2">
                   <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(input); } }} disabled={!selectedNpc || streaming} rows={3} placeholder={selectedContact?.status === 'known' ? '输入首次建联内容…' : communicationChannel === 'email' ? '撰写邮件正文…' : communicationChannel === 'online' ? '输入微信消息…' : '输入电话话术…'} className="min-h-[76px] flex-1 resize-none rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 disabled:bg-slate-100" />
                   <button onClick={toggleRecording} disabled={!selectedNpc || streaming} className={`rounded-xl border p-3 ${isRecording ? 'border-red-300 bg-red-50 text-red-600' : 'border-slate-200 text-slate-500'}`}>{isRecording ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}</button>
-                   <button onClick={() => sendMessage(input)} disabled={!selectedNpc || streaming || !input.trim() || (communicationChannel === 'email' && hasInvalidEmailAttachment)} className="rounded-xl bg-blue-600 p-3 text-white disabled:opacity-40"><Send className="h-4 w-4" /></button>
+                    <button onClick={() => sendMessage(input)} disabled={!selectedNpc || streaming || !input.trim() || ((communicationChannel === 'email' || communicationChannel === 'online') && hasInvalidChatAttachment)} className="rounded-xl bg-blue-600 p-3 text-white disabled:opacity-40"><Send className="h-4 w-4" /></button>
                 </div>}
                 <div className="mt-2 text-[10px] text-slate-400">邮件、电话和微信尝试均按行动点结算；电话可能无人接听。</div>
               </div>
@@ -1386,6 +1640,44 @@ function GameInner() {
           )}
         </main>
       </div>
+
+      {activeMeeting && selectedNpc && (() => {
+        const meetingNpc = npcs.find((npc) => npc.id === activeMeeting.npcId);
+        const meetingName = meetingNpc?.name ?? selectedNpcName;
+        const appointment = appointments.find((item) => item.id === activeMeeting.appointmentId);
+        const meetingLocation = appointment?.location || '客户单位';
+        const visibleTurn = Math.min(activeMeeting.turnCount + 1, activeMeeting.maxTurns);
+        return (
+          <section className={styles.visitImmersive} aria-label={`与${meetingName}的沉浸式拜访`}>
+            <VisitBackdrop sources={sceneImageCandidates(designerImageAssets, activeMeeting.npcId, meetingLocation)} />
+            <div className={styles.visitScrim} />
+            <div className={styles.visitBody}>
+              <div className={styles.visitHud}>
+                <div className={styles.visitPlace}><span>正在拜访</span><strong>{meetingLocation}</strong><small>{VISIT_LABELS[activeMeeting.visitType]} · {meetingName}</small></div>
+                <div className={styles.visitStatus}><span>当前轮次</span><strong>第 {visibleTurn} / {activeMeeting.maxTurns} 轮</strong><em>已完成 {activeMeeting.completedTasks.length} 项</em><button onClick={() => runCommand('end_visit', { appointmentId: activeMeeting.appointmentId, reason: 'player', summary: '' })} disabled={Boolean(commandBusy) || streaming} aria-label="结束拜访"><X className="h-4 w-4" /></button></div>
+              </div>
+              <div className={styles.visitStage}>
+                <div className={styles.visitPerson}>
+                  <PersonPortrait npcId={activeMeeting.npcId} name={meetingName} imageAssets={designerImageAssets} className={styles.visitPortrait} expression="calm" sizes="(max-width: 780px) 52vw, 470px" priority />
+                  <div className={styles.visitPersonLabel}><strong>{meetingName}</strong><span>{meetingNpc?.title ?? '客户联系人'}</span></div>
+                </div>
+                <section className={styles.visitDialogue}>
+                  <div className={styles.visitDialogueHead}>{meetingName} · {meetingNpc?.title ?? '客户联系人'}</div>
+                  <p className={`${styles.visitDialogueCopy} ${latestNpcMeetingMessage ? '' : styles.visitDialogueEmpty}`}>
+                    {latestNpcMeetingMessage?.content || (streaming ? '正在思考…' : `${meetingName} 正在等你开场。请用自己的话说明这次拜访的来意。`)}
+                  </p>
+                  {latestPlayerMeetingMessage && <div className={styles.visitLastPlayer}><strong>你刚刚说：</strong>{latestPlayerMeetingMessage.content}</div>}
+                  {streaming && <div className={styles.visitThinking}><span />正在整理回应…</div>}
+                  <div className={styles.visitComposer}>
+                    <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(input); } }} disabled={streaming} rows={2} placeholder="输入你想说的话；也可以直接表达告辞…" />
+                    <div className={styles.visitComposerActions}><button onClick={() => sendMessage(input)} disabled={streaming || !input.trim()}><Send className="h-4 w-4" /><span>{streaming ? '等待回应…' : '发送'}</span></button><button onClick={() => runCommand('end_visit', { appointmentId: activeMeeting.appointmentId, reason: 'player', summary: '' })} disabled={Boolean(commandBusy) || streaming}>主动告辞</button></div>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </section>
+        );
+      })()}
 
       {!gameState && savePickerReady && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
@@ -1404,9 +1696,29 @@ function GameInner() {
         </div>
       )}
 
+      {showBidRuleProposal && selectedNpc && (
+        <Modal title="表达项目想法" onClose={() => setShowBidRuleProposal(false)}>
+          <p className="text-sm leading-6 text-slate-600">用自己的话说明你希望客户在项目评审时重点关注什么。每次沟通消耗 {BID_RULE_PROPOSAL_COST} 行动点。</p>
+          <Field label="沟通对象">
+            <select value={proposalNpcId} onChange={(event) => setProposalNpcId(event.target.value)} disabled={Boolean(activeMeeting)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-400 disabled:bg-slate-100">
+              {proposalNpcOptions.map((npc) => <option key={npc.id} value={npc.id}>{npc.name} · {npc.title}</option>)}
+            </select>
+          </Field>
+          <Field label="你想表达的内容">
+            <textarea value={proposalText} onChange={(event) => setProposalText(event.target.value)} rows={5} maxLength={500} placeholder="例如：本项目的应用环境复杂，建议重点关注设备定位的精度和长期稳定性。" className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm leading-6 outline-none focus:border-blue-400" />
+            <div className="mt-1 text-right text-[10px] text-slate-400">{proposalText.trim().length}/500 字 · 至少 12 字</div>
+          </Field>
+          {coins < BID_RULE_PROPOSAL_COST && <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">行动点不足，暂时无法沟通。</div>}
+          <div className="mt-5 flex justify-end gap-2">
+            <button onClick={() => setShowBidRuleProposal(false)} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold">取消</button>
+            <button onClick={async () => { await runCommand('propose_bid_rule', { targetContactId: proposalNpcId, proposalText: proposalText.trim() }); }} disabled={Boolean(commandBusy) || streaming || !proposalNpcId || proposalText.trim().length < 12 || coins < BID_RULE_PROPOSAL_COST || Boolean(gameState?.submissionReady)} className="rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">发送内容</button>
+          </div>
+        </Modal>
+      )}
+
       {invitationResult && (
         <Modal title="邀约结果" onClose={() => setInvitationResult(null)}>
-          <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-4"><div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-700 text-lg font-bold text-white">{invitationResult.npcName.slice(0, 1)}</div><div><div className="font-bold">{invitationResult.npcName}</div><div className="text-xs text-slate-500">{invitationResult.npcTitle}</div></div></div>
+          <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-4"><PersonPortrait npcId={invitationResult.appointment.npcId} name={invitationResult.npcName} imageAssets={designerImageAssets} className={styles.invitationPortrait} sizes="48px" /><div><div className="font-bold">{invitationResult.npcName}</div><div className="text-xs text-slate-500">{invitationResult.npcTitle}</div></div></div>
           <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm leading-6 text-blue-950">{invitationResult.feedback}</div>
           <div className="mt-4 grid gap-2 text-xs sm:grid-cols-2"><div className="rounded-xl border border-slate-200 p-3"><span className="text-slate-500">状态</span><strong className="ml-2">{STATUS_LABELS[invitationResult.appointment.status] ?? invitationResult.appointment.status}</strong></div><div className="rounded-xl border border-slate-200 p-3"><span className="text-slate-500">执行</span><strong className="ml-2">接受后本阶段直接拜访</strong></div><div className="rounded-xl border border-slate-200 p-3"><span className="text-slate-500">地点</span><strong className="ml-2">{invitationResult.appointment.location}</strong></div><div className="rounded-xl border border-slate-200 p-3"><span className="text-slate-500">形式</span><strong className="ml-2">{VISIT_LABELS[invitationResult.appointment.visitType]}</strong></div></div>
         </Modal>

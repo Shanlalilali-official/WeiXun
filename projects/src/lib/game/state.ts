@@ -1,4 +1,6 @@
 import type { EmailAttachment, NpcTurnEvaluation } from '@/lib/contracts/ai';
+import type { ProjectOneVisitTask } from '@/lib/designer/project-one-five-person';
+import { PROJECT_ONE_FIVE_PERSON_NPCS } from '@/lib/designer/project-one-five-person';
 import { verifyNpcEvaluationSources } from '@/lib/ai/npc-evaluation-sources';
 import type { GameCommand } from '@/lib/contracts/game';
 import {
@@ -23,9 +25,15 @@ import {
   PROJECT_ONE_VISIT_RULES,
   PROJECT_ONE_WORK_END_MINUTE,
   getProjectOneNpc,
+  PROJECT_ONE_SUPPLIERS,
   type ContactChannel,
+  type BidRule,
+  type OverallSupportState,
+  type SupplierAdvantageType,
   type ProjectOneClue,
 } from '@/lib/game/project-one';
+import { BID_RULES, BID_RULE_PROPOSAL_COST, calculateOverallSupportState as getOverallSupportBand, calculateWeightedSupport, getProcurementRuleAccess, getRuleFit, getRuleMatchScore, interpretBidRuleProposal } from '@/lib/game/bid-rules';
+import type { FormalBriefVisitEvaluation, FormalPlanEvaluation } from '@/lib/ai/formal-workflow';
 
 export const GAME_DIMENSIONS = [
   'decisionAnalysis',
@@ -50,6 +58,44 @@ export type AppointmentStatus =
   | 'active'
   | 'completed';
 export type PreparationType = keyof typeof PROJECT_ONE_PREPARATION_RULES;
+export type SupplierId = (typeof PROJECT_ONE_SUPPLIERS)[number]['id'];
+
+export const SUPPORT_STATE_LABELS: Record<OverallSupportState, string> = {
+  HIGH: '高支持',
+  MID_HIGH: '中高支持',
+  MID: '中等支持',
+  LOW: '低支持',
+};
+
+export interface RuleProposalRecord {
+  id: string;
+  supplierId: SupplierId;
+  npcId: string;
+  bidRule: BidRule;
+  /** Player-entered wording. Kept internally for a traceable procurement audit. */
+  proposalText: string;
+  round: number;
+  accepted: boolean;
+  reason: string;
+}
+
+export interface SupplierPublicProfile {
+  id: SupplierId;
+  name: string;
+  advantageType: SupplierAdvantageType;
+  coreAdvantage: string;
+  preferredBidRule: BidRule;
+}
+
+export interface SupplierOutcomeSummary {
+  supplierId: SupplierId;
+  name: string;
+  coreAdvantage: string;
+  overallSupportState: OverallSupportState;
+  ruleFit: 'strong' | 'neutral' | 'weak';
+  rank: number;
+  reason: string;
+}
 
 export const PREPARATION_SEMANTIC_TAGS = [
   'target_person',
@@ -151,6 +197,38 @@ export interface GamePreparation {
   createdRound: number;
 }
 
+export interface GameWorkPlanRecord {
+  id: string;
+  scope: 'global' | 'npc';
+  npcId: string | null;
+  content: string;
+  recommendations: string[];
+  disclosures: Array<{ npcId: string; facts: string[]; clues: string[] }>;
+  costPoints: number;
+  createdRound: number;
+}
+
+export interface GamePostalRecord {
+  id: string;
+  npcId: string;
+  content: string;
+  attachment?: { title: string; content: string };
+  costPoints: number;
+  createdRound: number;
+}
+
+/** Advisory feedback only. It never represents an actual completed visit. */
+export interface GameVisitBriefRecord {
+  id: string;
+  npcId: string;
+  content: string;
+  strengths: string[];
+  risks: string[];
+  nextStep: string;
+  costPoints: number;
+  createdRound: number;
+}
+
 export type NotificationKind =
   | 'appointment'
   | 'commitment'
@@ -218,6 +296,12 @@ export interface ActiveMeeting {
   startedAt: string;
   workTopicOpenedBy: 'player' | 'npc' | null;
   usedPreparationIds: string[];
+  /**
+   * Tasks completed during this actual visit. These are produced by the
+   * server-side evaluator and checked against the NPC's configured task list;
+   * client commands never carry them.
+   */
+  completedTasks?: ProjectOneVisitTask[];
 }
 
 export interface GameMeetingMinutes {
@@ -233,6 +317,10 @@ export interface GameMeetingMinutes {
   nextStep: string;
   nextStepRound: number;
   nextStepMinute: number;
+  /** Persisted end cause lets a restored formal visit explain why it stopped. */
+  endReason: 'completed' | 'player' | 'npc_left' | 'turn_limit';
+  /** Completed server-validated visit tasks, retained for the meeting audit. */
+  completedTasks: ProjectOneVisitTask[];
   owner: string;
   createdRound: number;
   createdMinute: number;
@@ -341,9 +429,20 @@ export interface GameRuntimeState {
   cumulativeSpentPoints: number;
   appointments: GameAppointment[];
   preparations: GamePreparation[];
+  workPlans: GameWorkPlanRecord[];
+  postalRecords: GamePostalRecord[];
+  visitBriefs: GameVisitBriefRecord[];
   meetingMinutes: GameMeetingMinutes[];
   notifications: GameNotification[];
   npcAttitudes: Record<string, NpcAttitudeState>;
+  /** Internal customer support matrix. Rival values are stripped from public snapshots. */
+  supplierSupport: Partial<Record<SupplierId, Record<string, number>>>;
+  /** Current procurement rule, shared by the game state and final outcome. */
+  bidRule: BidRule;
+  ruleProposalHistory: RuleProposalRecord[];
+  overallSupportState: OverallSupportState;
+  /** Safe supplier descriptions for player-facing screens. */
+  supplierProfiles?: SupplierPublicProfile[];
   outcomeEvidence: OutcomeEvidenceLedger;
   complianceRisks: ComplianceRiskEvent[];
   publicResearch: Record<string, GamePublicResearchRecord>;
@@ -388,9 +487,54 @@ export interface GameOutcome {
   won: boolean;
   eligible: boolean;
   supportByNpc: Record<string, number>;
-  competitorScore: number;
+  overallSupportState: OverallSupportState;
+  supportBySupplier: Record<SupplierId, OverallSupportState>;
+  bidRule: BidRule;
+  ruleProposalHistory: RuleProposalRecord[];
+  supplierResults: SupplierOutcomeSummary[];
+  winnerSupplierId: SupplierId;
+  winnerSupplierName: string;
+  winnerReason: string;
+  /** Legacy internal competitor pressure metric; deliberately omitted from JSON/player views. */
+  competitorScore?: number;
   competitivePosition: CompetitivePosition;
 }
+
+/**
+ * The procurement calculation deliberately remains server-owned.  A player
+ * can see the winning supplier and each supplier's public core advantage, but
+ * not the evaluation rule, rule-fit signal, private relationship scores, or
+ * their derived support bands.
+ */
+export type PlayerVisibleSupplierOutcomeSummary = Pick<
+  SupplierOutcomeSummary,
+  'supplierId' | 'name' | 'coreAdvantage' | 'rank'
+>;
+
+export type PlayerVisibleGameOutcome = Omit<
+  GameOutcome,
+  | 'supportByNpc'
+  | 'overallSupportState'
+  | 'supportBySupplier'
+  | 'decisionChainSupportScore'
+  | 'decisionChainSupport'
+  | 'supplierResults'
+  | 'ruleProposalHistory'
+  | 'bidRule'
+> & {
+  supplierResults: PlayerVisibleSupplierOutcomeSummary[];
+};
+
+/** Public session shape. Private relationship data never crosses a player API boundary. */
+export type PlayerVisibleGameState = Omit<
+  GameRuntimeState,
+  | 'npcAffinity'
+  | 'npcAttitudes'
+  | 'supplierSupport'
+  | 'overallSupportState'
+  | 'bidRule'
+  | 'ruleProposalHistory'
+>;
 
 export interface ExecuteGameCommandResult {
   state: GameRuntimeState;
@@ -417,7 +561,32 @@ export interface ExecuteGameCommandOptions {
   /** Trusted server-side competitor proposal; invalid values use the normal deterministic fallback. */
   competitorStageAction?: CompetitorStageActionCandidate;
   competitorStageSource?: 'model' | 'fallback';
+  /** Server-generated AI feedback; player input never supplies this. */
+  workPlanEvaluation?: FormalPlanEvaluation;
+  briefVisitEvaluation?: FormalBriefVisitEvaluation;
 }
+
+/**
+ * Internal result of the visit decision evaluator. It is deliberately not a
+ * GameCommand payload: the active meeting identifies the NPC and state.ts
+ * verifies that the evaluator can only complete an allowed, unfinished task.
+ */
+export interface TrustedMeetingTurnProgress {
+  completedTask?: ProjectOneVisitTask | null;
+  /** A validated explicit player farewell from the current dialogue turn. */
+  playerFarewell?: boolean;
+  /** A validated immediate departure from the NPC's actual reply. */
+  npcLeft?: boolean;
+}
+
+export const FORMAL_WORKFLOW_ACTION_POINTS = {
+  workPlan: 1,
+  postal: 2,
+  briefVisit: 2,
+  directVisit: 2,
+  skipPreparationRisk: 1,
+} as const;
+export const FORMAL_ACTUAL_VISIT_MAX_TURNS = 20;
 
 export const RELATIONSHIP_ACTIONS: Record<string, RelationshipAction> = {
   gift: { id: 'gift', cost: 5, affinityGain: 3 },
@@ -502,6 +671,100 @@ function normalizeCompetitorState(value?: Partial<CompetitorRuntimeState>): Comp
   };
 }
 
+function getPlayerSupplierId(state: Pick<GameRuntimeState, 'companyId'>): SupplierId {
+  return PROJECT_ONE_SUPPLIERS.some((supplier) => supplier.id === state.companyId)
+    ? state.companyId as SupplierId
+    : 'player-company';
+}
+
+function normalizeSupplierSupport(
+  existing: GameRuntimeState['supplierSupport'] | undefined,
+  npcAttitudes: Record<string, NpcAttitudeState>,
+  companyId: string,
+): GameRuntimeState['supplierSupport'] {
+  const playerSupplierId = getPlayerSupplierId({ companyId });
+  return Object.fromEntries(PROJECT_ONE_SUPPLIERS.map((supplier) => [supplier.id,
+    Object.fromEntries(PROJECT_ONE_NPCS.map((npc) => [
+      npc.id,
+      supplier.id === playerSupplierId
+        ? npcAttitudes[npc.id]?.support ?? npc.initialSupport
+        : clamp(existing?.[supplier.id]?.[npc.id] ?? supplier.initialSupportByNpc[npc.id] ?? 35),
+    ])),
+  ])) as GameRuntimeState['supplierSupport'];
+}
+
+function getSupplierSupportValues(
+  state: Pick<GameRuntimeState, 'companyId' | 'npcAttitudes' | 'npcAffinity' | 'supplierSupport'>,
+  supplierId: SupplierId,
+) {
+  const supplier = PROJECT_ONE_SUPPLIERS.find((item) => item.id === supplierId);
+  return PROJECT_ONE_NPCS.map((npc) => ({
+    support: supplierId === getPlayerSupplierId(state)
+      ? state.npcAttitudes[npc.id]?.support ?? state.npcAffinity[npc.id] ?? npc.initialSupport
+      : state.supplierSupport?.[supplierId]?.[npc.id] ?? supplier?.initialSupportByNpc[npc.id] ?? 35,
+    weight: npc.decisionWeight,
+  }));
+}
+
+export function calculateSupplierOverallSupportState(
+  state: Pick<GameRuntimeState, 'companyId' | 'npcAttitudes' | 'npcAffinity' | 'supplierSupport'>,
+  supplierId: SupplierId,
+): OverallSupportState {
+  return getOverallSupportBand(getSupplierSupportValues(state, supplierId));
+}
+
+function getSupplierAverageSupport(
+  state: Pick<GameRuntimeState, 'companyId' | 'npcAttitudes' | 'npcAffinity' | 'supplierSupport'>,
+  supplierId: SupplierId,
+): number {
+  return calculateWeightedSupport(getSupplierSupportValues(state, supplierId));
+}
+
+function applySupplierSupportDelta(
+  state: GameRuntimeState,
+  supplierId: SupplierId,
+  npcId: string,
+  delta: number,
+): GameRuntimeState {
+  const current = state.supplierSupport?.[supplierId]?.[npcId]
+    ?? PROJECT_ONE_SUPPLIERS.find((supplier) => supplier.id === supplierId)?.initialSupportByNpc[npcId]
+    ?? 35;
+  return reconcileAutomaticBidRule({
+    ...state,
+    supplierSupport: {
+      ...state.supplierSupport,
+      [supplierId]: { ...state.supplierSupport?.[supplierId], [npcId]: clamp(current + delta) },
+    },
+  });
+}
+
+function reconcileAutomaticBidRule(state: GameRuntimeState): GameRuntimeState {
+  const highSuppliers = PROJECT_ONE_SUPPLIERS
+    .filter((supplier) => calculateSupplierOverallSupportState(state, supplier.id) === 'HIGH')
+    .sort((left, right) => getSupplierAverageSupport(state, right.id) - getSupplierAverageSupport(state, left.id)
+      || left.id.localeCompare(right.id));
+  const playerSupplierId = getPlayerSupplierId(state);
+  const playerSupportState = calculateSupplierOverallSupportState(state, playerSupplierId);
+  if (!highSuppliers.length) {
+    return state.overallSupportState === playerSupportState
+      ? state
+      : { ...state, overallSupportState: playerSupportState };
+  }
+
+  const leadingSupplier = highSuppliers[0];
+  const nextState: GameRuntimeState = state.overallSupportState === playerSupportState
+    ? state
+    : { ...state, overallSupportState: playerSupportState };
+  if (nextState.bidRule === leadingSupplier.preferredBidRule) return nextState;
+
+  // This is internal project state.  Do not create a notification: the
+  // direction may be disclosed only by an authorised NPC in a conversation.
+  return {
+    ...nextState,
+    bidRule: leadingSupplier.preferredBidRule,
+  };
+}
+
 function positionFromScores(playerScore: number, competitorScore: number): CompetitivePosition {
   const gap = playerScore - competitorScore;
   return gap >= 6 ? 'leading' : gap <= -6 ? 'lagging' : 'close';
@@ -540,6 +803,52 @@ function defaultAttitude(support = 35): NpcAttitudeState {
     complianceAwareness: 0,
     history: [],
   };
+}
+
+/** Preserve only records produced by a completed public-search command. */
+function normalizePublicResearchRecords(value: unknown): Record<string, GamePublicResearchRecord> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, GamePublicResearchRecord>>((records, [npcId, raw]) => {
+    if (!getProjectOneNpc(npcId) || !raw || typeof raw !== 'object' || Array.isArray(raw)) return records;
+    const item = raw as Record<string, unknown>;
+    const completedRound = item.completedRound;
+    const completedMinute = item.completedMinute;
+    const costPoints = item.costPoints;
+    if (item.npcId !== npcId || !Array.isArray(item.facts) || !Array.isArray(item.weakSignals)
+      || typeof item.sourceNote !== 'string' || typeof completedRound !== 'number' || !Number.isFinite(completedRound)
+      || typeof completedMinute !== 'number' || !Number.isFinite(completedMinute)
+      || typeof costPoints !== 'number' || !Number.isFinite(costPoints)) return records;
+    records[npcId] = {
+      npcId,
+      facts: item.facts.filter((fact): fact is string => typeof fact === 'string').map((fact) => fact.slice(0, 500)).slice(0, 12),
+      weakSignals: item.weakSignals.filter((signal): signal is string => typeof signal === 'string').map((signal) => signal.slice(0, 500)).slice(0, 12),
+      sourceNote: item.sourceNote.slice(0, 500),
+      completedRound: Math.max(1, Math.floor(completedRound)),
+      completedMinute: Math.max(0, Math.floor(completedMinute)),
+      costPoints: Math.max(0, Math.floor(costPoints)),
+    };
+    return records;
+  }, {});
+}
+
+/** Competitor claims are player-heard NPC statements, never hidden actions. */
+function normalizePlayerVisibleCompetitorClaims(value: unknown): CompetitorClaimRecord[] {
+  if (!Array.isArray(value)) return [];
+  const statuses = new Set<CompetitorClaimRecord['truthStatus']>(['unverified', 'corroborated', 'contradicted', 'false']);
+  return value.flatMap((raw) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+    const item = raw as Record<string, unknown>;
+    if (typeof item.id !== 'string' || typeof item.npcId !== 'string' || typeof item.statement !== 'string'
+      || typeof item.stage !== 'number' || !statuses.has(item.truthStatus as CompetitorClaimRecord['truthStatus'])
+      || !getProjectOneNpc(item.npcId) || !item.id.trim() || !item.statement.trim()) return [];
+    return [{
+      id: item.id.slice(0, 160),
+      npcId: item.npcId,
+      stage: Math.max(1, Math.floor(item.stage)),
+      statement: item.statement.slice(0, 500),
+      truthStatus: item.truthStatus as CompetitorClaimRecord['truthStatus'],
+    }];
+  }).slice(-80);
 }
 
 type ProjectOneStateInput = Partial<GameRuntimeState> & Pick<
@@ -585,7 +894,9 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
     npc.id,
     npcAttitudes[npc.id].support,
   ]));
-  return {
+  const companyId = state.companyId ?? 'player-company';
+  const candidateBidRule = (state as Partial<GameRuntimeState>).bidRule;
+  const normalized: GameRuntimeState = {
     ...state,
     progressionMultiplier: state.progressionMultiplier ?? 1,
     currentRound: state.currentStage ?? state.currentRound,
@@ -593,7 +904,7 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
     currentStage: state.currentStage ?? state.currentRound,
     maxStages: state.maxStages ?? state.maxRounds,
     gameMode: state.gameMode ?? 'solo',
-    companyId: state.companyId ?? 'player-company',
+    companyId,
     roomStageVersion: state.gameMode === 'multiplayer'
       ? Math.max(1, Math.floor(state.roomStageVersion ?? 1))
       : undefined,
@@ -606,18 +917,38 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
     cumulativeSpentPoints: Math.max(0, state.cumulativeSpentPoints ?? 0),
     appointments: state.appointments ?? [],
     preparations: state.preparations ?? [],
-    meetingMinutes: state.meetingMinutes ?? [],
+    workPlans: state.workPlans ?? [],
+    postalRecords: state.postalRecords ?? [],
+    visitBriefs: state.visitBriefs ?? [],
+    meetingMinutes: (state.meetingMinutes ?? []).map((minutes) => ({
+      ...minutes,
+      endReason: minutes.endReason ?? 'completed',
+      completedTasks: minutes.completedTasks ?? [],
+    })),
     notifications: state.notifications ?? [],
     npcAttitudes,
     npcAffinity,
+    supplierSupport: normalizeSupplierSupport(state.supplierSupport, npcAttitudes, companyId),
+    bidRule: candidateBidRule && Object.prototype.hasOwnProperty.call(BID_RULES, candidateBidRule) ? candidateBidRule : 'balanced',
+    ruleProposalHistory: (state.ruleProposalHistory ?? []).map((record) => ({
+      ...record,
+      // Saves created before natural-language proposals retain their audit
+      // record, without inventing player wording.
+      proposalText: record.proposalText ?? '',
+    })),
+    overallSupportState: 'LOW',
+    supplierProfiles: PROJECT_ONE_SUPPLIERS.map(({ id, name, advantageType, coreAdvantage, preferredBidRule }) => ({
+      id: id as SupplierId,
+      name,
+      advantageType,
+      coreAdvantage,
+      preferredBidRule,
+    })),
     outcomeEvidence: state.outcomeEvidence ?? { publicValue: [], personalBenefit: [] },
     complianceRisks: state.complianceRisks ?? [],
-    // Public search results are a one-command view, never a contact-card
-    // field. Drop any legacy persisted map while keeping the field in the
-    // runtime shape for old clients and migrations.
-    publicResearch: {},
+    publicResearch: normalizePublicResearchRecords(state.publicResearch),
     competitorState: normalizeCompetitorState(state.competitorState),
-    competitorClaims: state.competitorClaims ?? [],
+    competitorClaims: normalizePlayerVisibleCompetitorClaims(state.competitorClaims),
     submissionReady: state.submissionReady ?? false,
     processedCommandIds: state.processedCommandIds ?? [],
     phaseStartedAt: LEGACY_SIMULATION_MARKER,
@@ -627,6 +958,7 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
     npcContacts: contacts,
     activeMeeting: state.activeMeeting ? normalizeActiveMeeting(state.activeMeeting) : null,
   };
+  return reconcileAutomaticBidRule(normalized);
 }
 
 function normalizeActiveMeeting(meeting: ActiveMeeting): ActiveMeeting {
@@ -637,10 +969,11 @@ function normalizeActiveMeeting(meeting: ActiveMeeting): ActiveMeeting {
     ...meeting,
     appointmentId: meeting.appointmentId ?? meeting.id,
     visitType,
-    maxTurns: meeting.maxTurns ?? rules.maxTurns,
+    maxTurns: Math.max(FORMAL_ACTUAL_VISIT_MAX_TURNS, meeting.maxTurns ?? rules.maxTurns),
     durationMinutes: meeting.durationMinutes ?? rules.durationMinutes,
     workTopicOpenedBy: meeting.workTopicOpenedBy ?? null,
     usedPreparationIds: meeting.usedPreparationIds ?? [],
+    completedTasks: meeting.completedTasks ?? [],
   };
 }
 
@@ -832,11 +1165,17 @@ export function applyNpcAttitudeDelta(
       source: delta.source ?? 'system',
     }].slice(-40),
   };
-  return {
+  const playerSupplierId = getPlayerSupplierId(state);
+  const nextState: GameRuntimeState = {
     ...state,
     npcAttitudes: { ...state.npcAttitudes, [npcId]: next },
     npcAffinity: { ...state.npcAffinity, [npcId]: next.support },
+    supplierSupport: {
+      ...state.supplierSupport,
+      [playerSupplierId]: { ...state.supplierSupport?.[playerSupplierId], [npcId]: next.support },
+    },
   };
+  return reconcileAutomaticBidRule(nextState);
 }
 
 type ExtendedNpcEvaluation = NpcTurnEvaluation & {
@@ -1162,11 +1501,12 @@ export function applyRelationshipAction(state: GameRuntimeState, npcId: string, 
       appointmentId: id,
       visitType,
       turnCount: 0,
-      maxTurns: rules.maxTurns,
+      maxTurns: FORMAL_ACTUAL_VISIT_MAX_TURNS,
       durationMinutes: rules.durationMinutes,
       startedAt: `round:${state.currentRound}:minute:${state.simulatedClockMinutes}`,
       workTopicOpenedBy: null,
       usedPreparationIds: [],
+      completedTasks: [],
     },
     lastAction: actionId,
   };
@@ -1219,10 +1559,51 @@ export function getGameOutcome(state: GameRuntimeState): GameOutcome {
     .filter((risk) => risk.status === 'triggered')
     .reduce((sum, risk) => sum + Math.max(0, risk.penalty), 0));
   const finalScore = Math.max(0, Math.round((baseScore - compliancePenalty) * 10) / 10);
-  const won = finalScore >= 60;
-  const competitorScore = roundScore(state.competitorState?.pressureScore ?? DEFAULT_COMPETITOR_STATE.pressureScore);
-  const competitivePosition = positionFromScores(finalScore, competitorScore);
-  return {
+  const playerSupplierId = getPlayerSupplierId(state);
+  const supportBySupplier = Object.fromEntries(PROJECT_ONE_SUPPLIERS.map((supplier) => [
+    supplier.id,
+    calculateSupplierOverallSupportState(state, supplier.id),
+  ])) as Record<SupplierId, OverallSupportState>;
+  const candidates = PROJECT_ONE_SUPPLIERS.map((supplier) => {
+    const supportAverage = getSupplierAverageSupport(state, supplier.id);
+    const isPlayer = supplier.id === playerSupplierId;
+    // The player's established sales/value/compliance result remains its base.
+    // Competitors use scenario competitiveness, with ABC stage pressure retained.
+    const baseCompetitiveness = isPlayer
+      ? finalScore
+      : supplier.baseCompetitivenessScore + (supplier.id === 'abc-company'
+        ? (state.competitorState?.pressureScore ?? DEFAULT_COMPETITOR_STATE.pressureScore) - DEFAULT_COMPETITOR_STATE.pressureScore
+        : 0);
+    const supportScore = (supportAverage - 50) * 0.3;
+    const ruleMatchScore = getRuleMatchScore(supplier, state.bidRule);
+    const score = roundScore(baseCompetitiveness + supportScore + ruleMatchScore);
+    const ruleFit = getRuleFit(supplier, state.bidRule);
+    const supportState = supportBySupplier[supplier.id];
+    const reason = `${SUPPORT_STATE_LABELS[supportState]}；${BID_RULES[state.bidRule].label}与${supplier.coreAdvantage}的匹配度${ruleFit === 'strong' ? '高' : ruleFit === 'neutral' ? '一般' : '低'}`;
+    return { supplier, supportAverage, supportState, ruleMatchScore, ruleFit, score, reason };
+  }).sort((left, right) =>
+    right.score - left.score
+    || right.supportAverage - left.supportAverage
+    || right.ruleMatchScore - left.ruleMatchScore
+    || left.supplier.id.localeCompare(right.supplier.id));
+  const winner = candidates[0];
+  const won = winner.supplier.id === playerSupplierId;
+  const playerCandidate = candidates.find((candidate) => candidate.supplier.id === playerSupplierId)!;
+  const strongestCompetitor = candidates.find((candidate) => candidate.supplier.id !== playerSupplierId);
+  const competitivePosition = strongestCompetitor
+    ? positionFromScores(playerCandidate.score, strongestCompetitor.score)
+    : 'leading';
+  const supplierResults: SupplierOutcomeSummary[] = candidates.map((candidate, index) => ({
+    supplierId: candidate.supplier.id as SupplierId,
+    name: candidate.supplier.name,
+    coreAdvantage: candidate.supplier.coreAdvantage,
+    overallSupportState: candidate.supportState,
+    ruleFit: candidate.ruleFit,
+    rank: index + 1,
+    reason: candidate.reason,
+  }));
+  const winnerReason = `综合基础竞争力、客户支持和规则匹配后，${winner.supplier.name}排名第一。其客户支持为${SUPPORT_STATE_LABELS[winner.supportState]}，最终规则为「${BID_RULES[state.bidRule].label}」，核心优势是${winner.supplier.coreAdvantage}。`;
+  const outcome: GameOutcome = {
     fiveDimensionScore,
     publicValueScore,
     personalBenefitScore,
@@ -1234,9 +1615,23 @@ export function getGameOutcome(state: GameRuntimeState): GameOutcome {
     won,
     eligible: won,
     supportByNpc,
-    competitorScore,
+    overallSupportState: supportBySupplier[playerSupplierId],
+    supportBySupplier,
+    bidRule: state.bidRule,
+    ruleProposalHistory: state.ruleProposalHistory,
+    supplierResults,
+    winnerSupplierId: winner.supplier.id as SupplierId,
+    winnerSupplierName: winner.supplier.name,
+    winnerReason,
     competitivePosition,
   };
+  // Preserve the old in-process pressure value for server callers while keeping
+  // it out of API JSON and player-visible result objects.
+  Object.defineProperty(outcome, 'competitorScore', {
+    value: roundScore(state.competitorState?.pressureScore ?? DEFAULT_COMPETITOR_STATE.pressureScore),
+    enumerable: false,
+  });
+  return outcome;
 }
 
 function refreshCompetitivePosition(state: GameRuntimeState): GameRuntimeState {
@@ -1273,6 +1668,7 @@ function processCompetitorAction(
     reason: `竞品${template.title.replace('竞品', '')}`,
     source: action.id,
   });
+  next = applySupplierSupportDelta(next, 'abc-company', template.targetNpcId, Math.max(0, 3 - mitigationCount));
   next = {
     ...next,
     competitorState: {
@@ -1295,16 +1691,162 @@ export function getWinConditions(state: GameRuntimeState) {
 }
 
 /** Never serialize hidden competitor progress or AI stage actions to a player. */
-export function toPlayerVisibleGameState(state: GameRuntimeState): GameRuntimeState {
+export function toPlayerVisibleGameState(state: GameRuntimeState): PlayerVisibleGameState {
+  const playerState = { ...state } as Partial<GameRuntimeState>;
+  delete playerState.npcAffinity;
+  delete playerState.npcAttitudes;
+  delete playerState.supplierSupport;
+  delete playerState.overallSupportState;
+  delete playerState.bidRule;
+  delete playerState.ruleProposalHistory;
   return {
-    ...state,
-    publicResearch: {},
-    competitorClaims: [],
+    ...playerState,
+    // These records represent public facts the player explicitly searched;
+    // never synthesize profiles for people whose search was not completed.
+    publicResearch: normalizePublicResearchRecords(state.publicResearch),
+    // Claims are NPC statements already heard by the player. Hidden competitor
+    // pressure, position and stage actions remain in competitorState/actions.
+    competitorClaims: normalizePlayerVisibleCompetitorClaims(state.competitorClaims),
+    supplierProfiles: PROJECT_ONE_SUPPLIERS.map(({ id, name, advantageType, coreAdvantage, preferredBidRule }) => ({
+      id: id as SupplierId,
+      name,
+      advantageType,
+      coreAdvantage,
+      preferredBidRule,
+    })),
     competitorState: {
       name: state.competitorState.name,
       pressureScore: 0,
       position: 'close',
       actions: [],
+    },
+  } as PlayerVisibleGameState;
+}
+
+/**
+ * Final settlement still uses relationship support internally. This serializer
+ * exposes the decision without exposing the internal procurement rule, any
+ * support score/band, or proposal history. Rule detail is available only from
+ * an authorised NPC conversation during the project.
+ */
+export function toPlayerVisibleGameOutcome(outcome: GameOutcome): PlayerVisibleGameOutcome {
+  return {
+    fiveDimensionScore: outcome.fiveDimensionScore,
+    publicValueScore: outcome.publicValueScore,
+    personalBenefitScore: outcome.personalBenefitScore,
+    baseScore: outcome.baseScore,
+    compliancePenalty: outcome.compliancePenalty,
+    finalScore: outcome.finalScore,
+    won: outcome.won,
+    eligible: outcome.eligible,
+    supplierResults: outcome.supplierResults.map(({ supplierId, name, coreAdvantage, rank }) => ({
+      supplierId,
+      name,
+      coreAdvantage,
+      rank,
+    })),
+    winnerSupplierId: outcome.winnerSupplierId,
+    winnerSupplierName: outcome.winnerSupplierName,
+    winnerReason: `综合方案表现、客户意见和最终评审方向后，${outcome.winnerSupplierName}排名第一。其核心优势是${outcome.supplierResults.find((item) => item.supplierId === outcome.winnerSupplierId)?.coreAdvantage ?? '已记录方案优势'}。`,
+    competitivePosition: outcome.competitivePosition,
+  };
+}
+
+/** Strip relationship-only fields from command responses before returning them to a player. */
+export function toPlayerVisibleGameCommandResult(result: Record<string, unknown>): Record<string, unknown> {
+  const rest = { ...result };
+  const outcome = rest.outcome;
+  delete rest.overallSupportState;
+  delete rest.supportByNpc;
+  delete rest.supportBySupplier;
+  delete rest.decisionChainSupport;
+  delete rest.decisionChainSupportScore;
+  // These are procurement-internal facts during play. The only player-facing
+  // acknowledgement is that their wording has been recorded for the contact.
+  delete rest.bidRule;
+  delete rest.accepted;
+  delete rest.reason;
+  delete rest.proposalText;
+  delete rest.outcome;
+  if (!outcome || typeof outcome !== 'object' || Array.isArray(outcome)) return rest;
+  return { ...rest, outcome: toPlayerVisibleGameOutcome(outcome as GameOutcome) };
+}
+
+function proposeBidRule(
+  state: GameRuntimeState,
+  command: Extract<GameCommand, { type: 'propose_bid_rule' }>,
+): { state: GameRuntimeState; result: Record<string, unknown> } {
+  const { targetContactId: npcId, proposalText } = command.payload;
+  const interpretation = interpretBidRuleProposal(proposalText);
+  // Never silently select a direction for the player. Invalid or ambiguous
+  // prose fails before any action point is consumed.
+  if (!interpretation) throw new Error('PROPOSAL_DIRECTION_UNCLEAR');
+  const { bidRule } = interpretation;
+  if (!state.unlockedNpcIds.includes(npcId)) throw new Error('NPC_LOCKED');
+  const meetingTarget = state.activeMeeting?.npcId === npcId;
+  if (state.activeMeeting && !meetingTarget) throw new Error('PROPOSAL_NPC_NOT_IN_MEETING');
+  if (!meetingTarget && state.npcContacts[npcId]?.status === 'known') throw new Error('NPC_NOT_CONNECTED');
+  const access = getProcurementRuleAccess(npcId);
+  if (!access.canModify || !access.allowedRules.includes(bidRule)) throw new Error('NPC_RULE_AUTHORITY_REQUIRED');
+  if (state.ruleProposalHistory.some((record) => record.npcId === npcId && record.bidRule === bidRule)) {
+    throw new Error('RULE_PROPOSAL_ALREADY_MADE');
+  }
+  const npc = getProjectOneNpc(npcId);
+  if (!npc) throw new Error('NPC_UNKNOWN');
+  const playerSupplierId = getPlayerSupplierId(state);
+  const playerProfile = PROJECT_ONE_SUPPLIERS.find((supplier) => supplier.id === playerSupplierId);
+  if (!playerProfile) throw new Error('SUPPLIER_UNKNOWN');
+
+  let next = consumeGameTime(state, 0, { pointCost: BID_RULE_PROPOSAL_COST, allowDuringMeeting: meetingTarget });
+  const overallSupportState = calculateSupplierOverallSupportState(next, playerSupplierId);
+  const targetSupport = next.npcAttitudes[npcId]?.support ?? next.npcAffinity[npcId] ?? npc.initialSupport;
+  const averageSupport = getSupplierAverageSupport(next, playerSupplierId);
+  const alignedWithAdvantage = bidRule === playerProfile.preferredBidRule;
+  let accepted = false;
+  let reason = '';
+  if (overallSupportState === 'LOW') {
+    reason = '对方认为当前没有必要调整评价标准，建议暂未被采纳。';
+  } else if (!alignedWithAdvantage) {
+    reason = `客户认为该建议与我方“${playerProfile.coreAdvantage}”的价值方向不够一致，暂未采纳。`;
+  } else if (overallSupportState === 'HIGH') {
+    accepted = targetSupport >= 50;
+    reason = accepted
+      ? '客户愿意沿着我方优势完善评价标准。'
+      : '该关键人物仍需要更多合作证据，暂未支持这项建议。';
+  } else if (overallSupportState === 'MID_HIGH') {
+    accepted = npc.decisionWeight >= 0.18 && targetSupport >= 55 && averageSupport >= 50;
+    reason = accepted
+      ? '关键人物认可建议方向，客户决定将该项纳入本次招标评价标准。'
+      : '关键人物认为还需要更多支持证据，暂未推动该建议进入招标标准。';
+  } else {
+    accepted = npc.decisionWeight >= 0.24 && targetSupport >= 72 && averageSupport >= 35;
+    reason = accepted
+      ? '关键决策人明确支持该建议，客户决定将该项纳入本次招标评价标准。'
+      : '客户内部意见尚未统一，这项建议暂未通过。';
+  }
+
+  const record: RuleProposalRecord = {
+    id: `bid-rule-proposal:${command.commandId}`,
+    supplierId: playerSupplierId,
+    npcId,
+    bidRule,
+    proposalText: interpretation.proposalText,
+    round: next.currentRound,
+    accepted,
+    reason,
+  };
+  next = {
+    ...next,
+    ...(accepted ? { bidRule } : {}),
+    ruleProposalHistory: [...next.ruleProposalHistory, record],
+  };
+  next = reconcileAutomaticBidRule(next);
+  return {
+    state: next,
+    result: {
+      // The UI may acknowledge receipt but cannot learn whether the rule was
+      // accepted or what the active evaluation direction is.
+      recorded: true,
     },
   };
 }
@@ -1460,7 +2002,7 @@ export function shouldNpcRespond(seed: string, chancePercent: number): boolean {
   return (hash >>> 0) % 100 < Math.max(0, Math.min(100, chancePercent));
 }
 
-function completeMeeting(state: GameRuntimeState, reason: string, summary = ''): GameRuntimeState {
+function completeMeeting(state: GameRuntimeState, reason: GameMeetingMinutes['endReason'], summary = ''): GameRuntimeState {
   const meeting = state.activeMeeting;
   if (!meeting) return state;
   const appointment = state.appointments.find((item) => item.id === meeting.appointmentId);
@@ -1506,6 +2048,8 @@ function completeMeeting(state: GameRuntimeState, reason: string, summary = ''):
     nextStep: pendingMaterials.length > 0 ? '补发材料、确认纪要并约定后续沟通' : '确认纪要并约定后续沟通',
     nextStepRound,
     nextStepMinute,
+    endReason: reason,
+    completedTasks: [...(meeting.completedTasks ?? [])],
     owner: `我方销售 / ${getProjectOneNpc(meeting.npcId)?.name ?? '客户联系人'}`,
     createdRound: state.currentRound,
     createdMinute: simulatedClockMinutes,
@@ -1544,13 +2088,49 @@ function completeMeeting(state: GameRuntimeState, reason: string, summary = ''):
   };
 }
 
-export function recordMeetingTurn(state: GameRuntimeState): GameRuntimeState {
+function allowedMeetingTasks(npcId: string): readonly ProjectOneVisitTask[] {
+  return PROJECT_ONE_FIVE_PERSON_NPCS[npcId as keyof typeof PROJECT_ONE_FIVE_PERSON_NPCS]?.allowedTasks ?? [];
+}
+
+/**
+ * Persist one actual-visit turn and apply a trusted task/exit decision.
+ * The chat service may call this only after its server-side evaluator has
+ * produced `progress`; this reducer independently checks the configured task
+ * allowlist and makes duplicate task completion idempotent before ending a
+ * meeting.
+ */
+export function recordMeetingTurn(
+  state: GameRuntimeState,
+  progress: TrustedMeetingTurnProgress = {},
+): GameRuntimeState {
   if (!state.activeMeeting) throw new Error('MEETING_NOT_ACTIVE');
-  const nextCount = state.activeMeeting.turnCount + 1;
-  if (nextCount >= state.activeMeeting.maxTurns) {
-    return completeMeeting({ ...state, activeMeeting: { ...state.activeMeeting, turnCount: nextCount } }, 'turn_limit');
+  const meeting = state.activeMeeting;
+  const allowedTasks = allowedMeetingTasks(meeting.npcId);
+  const completedTasks = meeting.completedTasks ?? [];
+  const completedTask = progress.completedTask ?? null;
+  if (completedTask && !allowedTasks.includes(completedTask)) throw new Error('MEETING_TASK_NOT_ALLOWED');
+  // A later clarification may be classified as the same task. It remains a
+  // dialogue turn, but does not make the chat transaction fail or add a task.
+  const isNewCompletedTask = Boolean(completedTask && !completedTasks.includes(completedTask));
+  const nextCompletedTasks = isNewCompletedTask && completedTask ? [...completedTasks, completedTask] : completedTasks;
+
+  const nextMeeting: ActiveMeeting = {
+    ...meeting,
+    turnCount: meeting.turnCount + 1,
+    completedTasks: nextCompletedTasks,
+  };
+  const next = { ...state, activeMeeting: nextMeeting };
+  // Preserve an explicit player farewell as the end reason even on turn 20.
+  // This must happen after incrementing the turn and before the hard limit.
+  if (progress.playerFarewell) return completeMeeting(next, 'player');
+  if (progress.npcLeft) return completeMeeting(next, 'npc_left');
+  if (allowedTasks.length > 0 && nextCompletedTasks.length >= allowedTasks.length) {
+    return completeMeeting(next, 'completed');
   }
-  return { ...state, activeMeeting: { ...state.activeMeeting, turnCount: nextCount } };
+  if (nextMeeting.turnCount >= nextMeeting.maxTurns) {
+    return completeMeeting(next, 'turn_limit');
+  }
+  return next;
 }
 
 export function setMeetingWorkTopicOpenedBy(state: GameRuntimeState, by: 'player' | 'npc'): GameRuntimeState {
@@ -1827,14 +2407,54 @@ function startVisit(
   command: Extract<GameCommand, { type: 'start_visit' }>,
 ): { state: GameRuntimeState; appointment: GameAppointment } {
   if (state.activeMeeting) throw new Error('MEETING_ALREADY_ACTIVE');
-  const appointment = state.appointments.find((item) => item.id === command.payload.appointmentId);
+  let appointment = command.payload.appointmentId
+    ? state.appointments.find((item) => item.id === command.payload.appointmentId)
+    : undefined;
+  const isDirectVisit = !appointment;
+  if (isDirectVisit) {
+    const npcId = command.payload.npcId;
+    if (!npcId || !state.unlockedNpcIds.includes(npcId)) throw new Error('NPC_UNKNOWN');
+    const contact = state.npcContacts[npcId];
+    if (!contact || contact.status === 'known') throw new Error('DIRECT_VISIT_CONTACT_REQUIRED');
+    appointment = {
+      id: `drop-in:${command.commandId}`,
+      npcId,
+      invitationMethod: 'drop_in',
+      visitType: 'short',
+      venue: '客户办公地点',
+      purpose: '未预约直接登门沟通',
+      scheduledRound: state.currentRound,
+      startMinute: state.simulatedClockMinutes,
+      durationMinutes: PROJECT_ONE_VISIT_RULES.short.durationMinutes,
+      maxTurns: FORMAL_ACTUAL_VISIT_MAX_TURNS,
+      status: 'accepted',
+      conditions: [],
+      reservedMinutes: 0,
+      workTopicOpenedBy: null,
+      invitationCommandId: command.commandId,
+    };
+  }
   if (!appointment || appointment.status !== 'accepted') throw new Error('APPOINTMENT_NOT_ACCEPTED');
-  const next = state;
+  let next = isDirectVisit
+    ? consumeGameTime(state, 0, { pointCost: FORMAL_WORKFLOW_ACTION_POINTS.directVisit })
+    : state;
   const selectedPreparationIds = command.payload.preparationIds ?? [];
   const usable = new Set(next.preparations
     .filter((item) => item.npcId === appointment.npcId && item.status === 'ready' && isCurrentPreparationType(item.type))
     .map((item) => item.id));
   if (selectedPreparationIds.some((id) => !usable.has(id))) throw new Error('PREPARATION_NOT_AVAILABLE');
+  if (isDirectVisit && selectedPreparationIds.length === 0 && !command.payload.skipPreparation) {
+    throw new Error('VISIT_PREPARATION_REQUIRED');
+  }
+  if (command.payload.skipPreparation) {
+    next = consumeGameTime(next, 0, { pointCost: FORMAL_WORKFLOW_ACTION_POINTS.skipPreparationRisk });
+    next = applyNpcAttitudeDelta(next, appointment.npcId, {
+      pleasantnessDelta: -2,
+      supportDelta: -2,
+      reason: '未完成拜访准备即临时沟通',
+      source: `visit-skip-preparation:${command.commandId}`,
+    });
+  }
   const activeMeeting: ActiveMeeting = {
     id: `meeting:${appointment.id}`,
     npcId: appointment.npcId,
@@ -1842,16 +2462,17 @@ function startVisit(
     appointmentId: appointment.id,
     visitType: appointment.visitType,
     turnCount: 0,
-    maxTurns: appointment.maxTurns,
+    maxTurns: FORMAL_ACTUAL_VISIT_MAX_TURNS,
     durationMinutes: appointment.durationMinutes,
     startedAt: `stage:${state.currentRound}`,
     workTopicOpenedBy: appointment.workTopicOpenedBy,
     usedPreparationIds: selectedPreparationIds,
+    completedTasks: [],
   };
   return {
     state: {
       ...next,
-      appointments: next.appointments.map((item) => item.id === appointment.id ? { ...item, status: 'active' as const } : item),
+      appointments: (isDirectVisit ? [...next.appointments, appointment] : next.appointments).map((item) => item.id === appointment.id ? { ...item, status: 'active' as const } : item),
       preparations: next.preparations.map((item) => selectedPreparationIds.includes(item.id) && item.type !== 'courtesy_gift' && item.type !== 'boundary_gift'
         ? { ...item, usedCount: item.usedCount + 1, status: item.reusable ? 'ready' as const : 'used' as const }
         : item),
@@ -2093,10 +2714,72 @@ function researchPublicInfo(
   return {
     state: {
       ...next,
+      publicResearch: { ...next.publicResearch, [npcId]: record },
       lastAction: 'research_public_info',
     },
     record,
   };
+}
+
+function recordWorkPlan(
+  state: GameRuntimeState,
+  command: Extract<GameCommand, { type: 'work_plan' }>,
+  evaluation: FormalPlanEvaluation | undefined,
+): { state: GameRuntimeState; record: GameWorkPlanRecord } {
+  if (!evaluation) throw new Error('WORK_PLAN_AI_REQUIRED');
+  if (command.payload.scope === 'npc' && (!command.payload.npcId || !state.unlockedNpcIds.includes(command.payload.npcId))) {
+    throw new Error('NPC_UNKNOWN');
+  }
+  const next = consumeGameTime(state, 0, { pointCost: FORMAL_WORKFLOW_ACTION_POINTS.workPlan });
+  const record: GameWorkPlanRecord = {
+    id: `work-plan:${command.commandId}`,
+    scope: command.payload.scope,
+    npcId: command.payload.npcId ?? null,
+    content: command.payload.content,
+    recommendations: evaluation.recommendations.slice(0, 5),
+    disclosures: evaluation.disclosures.filter((item) => state.unlockedNpcIds.includes(item.npcId)).map((item) => ({ npcId: item.npcId, facts: item.facts.slice(0, 2), clues: item.clues.slice(0, 2) })).slice(0, 5),
+    costPoints: FORMAL_WORKFLOW_ACTION_POINTS.workPlan,
+    createdRound: state.currentRound,
+  };
+  return { state: { ...next, workPlans: [...next.workPlans, record], lastAction: 'work_plan' }, record };
+}
+
+function sendPostal(
+  state: GameRuntimeState,
+  command: Extract<GameCommand, { type: 'postal' }>,
+): { state: GameRuntimeState; record: GamePostalRecord } {
+  if (!state.unlockedNpcIds.includes(command.payload.npcId)) throw new Error('NPC_UNKNOWN');
+  const next = consumeGameTime(state, 0, { pointCost: FORMAL_WORKFLOW_ACTION_POINTS.postal });
+  const record: GamePostalRecord = {
+    id: `postal:${command.commandId}`,
+    npcId: command.payload.npcId,
+    content: command.payload.content,
+    ...(command.payload.attachment ? { attachment: { ...command.payload.attachment } } : {}),
+    costPoints: FORMAL_WORKFLOW_ACTION_POINTS.postal,
+    createdRound: state.currentRound,
+  };
+  return { state: { ...next, postalRecords: [...next.postalRecords, record], lastAction: 'postal' }, record };
+}
+
+function recordBriefVisit(
+  state: GameRuntimeState,
+  command: Extract<GameCommand, { type: 'brief_visit' }>,
+  evaluation: FormalBriefVisitEvaluation | undefined,
+): { state: GameRuntimeState; record: GameVisitBriefRecord } {
+  if (!evaluation) throw new Error('BRIEF_VISIT_AI_REQUIRED');
+  if (!state.unlockedNpcIds.includes(command.payload.npcId)) throw new Error('NPC_UNKNOWN');
+  const next = consumeGameTime(state, 0, { pointCost: FORMAL_WORKFLOW_ACTION_POINTS.briefVisit });
+  const record: GameVisitBriefRecord = {
+    id: `brief-visit:${command.commandId}`,
+    npcId: command.payload.npcId,
+    content: command.payload.content,
+    strengths: evaluation.strengths.slice(0, 4),
+    risks: evaluation.risks.slice(0, 4),
+    nextStep: evaluation.nextStep,
+    costPoints: FORMAL_WORKFLOW_ACTION_POINTS.briefVisit,
+    createdRound: state.currentRound,
+  };
+  return { state: { ...next, visitBriefs: [...next.visitBriefs, record], lastAction: 'brief_visit' }, record };
 }
 
 /**
@@ -2118,7 +2801,7 @@ export function executeGameCommand(
     throw new Error('MULTIPLAYER_STAGE_ADVANCE_REQUIRES_ROOM_READY');
   }
   if (state.submissionReady && !['submit', 'mark_notification_read'].includes(command.type)) throw new Error('SUBMISSION_CHECK_REQUIRED');
-  if (state.activeMeeting && !['end_visit', 'give_gift', 'follow_up', 'mark_notification_read'].includes(command.type)) {
+  if (state.activeMeeting && !['end_visit', 'give_gift', 'follow_up', 'mark_notification_read', 'propose_bid_rule'].includes(command.type)) {
     throw new Error('MEETING_ALREADY_ACTIVE');
   }
 
@@ -2291,6 +2974,30 @@ export function executeGameCommand(
         timeMinutes: prepared.preparation.timeMinutes,
         costPoints: prepared.preparation.costPoints,
       };
+      break;
+    }
+    case 'work_plan': {
+      const planned = recordWorkPlan(state, command, options.workPlanEvaluation);
+      state = planned.state;
+      result = { workPlan: planned.record };
+      eventType = 'work_plan.completed';
+      eventPayload = { ...eventPayload, scope: planned.record.scope, npcId: planned.record.npcId, costPoints: planned.record.costPoints, recommendationCount: planned.record.recommendations.length, disclosureCount: planned.record.disclosures.length };
+      break;
+    }
+    case 'postal': {
+      const postal = sendPostal(state, command);
+      state = postal.state;
+      result = { postal: postal.record };
+      eventType = 'postal.sent';
+      eventPayload = { ...eventPayload, npcId: postal.record.npcId, costPoints: postal.record.costPoints, hasAttachment: Boolean(postal.record.attachment) };
+      break;
+    }
+    case 'brief_visit': {
+      const brief = recordBriefVisit(state, command, options.briefVisitEvaluation);
+      state = brief.state;
+      result = { briefVisit: brief.record };
+      eventType = 'brief_visit.evaluated';
+      eventPayload = { ...eventPayload, npcId: brief.record.npcId, costPoints: brief.record.costPoints, strengthCount: brief.record.strengths.length, riskCount: brief.record.risks.length };
       break;
     }
     case 'start_visit': {
@@ -2510,6 +3217,19 @@ export function executeGameCommand(
         factCount: researched.record.facts.length,
         weakSignalCount: researched.record.weakSignals.length,
         costPoints: researched.record.costPoints,
+      };
+      break;
+    }
+    case 'propose_bid_rule': {
+      const proposal = proposeBidRule(state, command);
+      state = proposal.state;
+      result = proposal.result;
+      // Event details are stored server-side for audit but the player API does
+      // not reveal adoption, direction, or the customer's internal response.
+      eventType = 'bid_rule.proposal_recorded';
+      eventPayload = {
+        ...eventPayload,
+        targetContactId: command.payload.targetContactId,
       };
       break;
     }

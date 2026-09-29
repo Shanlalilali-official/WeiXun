@@ -152,7 +152,8 @@ assert.equal(publicResearchResult.state.actionPoints, 26);
 assert.equal(publicResearchResult.eventType, 'public_info.researched');
 assert.equal(publicResearchResult.eventPayload.factCount, 3);
 assert.equal((publicResearchResult.result.publicResearch as { weakSignals: string[] }).weakSignals.length, 1);
-assert.deepEqual(publicResearchResult.state.publicResearch, {}, 'public search is returned once and is not persisted on the contact card');
+assert.equal(publicResearchResult.state.publicResearch['P1-004']?.facts.length, 3, 'completed public search persists for recovery');
+assert.equal(publicResearchResult.state.publicResearch['P1-004']?.weakSignals.length, 1);
 
 // Legacy rows migrate to the new state without reading Date.now().
 const legacy = normalizeProjectOneState({
@@ -231,12 +232,12 @@ const started = run(state, {
 state = started.state;
 assert.equal(state.actionPoints, 23, 'starting the visit does not add another action-point charge');
 assert.equal(state.activeMeeting?.visitType, 'formal');
-assert.equal(state.activeMeeting?.maxTurns, 6);
+assert.equal(state.activeMeeting?.maxTurns, 20);
 assert.equal(started.eventPayload.preparationCount, 1);
 assert.equal(started.eventPayload.npcId, formal.npcId);
 const timeAtMeetingStart = state.cumulativeTimeMinutes;
-for (let index = 0; index < 5; index += 1) state = recordMeetingTurn(state);
-assert.equal(state.activeMeeting?.turnCount, 5);
+for (let index = 0; index < 19; index += 1) state = recordMeetingTurn(state);
+assert.equal(state.activeMeeting?.turnCount, 19);
 assert.equal(state.cumulativeTimeMinutes, timeAtMeetingStart, 'turns are content capacity, not time slices');
 state = recordMeetingTurn(state);
 assert.equal(state.activeMeeting, null);
@@ -301,7 +302,7 @@ assert.doesNotThrow(() => run(state, {
   },
 }));
 
-// Visit type rules are exact and no longer share a six-turn meeting limit.
+// Appointment durations retain their types; actual meetings use a shared 20-turn cap.
 assert.deepEqual(PROJECT_ONE_VISIT_RULES.short, { durationMinutes: 5, maxTurns: 2 });
 assert.deepEqual(PROJECT_ONE_VISIT_RULES.formal, { durationMinutes: 40, maxTurns: 6 });
 assert.deepEqual(PROJECT_ONE_VISIT_RULES.informal, { durationMinutes: 60, maxTurns: 5 });
@@ -324,7 +325,7 @@ for (const [visitType, startMinute] of [['short', 11 * 60], ['informal', 18 * 60
     assert.equal(visitState.dayAvailableMinutes, 0);
   }
   const investedBeforeTurns = visitState.cumulativeTimeMinutes;
-  for (let turn = 0; turn < appointment.maxTurns; turn += 1) visitState = recordMeetingTurn(visitState);
+  for (let turn = 0; turn < 20; turn += 1) visitState = recordMeetingTurn(visitState);
   assert.equal(visitState.activeMeeting, null);
   assert.equal(visitState.cumulativeTimeMinutes, investedBeforeTurns);
 }

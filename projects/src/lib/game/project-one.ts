@@ -3,6 +3,9 @@ import {
   PROJECT_ONE_FIVE_PERSON_NPCS,
   type ProjectOneFivePersonId,
 } from '@/lib/designer/project-one-five-person';
+import type { SupplierProfile } from '@/lib/game/bid-rules';
+export { BID_RULES, BID_RULE_PROPOSAL_COST } from '@/lib/game/bid-rules';
+export type { BidRule, OverallSupportState, SupplierAdvantageType, SupplierProfile } from '@/lib/game/bid-rules';
 
 export const PROJECT_ONE_CODE = 'project-1';
 export const PROJECT_ONE_MAX_ROUNDS = 5;
@@ -184,6 +187,44 @@ export const PROJECT_ONE_NPCS: ProjectOneNpc[] = PROJECT_ONE_FIVE_PERSON_IDS.map
     actionPreferences: metadata.actionPreferences,
   };
 });
+
+/** Runtime supplier profiles; values are scenario data, not scoring branches. */
+export const PROJECT_ONE_SUPPLIERS: SupplierProfile[] = [
+  {
+    id: 'player-company',
+    name: '我方公司',
+    advantageType: 'technical_accuracy',
+    coreAdvantage: '技术精度领先',
+    advantageValue: 88,
+    preferredBidRule: 'technical_accuracy',
+    baseCompetitivenessScore: 50,
+    initialSupportByNpc: {},
+  },
+  {
+    id: 'abc-company',
+    name: 'ABC竞品',
+    advantageType: 'price',
+    coreAdvantage: '报价最低',
+    advantageValue: 86,
+    preferredBidRule: 'lowest_price',
+    baseCompetitivenessScore: 54,
+    initialSupportByNpc: Object.fromEntries(PROJECT_ONE_NPCS.map((npc) => [npc.id, 52])),
+  },
+  {
+    id: 'xyz-company',
+    name: 'XYZ竞品',
+    advantageType: 'feature_completeness',
+    coreAdvantage: '功能覆盖最全面',
+    advantageValue: 84,
+    preferredBidRule: 'feature_completeness',
+    baseCompetitivenessScore: 53,
+    initialSupportByNpc: Object.fromEntries(PROJECT_ONE_NPCS.map((npc) => [npc.id, 46])),
+  },
+];
+
+export function getProjectOneSupplier(supplierId: string): SupplierProfile | null {
+  return PROJECT_ONE_SUPPLIERS.find((supplier) => supplier.id === supplierId) ?? null;
+}
 
 export function getProjectOneNpc(npcId: string): ProjectOneNpc | null {
   return PROJECT_ONE_NPCS.find((npc) => npc.id === npcId) ?? null;

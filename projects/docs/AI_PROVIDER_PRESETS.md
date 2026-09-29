@@ -1,6 +1,6 @@
 # AI Provider 预设
 
-本文用于项目一五人版真实 AI 测试。当前项目通过 `src/lib/ai/client.ts` 使用 OpenAI-compatible 接口，切换模型只需修改服务端环境变量并重启服务。
+本文用于项目一五人版真实 AI 测试。项目通过 `src/lib/ai/client.ts` 使用 OpenAI-compatible 接口。服务端配置各供应商环境变量后，可在设计师后台 `/designer/ai-provider` 保存全局正文 AI 接口选择；新发起的请求生效。
 
 ## 接口要求
 
@@ -67,14 +67,31 @@ AI_MODEL=gpt-5.6-luna
 AI_API_KEY=...
 ```
 
+### 5. Qwen（阿里云百炼）
+
+- `QWEN_AI_BASE_URL=https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`
+- `QWEN_AI_MODEL=qwen-plus`
+- 将 `{WorkspaceId}` 替换为百炼工作空间 ID，并使用同一地域签发的 API Key。不同地域的 Base URL 和 API Key 不通用；以[官方 OpenAI 兼容接口说明](https://help.aliyun.com/en/model-studio/compatibility-of-openai-with-dashscope)为准。
+- `qwen-plus` 是官方文档的兼容调用示例模型；模型能力和账号权限以[官方模型列表](https://help.aliyun.com/en/model-studio/models)为准。接口会按调用选项发送 `enable_thinking`，以控制支持混合思考的模型。
+
+```dotenv
+QWEN_AI_BASE_URL=https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1
+QWEN_AI_MODEL=qwen-plus
+QWEN_AI_API_KEY=...
+```
+
+命名 Provider 使用独立的 `QWEN_AI_*` 配置，不会回退到全局 `AI_*`；`.env.local` 修改后需重启服务。
+
 ## 切换与验证
 
-1. 在 `projects` 目录的服务端环境配置中，替换 `AI_BASE_URL`、`AI_MODEL` 和真实的 `AI_API_KEY`（真实 key 不要写入本文或 Git）。
-2. 重启开发服务，使环境变量重新加载。
-3. 在 `projects` 目录运行：
+1. 在 `projects` 的服务端环境中设置所需的 `DEEPSEEK_AI_*`、`DOUBAO_AI_*` 或 `QWEN_AI_*`（真实 Key 不要写入本文或 Git）。旧 `AI_*` 仍可作为“旧默认接口”使用。
+2. 重启服务，使环境变量重新加载。在设计师后台“AI 接口配置”中确认目标显示“服务端已配置”，选择并保存。
+3. 新发起的正式游戏、预览及其他未指定 Provider 的正文调用使用该选择。提示词 A/B 测试的显式 DeepSeek/豆包轨道仍按各自接口运行；Jev/LLM 结构化决策开关也独立。
+4. 在 `projects` 目录运行：
 
 ```bash
 pnpm test:ai-provider
+pnpm ts-check
 pnpm test:project-one-preview-ai
 ```
 

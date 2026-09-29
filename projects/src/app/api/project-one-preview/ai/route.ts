@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
 import { previewAiRequestSchema } from '@/lib/contracts/project-one-preview-ai';
-import { PreviewAiError, previewAiService, toPreviewRecoveryDto } from '@/lib/game/project-one-preview-ai';
+import { PreviewAiError, previewAiService } from '@/lib/game/project-one-preview-ai';
 import { previewSessionRepository } from '@/lib/game/project-one-preview-session-repository';
 import { isFastDebugEnabled, runWithFastTestObservability } from '@/lib/testing/fast-test-observability';
 import { DEFAULT_PROJECT_ONE_PROMPT_CONFIG } from '@/lib/designer/prompt-config';
 import { loadProjectOnePromptConfig } from '@/lib/designer/prompt-config-repository';
+import { getPreviewRecoveryResponse } from './handler';
 
 export const runtime = 'nodejs';
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const RATE_WINDOW_MS = 60_000;
 const MAX_REQUESTS_PER_WINDOW = 60;
@@ -31,7 +30,7 @@ export function previewErrorResponse(error: unknown): { status: number; message:
   return { status, message };
 }
 
-function streamPreviewResponse(run: () => ReturnType<typeof previewAiService.execute>): Response {
+export function streamPreviewResponse(run: () => ReturnType<typeof previewAiService.execute>): Response {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -93,6 +92,7 @@ function consumeRequest(userId: string): boolean {
 export async function POST(request: NextRequest) {
   const guard = authGuard(request);
   if (!guard.ok) return guard.response!;
+  if (guard.session?.role !== 'platform_designer') return NextResponse.json({ error: '权限不足' }, { status: 403 });
   if (!consumeRequest(guard.session!.userId)) {
     return NextResponse.json({ error: '操作过于频繁，请稍后再试。' }, { status: 429 });
   }
@@ -134,21 +134,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/** Restore only player-visible preview state; internal evaluation data stays server-only. */
+/** Restore only designer-preview state; formal player DTOs never use this route. */
 export async function GET(request: NextRequest) {
-  const guard = authGuard(request);
-  if (!guard.ok || !guard.session) return guard.response!;
-  const previewSessionId = request.nextUrl.searchParams.get('previewSessionId')?.trim();
-  if (!previewSessionId || !UUID_PATTERN.test(previewSessionId)) {
-    return NextResponse.json({ error: '预览会话不存在或已过期，请重新开始。' }, { status: 404 });
-  }
-  try {
-    const state = await previewSessionRepository.load(guard.session.userId, previewSessionId);
-    return NextResponse.json({ success: true, data: toPreviewRecoveryDto(state) });
-  } catch (error) {
-    const known = previewErrorResponse(error);
-    if (known) return NextResponse.json({ error: known.message }, { status: known.status });
-    console.error('Project one preview recovery failed', { code: 'PREVIEW_RECOVERY_UNEXPECTED_ERROR' });
-    return NextResponse.json({ error: '五人预览状态暂时不可恢复，请稍后重试。' }, { status: 503 });
-  }
+  return getPreviewRecoveryResponse(request, previewSessionRepository);
 }

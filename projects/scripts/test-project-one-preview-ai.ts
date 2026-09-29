@@ -105,6 +105,8 @@ async function main() {
   const first = await service.execute('user-a', withMeta({ action: 'message', npcId: 'P1-002', channel: 'email', text: '确认里程碑并按约给出反馈', attachment: { title: '项目里程碑清单', content: 'SECRET_ATTACHMENT_BODY_SHOULD_NOT_LEAK' } }, 0));
   const sessionId = first.previewSessionId;
   const state = service.store.get('user-a', sessionId)!;
+  assert.equal(first.npcTestStates?.length, 5, 'every preview AI response includes the five-person designer test snapshot');
+  assert.deepEqual(first.npcTestStates?.map((item) => item.npcId), PREVIEW_NPC_IDS, 'designer test snapshots use the canonical NPC order');
   assert.equal(state.npcStates['P1-001'].pleasantness, 50, 'pleasantness starts from the current-system neutral midpoint');
   state.npcStates['P1-002'].support = 30;
   assert.equal(state.npcStates['P1-002'].effectiveContactCount, 1);
@@ -226,6 +228,108 @@ async function main() {
   assert.equal(legacyWorkPhone.readStatus, undefined, 'work_phone message remains a legacy synchronous reply');
   assert.equal(legacyWorkPhone.content, '请通过电话先说明具体事项。');
 
+  const roleReversedReply = '您好，张总。我们是专注政企数字化交付的团队，刚中标了省里两个同类项目。';
+  const correctedReply = '我在听，请先用一句话说明要点。';
+  const correctedPrompts: string[] = [];
+  const correctedEvaluationPrompts: string[] = [];
+  const correctedJevStates: string[] = [];
+  let correctedGenerationCount = 0;
+  const correctedPhoneService = createPreviewAiService({
+    invoker: async (messages) => {
+      const prompt = messages.map((message) => message.content).join('\n');
+      if (prompt.includes('独立评估刚刚完成的 NPC 正文')) {
+        correctedEvaluationPrompts.push(prompt);
+        return json(emptyEvaluation);
+      }
+      correctedPrompts.push(prompt);
+      correctedGenerationCount += 1;
+      if (messages.some((message) => message.content.includes('发言身份校验失败'))) return json({ content: correctedReply });
+      return json({ content: roleReversedReply });
+    },
+    jevInvoker: async (request) => {
+      correctedJevStates.push(typeof request.state === 'string' ? request.state : JSON.stringify(request.state));
+      return testJevInvoker(request);
+    },
+  });
+  const correctedState = correctedPhoneService.store.create('user-phone-role-repair');
+  const oldBadNpcMessageId = 'prior-role-reversal';
+  correctedState.conversations['P1-001'].push({
+    messageId: oldBadNpcMessageId, role: 'npc', channel: 'work_phone', text: roleReversedReply, at: Date.now(),
+  });
+  const correctedPhone = await correctedPhoneService.execute('user-phone-role-repair', withMeta({
+    action: 'phone_connect', npcId: 'P1-001', text: '请确认技术验收口径。',
+  }, 0, correctedState.previewSessionId));
+  assert.equal(correctedPhone.content, correctedReply, 'one role-reversed phone reply is regenerated as the target NPC');
+  assert.equal(correctedGenerationCount, 2, 'the invalid first phone response triggers exactly one regenerated response');
+  assert.equal(correctedPrompts.length, 2, 'the role quality gate makes only one targeted retry');
+  assert.equal(correctedPrompts[1].includes('发言身份校验失败'), true, 'the retry explains the target NPC identity error');
+  assert.equal(correctedPrompts[0].includes(roleReversedReply), false, 'a known role-reversed history entry is excluded from the generation context');
+  assert.equal(correctedEvaluationPrompts.length, 1);
+  assert.equal(correctedEvaluationPrompts[0].includes(roleReversedReply), false, 'the rejected first draft never reaches NPC evaluation');
+  assert.equal(correctedEvaluationPrompts[0].includes(correctedReply), true, 'NPC evaluation receives only the repaired reply');
+  assert.equal(correctedJevStates.some((value) => value.includes(roleReversedReply)), false, 'Jev evaluation and memory processing never receive the rejected draft');
+  assert.equal(correctedState.conversations['P1-001'].find((message) => message.messageId === oldBadNpcMessageId)?.text, roleReversedReply, 'raw historical transcript remains available for audit');
+  assert.equal(correctedState.conversations['P1-001'].filter((message) => message.messageId !== oldBadNpcMessageId).some((message) => message.text === roleReversedReply), false, 'the rejected draft is not saved as a new conversation message');
+  assert.equal(JSON.stringify(correctedState.npcStates['P1-001'].workingMemory).includes(roleReversedReply), false, 'the rejected draft cannot enter working memory');
+
+  const fallbackPrompts: string[] = [];
+  const supplierSelfIdentification = '我是乙方，负责方案交付。';
+  let fallbackGenerationCount = 0;
+  const fallbackPhoneService = createPreviewAiService({
+    invoker: async (messages) => {
+      const prompt = messages.map((message) => message.content).join('\n');
+      if (prompt.includes('独立评估刚刚完成的 NPC 正文')) return json(emptyEvaluation);
+      fallbackPrompts.push(prompt);
+      fallbackGenerationCount += 1;
+      return json({ content: supplierSelfIdentification });
+    },
+  });
+  const fallbackState = fallbackPhoneService.store.create('user-phone-role-fallback');
+  const fallbackPhone = await fallbackPhoneService.execute('user-phone-role-fallback', withMeta({
+    action: 'phone_connect', npcId: 'P1-001', text: '请确认技术验收口径。',
+  }, 0, fallbackState.previewSessionId));
+  assert.equal(fallbackGenerationCount, 2, 'two role-invalid phone responses stop after one retry');
+  assert.equal(fallbackPrompts.length, 2);
+  assert.equal(fallbackPrompts[1].includes('发言身份校验失败'), true, 'the only retry is targeted at the role reversal');
+  assert.equal(fallbackPhone.content, '我在听，请先用一句话说明要点。', 'a repeated role error returns a short phone-safe NPC fallback');
+  assert.equal(fallbackState.conversations['P1-001'].at(-1)?.text, fallbackPhone.content, 'only the safe fallback is saved to the session');
+  assert.equal(fallbackState.conversations['P1-001'].some((message) => message.text === roleReversedReply), false, 'neither invalid generation is saved to conversation history');
+
+  const nameMentionService = createPreviewAiService({ invoker: async (messages) => {
+    const prompt = messages.map((message) => message.content).join('\n');
+    return prompt.includes('独立评估刚刚完成的 NPC 正文') ? json(emptyEvaluation)
+      : json({ content: '张建国只负责方向判断，技术问题请先和我核对数据。' });
+  } });
+  const legitimateNameMention = await nameMentionService.execute('user-phone-name-mention', withMeta({
+    action: 'phone_connect', npcId: 'P1-002', text: '张总关心哪些技术依据？',
+  }, 0));
+  assert.equal(legitimateNameMention.content, '张建国只负责方向判断，技术问题请先和我核对数据。', 'the identity gate preserves a valid reference to another person and a business topic');
+
+  let normalPhoneIntroCalls = 0;
+  const normalPhoneIntroService = createPreviewAiService({ invoker: async (messages) => {
+    const prompt = messages.map((message) => message.content).join('\n');
+    if (prompt.includes('独立评估刚刚完成的 NPC 正文')) return json(emptyEvaluation);
+    normalPhoneIntroCalls += 1;
+    return json({ content: '喂，您好，我是张建国，现在方便说话吗？' });
+  } });
+  const normalPhoneIntro = await normalPhoneIntroService.execute('user-phone-normal-intro', withMeta({
+    action: 'phone_connect', npcId: 'P1-001', text: '您好，请问是张总吗？',
+  }, 0));
+  assert.equal(normalPhoneIntro.content, '喂，您好，我是张建国，现在方便说话吗？', 'first-person self-identification by the target NPC is valid');
+  assert.equal(normalPhoneIntroCalls, 1, 'a normal phone introduction passes without regeneration');
+
+  let validBusinessReplyCalls = 0;
+  const validBusinessReplyService = createPreviewAiService({ invoker: async (messages) => {
+    if (messages.some((message) => message.content.includes('独立评估刚刚完成的 NPC 正文'))) return json(emptyEvaluation);
+    validBusinessReplyCalls += 1;
+    return json({ content: '我们是要看你们的解决方案能否解决实际问题，请先说清可验证的结果。' });
+  } });
+  const validBusinessReply = await validBusinessReplyService.execute('user-phone-valid-business', withMeta({
+    action: 'phone_connect', npcId: 'P1-001', text: '我们带来了方案。',
+  }, 0));
+  assert.match(validBusinessReply.content || '', /解决方案/);
+  assert.equal(validBusinessReplyCalls, 1, 'business discussion is not mistaken for vendor self-identification');
+
   const redlineReadService = createPreviewAiService({ invoker: async (messages) => messages.some((message) => message.content.includes('独立评估刚刚完成的 NPC 正文'))
     ? json(emptyEvaluation)
     : json(readNoReply('unwilling_to_advance')) });
@@ -239,7 +343,8 @@ async function main() {
     { npcId: 'P1-001', support: 35, pleasantness: 82, effectiveContactCount: 4 },
     { npcId: 'P1-005', support: 66, pleasantness: 21, effectiveContactCount: 7 },
   ] }, first.version, sessionId));
-  assert.deepEqual(adjusted.npcTestStates, [
+  assert.equal(adjusted.npcTestStates?.length, 5, 'test adjustment returns every current NPC metric, including unchanged people');
+  assert.deepEqual(adjusted.npcTestStates?.filter((item) => item.npcId === 'P1-001' || item.npcId === 'P1-005'), [
     { npcId: 'P1-001', support: 35, pleasantness: 82, effectiveContactCount: 4, node: 'N1' },
     { npcId: 'P1-005', support: 66, pleasantness: 21, effectiveContactCount: 7, node: 'N1' },
   ], 'test adjustment returns the authoritative server values and computed nodes');
@@ -577,6 +682,12 @@ async function main() {
   assert.equal(recoveryJson.includes('support'), false, 'recovery never exposes scoring state');
   assert.equal(recoveryJson.includes('activeBlockers'), false, 'recovery never exposes blockers');
   assert.equal(recoveryJson.includes('workingMemory'), false, 'recovery never exposes working memory');
+  const designerRecovery = toPreviewRecoveryDto(durableState, { includeNpcTestStates: true });
+  assert.deepEqual(designerRecovery.npcTestStates, [{
+    npcId: 'P1-001', support: 88, pleasantness: 50, effectiveContactCount: 0, node: 'BLOCKED',
+  },
+  ...PREVIEW_NPC_IDS.slice(1).map((npcId) => ({ npcId, support: 0, pleasantness: 50, effectiveContactCount: 0, node: 'N1' as const }))], 'designer recovery restores the full committed metric snapshot without exposing internal evaluator fields');
+  assert.equal(JSON.stringify(designerRecovery).includes('workingMemory'), false, 'designer recovery still excludes internal working memory');
   console.log('project-one preview AI tests passed');
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

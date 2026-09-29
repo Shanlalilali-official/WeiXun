@@ -4,6 +4,7 @@ import {
   truncateRawProviderText,
   type FastAiTrace,
 } from '@/lib/testing/fast-test-observability';
+import { loadAiProviderSelection, selectedAiProvider } from '@/lib/ai/provider-selection';
 
 export type ChatMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -11,7 +12,7 @@ export type ChatMessage = {
 };
 
 /** Named server-side providers used by tools that compare model behaviour. */
-export type AiProvider = 'default' | 'deepseek' | 'doubao';
+export type AiProvider = 'default' | 'deepseek' | 'doubao' | 'qwen';
 
 export type InvokeOptions = {
   provider?: AiProvider;
@@ -52,6 +53,12 @@ const PROVIDER_ENV: Record<AiProvider, {
     apiKey: 'DOUBAO_AI_API_KEY',
     model: 'DOUBAO_AI_MODEL',
     timeout: 'DOUBAO_AI_REQUEST_TIMEOUT_MS',
+  },
+  qwen: {
+    baseUrl: 'QWEN_AI_BASE_URL',
+    apiKey: 'QWEN_AI_API_KEY',
+    model: 'QWEN_AI_MODEL',
+    timeout: 'QWEN_AI_REQUEST_TIMEOUT_MS',
   },
 };
 
@@ -105,7 +112,7 @@ async function requestCompletion(
   options: InvokeOptions | undefined,
   stream: boolean,
 ): Promise<{ response: Response; trace: FastAiTrace | null }> {
-  const provider = options?.provider ?? 'default';
+  const provider = options?.provider ?? selectedAiProvider((await loadAiProviderSelection()).config);
   const config = getAiProviderConfig(provider);
   const requestBody = {
     model: options?.model || config.model,
@@ -113,11 +120,13 @@ async function requestCompletion(
     temperature: options?.temperature ?? 0.7,
     max_tokens: options?.maxTokens,
     ...(options?.jsonMode ? { response_format: { type: 'json_object' } } : {}),
-    ...(options?.thinking && (
-      provider === 'doubao' || /(^|\.)deepseek\.com$/i.test(new URL(config.baseUrl).hostname)
-    )
-      ? { thinking: { type: options.thinking } }
-      : {}),
+    ...(options?.thinking && provider === 'qwen'
+      ? { enable_thinking: options.thinking === 'enabled' }
+      : options?.thinking && (
+        provider === 'doubao' || /(^|\.)deepseek\.com$/i.test(new URL(config.baseUrl).hostname)
+      )
+        ? { thinking: { type: options.thinking } }
+        : {}),
     stream,
   };
   const trace = beginFastAiTrace({

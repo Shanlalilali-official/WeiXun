@@ -25,7 +25,8 @@ assert.match(stateModule, /simulatedClockMinutes: number/);
 
 // The start dialog must fit a 375px viewport, and the old hidden competitor
 // table must not remain as dead markup or trigger a needless fetch.
-assert.match(startPage, /w-\[calc\(100%-2rem\)\] max-w-\[440px\]/);
+assert.match(startPage, /flex items-center justify-center p-4/);
+assert.match(startPage, /w-full max-w-\[620px\]/);
 assert.doesNotMatch(startPage, /竞品公司特点表|game-data\/competitors|className="hidden mb-4/);
 
 // Player-facing solo play must have exactly one authoritative client.  The
@@ -33,6 +34,6 @@ assert.doesNotMatch(startPage, /竞品公司特点表|game-data\/competitors|cla
 assert.match(startPage, /router\.push\('\/game\?location=project-1&mode=solo'\)/);
 assert.doesNotMatch(startPage, /router\.push\('\/project-one-preview'\)/);
 assert.match(startPage, /单机 · 正式五人对局/);
-assert.match(startPage, /存档、阶段、行动点、NPC 沟通和结算均由服务端会话保存与恢复/);
+assert.match(startPage, /客户沟通、阶段进度、行动点与最终结算将写入正式存档/);
 
 console.log('legacy UI contracts passed');
