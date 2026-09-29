@@ -330,6 +330,74 @@ async function main() {
   assert.match(validBusinessReply.content || '', /解决方案/);
   assert.equal(validBusinessReplyCalls, 1, 'business discussion is not mistaken for vendor self-identification');
 
+  const reversedVisitReply = '您好，张总。我们是专注政企数字化交付的团队，刚中标了省里两个同类项目。';
+  const repairedVisitReply = '我在听，请先用一句话说明要点。';
+  const visitGenerationPrompts: string[] = [];
+  const visitEvaluationPrompts: string[] = [];
+  const visitJevStates: string[] = [];
+  let visitGenerationCount = 0;
+  const visitRoleService = createPreviewAiService({
+    invoker: async (messages) => {
+      const prompt = messages.map((message) => message.content).join('\n');
+      if (prompt.includes('独立评估刚刚完成的 NPC 正文')) {
+        visitEvaluationPrompts.push(prompt);
+        return json(emptyEvaluation);
+      }
+      visitGenerationPrompts.push(prompt);
+      visitGenerationCount += 1;
+      return json({ content: messages.some((message) => message.content.includes('发言身份校验失败')) ? repairedVisitReply : reversedVisitReply });
+    },
+    jevInvoker: async (request) => {
+      visitJevStates.push(typeof request.state === 'string' ? request.state : JSON.stringify(request.state));
+      return testJevInvoker(request);
+    },
+  });
+  const visitRoleStarted = await visitRoleService.execute('user-visit-role-repair', withMeta({ action: 'start_visit', npcId: 'P1-001', skipPreparation: true }, 0));
+  const visitRoleState = visitRoleService.store.get('user-visit-role-repair', visitRoleStarted.previewSessionId)!;
+  const repairedVisit = await visitRoleService.execute('user-visit-role-repair', withMeta({
+    action: 'visit_turn', npcId: 'P1-001', text: '您好，请问您对方案有什么要求？',
+  }, visitRoleStarted.version, visitRoleStarted.previewSessionId));
+  assert.equal(repairedVisit.content, repairedVisitReply, 'a role-reversed in-person reply is regenerated as the target NPC');
+  assert.equal(visitGenerationCount, 2, 'a role-reversed in-person reply triggers exactly one regeneration');
+  assert.equal(visitGenerationPrompts[0].includes('发言身份锁定'), true, 'the actual visit prompt explicitly locks the NPC speaker identity');
+  assert.equal(visitGenerationPrompts[1].includes('发言身份校验失败'), true, 'the actual visit retry identifies the role error');
+  assert.equal(visitGenerationPrompts[1].includes(reversedVisitReply), false, 'the rejected draft is not echoed into the retry context');
+  assert.equal(visitEvaluationPrompts.length, 1);
+  assert.equal(visitEvaluationPrompts[0].includes(reversedVisitReply), false, 'the rejected in-person draft never reaches NPC evaluation');
+  assert.equal(visitEvaluationPrompts[0].includes(repairedVisitReply), true, 'NPC evaluation receives only the repaired in-person reply');
+  assert.equal(visitJevStates.some((value) => value.includes(reversedVisitReply)), false, 'Jev decision and evaluation never receive the rejected in-person draft');
+  assert.equal(visitRoleState.conversations['P1-001'].some((message) => message.text === reversedVisitReply), false, 'the rejected in-person draft is never saved to conversation history');
+  assert.equal(visitRoleState.conversations['P1-001'].at(-1)?.text, repairedVisitReply, 'the repaired in-person reply is saved');
+
+  let visitNameMentionCalls = 0;
+  const visitNameMentionService = createPreviewAiService({ invoker: async (messages) => {
+    const prompt = messages.map((message) => message.content).join('\n');
+    if (prompt.includes('独立评估刚刚完成的 NPC 正文')) return json(emptyEvaluation);
+    visitNameMentionCalls += 1;
+    return json({ content: '张建国负责方向判断，技术问题请先和我核对数据。' });
+  } });
+  const visitNameMentionStarted = await visitNameMentionService.execute('user-visit-name-mention', withMeta({ action: 'start_visit', npcId: 'P1-002', skipPreparation: true }, 0));
+  const visitNameMention = await visitNameMentionService.execute('user-visit-name-mention', withMeta({
+    action: 'visit_turn', npcId: 'P1-002', text: '张总关心哪些技术依据？',
+  }, visitNameMentionStarted.version, visitNameMentionStarted.previewSessionId));
+  assert.equal(visitNameMention.content, '张建国负责方向判断，技术问题请先和我核对数据。', 'the visit identity gate allows a normal reference to another person');
+  assert.equal(visitNameMentionCalls, 1, 'a valid visit reply mentioning another person passes without regeneration');
+
+  const wechatRolePrompts: string[] = [];
+  const wechatRoleService = createPreviewAiService({ invoker: async (messages) => {
+    const prompt = messages.map((message) => message.content).join('\n');
+    if (prompt.includes('独立评估刚刚完成的 NPC 正文')) return json(emptyEvaluation);
+    wechatRolePrompts.push(prompt);
+    return json({ content: messages.some((message) => message.content.includes('发言身份校验失败')) ? repairedVisitReply : reversedVisitReply });
+  } });
+  const repairedWechat = await wechatRoleService.execute('user-wechat-role-repair', withMeta({
+    action: 'wechat_request', npcId: 'P1-001', text: '申请工作微信，后续方便沟通验收资料。',
+  }, 0));
+  assert.equal(repairedWechat.content, repairedVisitReply, 'a role-reversed work-WeChat response is regenerated as the target NPC');
+  assert.equal(wechatRolePrompts.length, 2, 'a role-reversed work-WeChat response triggers exactly one regeneration');
+  assert.equal(wechatRolePrompts[0].includes('发言身份锁定'), true, 'the work-WeChat prompt explicitly locks the NPC speaker identity');
+  assert.equal(wechatRolePrompts[1].includes('发言身份校验失败'), true, 'the work-WeChat retry identifies the role error');
+
   const redlineReadService = createPreviewAiService({ invoker: async (messages) => messages.some((message) => message.content.includes('独立评估刚刚完成的 NPC 正文'))
     ? json(emptyEvaluation)
     : json(readNoReply('unwilling_to_advance')) });

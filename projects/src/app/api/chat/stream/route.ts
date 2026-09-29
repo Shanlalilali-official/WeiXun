@@ -1,6 +1,10 @@
 import { NextRequest } from 'next/server';
 import { streamLLM, type ChatMessage } from '@/lib/ai/client';
 import { CUSTOMER_CONTEXT, CUSTOMER_PROMPT, type CustomerPromptContext } from '@/lib/ai/prompts/customer';
+import {
+  generateNpcReplyWithIdentityGuard,
+  npcSpeakerIdentityInstruction,
+} from '@/lib/ai/npc-speaker-identity';
 import { evaluateNpcTurn } from '@/lib/ai/npc-evaluation';
 import {
   appendViewedAttachmentsToPlayerMessage,
@@ -544,6 +548,7 @@ export async function POST(req: NextRequest) {
   const npcHistory = npcHistoryWithViewedAttachments(recentHistory);
   const messages: ChatMessage[] = [
     { role: 'system', content: `${promptConfig.liveCustomerPrompt || CUSTOMER_PROMPT()}${rolePrompt ? `\n\n## 当前人物角色提示\n${rolePrompt}` : ''}` },
+    { role: 'system', content: npcSpeakerIdentityInstruction(npc, channel) },
     { role: 'user', content: CUSTOMER_CONTEXT(customerContext) },
     ...npcHistory,
     { role: 'user', content: message },
@@ -555,9 +560,16 @@ export async function POST(req: NextRequest) {
         try {
         // Buffer the provider stream until the versioned transaction commits.
         // This preserves the all-or-nothing contract visible to the player.
-        let reply = '';
-        for await (const chunk of streamLLM(messages, { temperature: 0.7, thinking: 'disabled' })) reply += chunk;
-        if (!reply.trim()) throw new Error('AI_PROVIDER_EMPTY_RESPONSE');
+        const guardedReply = await generateNpcReplyWithIdentityGuard(npc, channel, async (retryInstruction) => {
+          let generated = '';
+          const requestMessages = retryInstruction
+            ? [...messages, { role: 'system' as const, content: retryInstruction }]
+            : messages;
+          for await (const chunk of streamLLM(requestMessages, { temperature: 0.7, thinking: 'disabled' })) generated += chunk;
+          if (!generated.trim()) throw new Error('AI_PROVIDER_EMPTY_RESPONSE');
+          return generated;
+        });
+        const reply = guardedReply.reply;
 
         const assessment = await evaluateNpcTurn({
           npcId,

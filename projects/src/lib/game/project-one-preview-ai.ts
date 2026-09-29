@@ -560,15 +560,15 @@ function safeNpcReplyFallback(npcId: PreviewNpcId, channel: string): string {
   return channel === 'work_phone' ? spoken[npcId] : written[npcId];
 }
 
-function npcSpeakerIdentityQualityGate(
+function npcSpeakerIdentityQualityGate<T extends { content: string }>(
   npcId: PreviewNpcId,
   channel: string,
-): StructuredAiQualityGate<z.infer<typeof narrativeContentAiOutputSchema>> {
+): StructuredAiQualityGate<T> {
   const npc = PREVIEW_NPCS[npcId];
   return {
     check: (value) => !hasNpcSpeakerIdentityViolation(npcId, value.content),
     retryInstruction: `NPC 发言身份校验失败。当前你扮演的是 ${npc.name}（${npc.title}，人物 ID ${npcId}），正在通过 ${channel} 回复玩家。请以该 NPC 的第一人称重写：不要称呼自己为“${npc.name}”或“${npc.name.slice(0, 1)}总”，不要自称供应商、乙方、销售、服务商或交付团队；不要编造身份、事实或承诺。只输出符合原 JSON 契约的修正正文。`,
-    fallback: { content: safeNpcReplyFallback(npcId, channel) },
+    fallback: { content: safeNpcReplyFallback(npcId, channel) } as T,
   };
 }
 
@@ -1331,8 +1331,9 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
       const playerMessage = newMessage('player', 'wechat_request', request.text);
       const hardBlocker = isHardBlockerText(request.text);
       const decision = hardBlocker ? { accepted: false } : await askWechatDecision(jevInvoker, { playerText: request.text, npcId });
-      const narrative = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'wechat_request', '只撰写工作微信申请的 NPC 回复正文，不得输出或改变是否接受的决定。输出 {content:string}。', promptConfig),
-        { npcContext: { ...layeredNpcContext(state, npcId, 'wechat_request', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npc.id, name: npc.name, title: npc.title }, playerText: request.text, accepted: decision.accepted, phase: request.phase ?? 1 }, narrativeWechatAiOutputSchema);
+      const narrative = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'wechat_request', '只撰写工作微信申请的 NPC 回复正文，不得输出或改变是否接受的决定。输出 {content:string}。', promptConfig, true),
+        { npcContext: { ...layeredNpcContext(state, npcId, 'wechat_request', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npc.id, name: npc.name, title: npc.title }, playerText: request.text, accepted: decision.accepted, phase: request.phase ?? 1 }, narrativeWechatAiOutputSchema,
+        npcSpeakerIdentityQualityGate(npcId, 'wechat_request'));
       const safeOutput = { content: hardBlocker ? COMPLIANCE_REFUSAL : narrative.content, accepted: decision.accepted };
       const npcMessage = newMessage('npc', 'wechat_request', safeOutput.content);
       await evaluateNpcTurn(invoker, jevInvoker, state, npcId, 'wechat_request', playerMessage, npcMessage, 'reply', promptConfig);
@@ -1369,8 +1370,8 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
       }
       const remaining = npc.allowedTasks.filter((task) => !meeting.completedTasks.includes(task));
       const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, 'visit', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npc.id, name: npc.name, title: npc.title }, playerText: request.text, visit: { turn: nextTurn, completedTasks: meeting.completedTasks, remainingTasks: remaining } };
-      const narrative = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', '这是实际拜访第 ' + nextTurn + ' 轮。只生成符合人物和当前语境的 NPC 回复正文；不输出任务完成、告辞或强制结束的决定字段。玩家明确告辞时只写一句简短告别。输出 {content:string}。', promptConfig),
-        promptPayload, narrativeVisitTurnAiOutputSchema);
+      const narrative = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', '这是实际拜访第 ' + nextTurn + ' 轮。只生成符合人物和当前语境的 NPC 回复正文；不输出任务完成、告辞或强制结束的决定字段。玩家明确告辞时只写一句简短告别。输出 {content:string}。', promptConfig, true),
+        promptPayload, narrativeVisitTurnAiOutputSchema, npcSpeakerIdentityQualityGate(npcId, 'visit'));
       const hardBlocker = isHardBlockerText(request.text);
       const content = hardBlocker ? COMPLIANCE_REFUSAL : narrative.content;
       const decision = hardBlocker
