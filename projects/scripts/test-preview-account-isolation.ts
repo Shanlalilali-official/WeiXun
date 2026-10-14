@@ -35,7 +35,6 @@ type FetchHandler = (url: string, init?: RequestInit) => Promise<unknown>;
 type StubEvent = { key?: string | null };
 type StubListener = (event?: StubEvent) => void;
 type PreviewState = {
-  phase: number;
   actionPoints: number;
   totalSpent: number;
   workPlans: { global: string; byNpc: Record<string, string> };
@@ -122,6 +121,9 @@ function createRuntime(options: {
   const fetch = async (url: string, init?: RequestInit) => {
     calls.push({ url, init });
     if (url === '/api/designer/image-assets') return new Promise(() => undefined);
+    if (url.startsWith('/api/game-data/competitor-profiles?')) {
+      return response(200, { success: true, data: [], revision: 0 });
+    }
     return routeFetch(url, init);
   };
 
@@ -153,6 +155,8 @@ function createRuntime(options: {
     Math,
     setTimeout: (callback: () => void) => { callback(); return 0; },
     clearTimeout: () => undefined,
+    setInterval: () => 0,
+    clearInterval: () => undefined,
     requestAnimationFrame: () => 0,
     performance: { now: () => 0 },
     crypto: { randomUUID: () => 'test-command-id' },
@@ -175,7 +179,6 @@ function createRuntime(options: {
 
 function accountState(label: string) {
   return {
-    phase: 4,
     actionPoints: 7,
     totalSpent: 21,
     workPlans: { global: `${label} plan`, byNpc: { 'P1-001': `${label} contact plan` } },
@@ -237,7 +240,7 @@ async function testAccountSwitchAndRefresh() {
 
 async function testUnownedLegacyCacheIsDiscarded() {
   const runtime = createRuntime({ userId: 'user-B', token: 'token-B', legacyCache: true });
-  assert.equal(runtime.hooks.snapshot().phase, 1, 'unowned legacy progress is not migrated into the current user');
+  assert.equal(runtime.hooks.snapshot().actionPoints, 28, 'unowned legacy progress is not migrated into the current user');
   assert.equal(runtime.hooks.snapshot().workPlans.global, '', 'unowned plan is discarded');
   assert.equal(runtime.hooks.snapshot().previewSessionId, null, 'unowned legacy previewSessionId is discarded');
   assert.equal(runtime.sessionStorage.getItem('project1_interactive_prototype_v10'), null, 'old global v10 cache is removed');

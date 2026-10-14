@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { evaluateCompetitorStageAction } from '@/lib/ai/competitor-stage';
 import { evaluateGiftDecision } from '@/lib/ai/npc-evaluation';
-import { evaluateFormalBriefVisit, evaluateFormalWorkPlan } from '@/lib/ai/formal-workflow';
+import { evaluateFormalBriefVisit, evaluateFormalVisitPreparation, evaluateFormalWorkPlan } from '@/lib/ai/formal-workflow';
 import { authGuard } from '@/lib/auth/guard';
 import { gameCommandSchema, type GameCommand } from '@/lib/contracts/game';
 import {
@@ -9,11 +8,11 @@ import {
   deliverPendingNpcHandoffs,
   assertOwnedMultiplayerRoomRunning,
   getCommittedGameCommand,
-  getOwnedGameSession,
+  synchronizeOwnedGameTimer,
 } from '@/lib/game/repository';
 import { getProjectOneNpc } from '@/lib/game/project-one';
 import { assertMultiplayerCommandAllowed } from '@/lib/game/multiplayer';
-import { executeGameCommand, getPhaseName, toPlayerVisibleGameCommandResult, toPlayerVisibleGameState } from '@/lib/game/state';
+import { executeGameCommand, synchronizeProjectTimer, toPlayerVisibleGameCommandResult, toPlayerVisibleGameState } from '@/lib/game/state';
 import { createServerProbabilitySeed } from '@/lib/game/server-random';
 
 export const runtime = 'nodejs';
@@ -28,7 +27,16 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
 
   const { id } = await context.params;
   try {
-    const gameSession = await getOwnedGameSession(id, guard.session.userId);
+    const timerSynchronized = await synchronizeOwnedGameTimer(id, guard.session.userId);
+    const gameSession = {
+      ...timerSynchronized,
+      // A command is an authoritative boundary, so retain sub-interval elapsed
+      // time before a start_visit can freeze the clock. Its eventual command
+      // commit persists this checkpoint atomically with the action.
+      state: timerSynchronized.state.gameMode === 'multiplayer' && !timerSynchronized.state.projectTimer.lastResumedAt
+        ? timerSynchronized.state
+        : synchronizeProjectTimer(timerSynchronized.state, Date.now(), true),
+    };
     const replay = await getCommittedGameCommand(id, parsed.data.commandId);
     if (replay) return NextResponse.json({
       success: true,
@@ -37,8 +45,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       state: toPlayerVisibleGameState(replay.state),
     });
 
-    const allowFinishedRoom = parsed.data.type === 'mark_notification_read'
-      || (parsed.data.type === 'submit' && gameSession.state.submissionReady);
+    const allowFinishedRoom = parsed.data.type === 'mark_notification_read';
     await assertOwnedMultiplayerRoomRunning(id, gameSession.state, allowFinishedRoom);
 
     if (parsed.data.expectedVersion !== gameSession.state.version) {
@@ -48,9 +55,8 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       }, { status: 409 });
     }
 
-    // A room transition locks every company runtime, grants AP once, and
-    // resets readiness atomically. Letting a generic session command advance
-    // here would bypass that coordination and split the shared room state.
+    // Legacy phase controls are rejected by the reducer; multiplayer still
+    // keeps its room ownership check for normal company actions.
     assertMultiplayerCommandAllowed(gameSession.state.gameMode, parsed.data.type);
 
     // Probability decisions use an HMAC seed that the browser cannot predict
@@ -60,45 +66,36 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       commandId: createServerProbabilitySeed([id, parsed.data.commandId, parsed.data.type]),
     } as GameCommand;
 
-    // Solo competitor actions are generated before the pure reducer runs.
-    // The AI adapter returns a candidate only after schema/rule validation;
-    // on any failure, an absent candidate keeps the deterministic fallback in
-    // `advanceRound`. Multiplayer stage transitions remain room-controlled.
-    const shouldEvaluateCompetitor = parsed.data.type === 'advance_phase'
-      && gameSession.state.gameMode === 'solo'
-      && gameSession.state.status === 'playing'
-      && !gameSession.state.activeMeeting
-      && !gameSession.state.submissionReady;
-    const competitorDecision = shouldEvaluateCompetitor
-      ? await evaluateCompetitorStageAction({ sessionId: id, state: gameSession.state })
-      : undefined;
-
     // The pure reducer still rejects invalid inventory/meeting/version state;
     // the authoritative state is committed only once after the candidate has
     // been validated or the deterministic fallback has been selected.
-    const workflowEvaluation = parsed.data.type === 'work_plan'
+    const planPayload = parsed.data.type === 'work_plan' ? parsed.data.payload : null;
+    const duplicatePlan = planPayload !== null && gameSession.state.workPlans.some((plan) =>
+      plan.scope === planPayload.scope && plan.npcId === (planPayload.npcId ?? null) && plan.content.trim() === planPayload.content.trim());
+    const workflowEvaluation = parsed.data.type === 'work_plan' && !duplicatePlan
       ? { workPlanEvaluation: await evaluateFormalWorkPlan(parsed.data.payload) }
+      : parsed.data.type === 'prepare' && parsed.data.payload.preparationType === 'visit_preparation'
+        ? { visitPreparationEvaluation: await evaluateFormalVisitPreparation(parsed.data.payload) }
       : parsed.data.type === 'brief_visit'
         ? { briefVisitEvaluation: await evaluateFormalBriefVisit(parsed.data.payload) }
         : {};
-    let execution = executeGameCommand(gameSession.state, probabilityCommand, {
-      ...(competitorDecision?.candidate
-        ? {
-        competitorStageAction: competitorDecision.candidate,
-        competitorStageSource: 'model',
-      }
-        : {}),
-      ...workflowEvaluation,
-    });
+    // AI preparation can take longer than the remaining project budget. Load
+    // the trusted timer again before applying any model-derived business
+    // effect, so a late response never lands after automatic settlement.
+    const settledSession = await synchronizeOwnedGameTimer(id, guard.session.userId);
+    if (settledSession.state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
+    if (settledSession.state.version !== parsed.data.expectedVersion) throw new Error('STATE_VERSION_CONFLICT');
+    const executionState = synchronizeProjectTimer(settledSession.state, Date.now(), true);
+    let execution = executeGameCommand(executionState, probabilityCommand, workflowEvaluation);
     if (parsed.data.type === 'give_gift') {
       const giftCommand = parsed.data;
-      const preparation = gameSession.state.preparations.find((item) => item.id === giftCommand.payload.preparationId);
-      const meeting = gameSession.state.activeMeeting;
+      const preparation = executionState.preparations.find((item) => item.id === giftCommand.payload.preparationId);
+      const meeting = executionState.activeMeeting;
       const npc = preparation ? getProjectOneNpc(preparation.npcId) : null;
       if (!preparation || !meeting || !npc) throw new Error('GIFT_CONTEXT_INVALID');
-      const attitude = gameSession.state.npcAttitudes[npc.id];
-      const appointment = gameSession.state.appointments.find((item) => item.id === meeting.appointmentId);
-      const priorBoundaryGiftCount = gameSession.state.complianceRisks.filter((item) =>
+      const attitude = executionState.npcAttitudes[npc.id];
+      const appointment = executionState.appointments.find((item) => item.id === meeting.appointmentId);
+      const priorBoundaryGiftCount = executionState.complianceRisks.filter((item) =>
         item.npcId === npc.id
         && item.kind === 'boundary_gift'
         && (item.outcome === 'delighted_acceptance' || item.outcome === 'cautious_acceptance')).length;
@@ -113,7 +110,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         complianceSensitivity: npc.complianceSensitivity,
         giftPreference: npc.actionPreferences.gift ?? 0,
         pleasure: attitude?.pleasantness ?? 50,
-        support: attitude?.support ?? gameSession.state.npcAffinity[npc.id] ?? 35,
+        support: attitude?.support ?? executionState.npcAffinity[npc.id] ?? 35,
         attitudeHistory: (attitude?.history ?? []).slice(-8).map((item) => ({
           reason: item.reason,
           source: item.source,
@@ -125,14 +122,14 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         setting: giftCommand.payload.setting,
         witnesses: giftCommand.payload.witnesses.map((npcId) => getProjectOneNpc(npcId)?.name ?? npcId),
         priorBoundaryGiftCount,
-        round: gameSession.state.currentRound,
-        phaseName: getPhaseName(gameSession.state.currentRound),
+        round: executionState.currentRound,
+        phaseName: '项目限时推进',
         meetingType: meeting.visitType,
         venue: appointment?.venue ?? '未记录场地',
-        procurementSensitive: gameSession.state.currentRound >= 4,
+        procurementSensitive: false,
         exchangeRequested: giftCommand.payload.exchangeRequested,
       });
-      execution = executeGameCommand(gameSession.state, {
+      execution = executeGameCommand(executionState, {
         ...giftCommand,
         commandId: probabilityCommand.commandId,
       }, {

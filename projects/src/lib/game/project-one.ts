@@ -53,7 +53,7 @@ export const PROJECT_ONE_VISIT_RULES = {
 } as const;
 
 export const PROJECT_ONE_PREPARATION_RULES = {
-  visit_preparation: { timeMinutes: 0, costPoints: 3, reusable: true },
+  visit_preparation: { timeMinutes: 0, costPoints: 0, reusable: true },
   /** Legacy save compatibility; new clients cannot create these types. */
   agenda: { timeMinutes: 0, costPoints: 1, reusable: true },
   ppt: { timeMinutes: 0, costPoints: 4, reusable: true },

@@ -11,9 +11,6 @@ interface CompanySlot {
   company_name: string;
   player_user_id: string | null;
   game_session_id: string | null;
-  ready_stage: number | null;
-  ready_by_admin: boolean;
-  connected: boolean;
 }
 
 interface MultiplayerRoom {
@@ -21,10 +18,6 @@ interface MultiplayerRoom {
   room_code: string;
   scenario_code: string;
   status: 'waiting' | 'running' | 'finished' | 'cancelled';
-  current_stage: number;
-  max_stages: number;
-  stage_duration_seconds: number | null;
-  stage_deadline_at: string | null;
   stage_version: number;
   created_at: string;
   multiplayer_company_slots: CompanySlot[];
@@ -33,13 +26,11 @@ interface MultiplayerRoom {
 interface CreateRoomForm {
   firstCompanyName: string;
   secondCompanyName: string;
-  stageDurationSeconds: string;
 }
 
 const initialCreateForm: CreateRoomForm = {
   firstCompanyName: '我方公司',
   secondCompanyName: 'ABC公司',
-  stageDurationSeconds: '',
 };
 
 const roomStatusLabel: Record<MultiplayerRoom['status'], string> = {
@@ -66,6 +57,7 @@ async function getErrorMessage(response: Response) {
     ROOM_NOT_MUTABLE: '当前房间状态不允许此操作。',
     ROOM_ALREADY_STARTED: '房间已经开始。',
     ROOM_CREATE_FAILED: '创建房间失败，请稍后重试。',
+    GAME_PHASE_DESIGN_REMOVED: '实训已改为固定时长，阶段设置已取消。',
     ROOM_LIST_FAILED: '加载房间失败，请检查登录状态或稍后重试。',
     '权限不足': '当前账号没有教练工作台权限。',
     '未登录': '登录已失效，请重新登录。',
@@ -130,13 +122,8 @@ export default function CoachPage() {
   const handleCreateRoom = async () => {
     const first = createForm.firstCompanyName.trim();
     const second = createForm.secondCompanyName.trim();
-    const parsedDuration = createForm.stageDurationSeconds.trim() === '' ? null : Number(createForm.stageDurationSeconds);
     if (!first || !second || first === second) {
       setNotice({ type: 'error', message: '请填写两个不同的公司名称。' });
-      return;
-    }
-    if (parsedDuration !== null && (!Number.isInteger(parsedDuration) || parsedDuration < 60)) {
-      setNotice({ type: 'error', message: '阶段时限应为不少于 60 秒的整数，或留空表示不限时。' });
       return;
     }
     setNotice(null);
@@ -145,7 +132,6 @@ export default function CoachPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          stageDurationSeconds: parsedDuration,
           companies: [{ id: 'player-company', name: first }, { id: 'abc-company', name: second }],
         }),
       });
@@ -190,7 +176,7 @@ export default function CoachPage() {
             <div key={stat.label} className="card-elevated px-5 py-4"><div className="text-2xl font-bold text-foreground num">{stat.value}</div><div className="text-xs text-muted-foreground">{stat.label}</div></div>
           ))}
         </div>
-        <div className="card-elevated p-5 mb-6 text-sm text-muted-foreground">当前页面只管理已建模的多人房间与公司席位。房间状态不会实时推送；请在玩家加入、确认或操作冲突后手动刷新。小组、报告、配置锁定和操作历史尚无对应的生产数据模型，因此未在此开放。</div>
+        <div className="card-elevated p-5 mb-6 text-sm text-muted-foreground">每场实训限时 20 分钟；每 5 分钟恢复 5 点行动点（上限 28 点），拜访期间暂停计时，并按每轮 15 秒扣除。当前页面只管理多人房间与公司席位；房间状态不会实时推送，请在玩家加入或操作冲突后手动刷新。</div>
         {notice && <div className={`rounded-xl border px-4 py-3 mb-4 text-sm ${notice.type === 'error' ? 'border-destructive/30 bg-destructive/10 text-destructive' : 'border-success/30 bg-success/10 text-foreground'}`} role="status">{notice.message}</div>}
 
         <section className="bg-card rounded-2xl border border-border p-6">
@@ -209,9 +195,7 @@ export default function CoachPage() {
                     <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
                       <div><div className="text-[10px] text-muted-foreground uppercase tracking-wider">房间码</div><div className="flex items-center gap-2 font-mono font-bold text-foreground num">{room.room_code}<button onClick={() => void handleCopyCode(room.room_code)} className="p-1 rounded hover:bg-primary/10 text-primary" title="复制房间码"><Copy className="w-3.5 h-3.5" /></button></div></div>
                       <div><div className="text-[10px] text-muted-foreground">状态</div><span className={`badge ${statusClass(room.status)}`}>{roomStatusLabel[room.status]}</span></div>
-                      <div><div className="text-[10px] text-muted-foreground">阶段</div><div className="text-sm text-foreground num">{room.current_stage} / {room.max_stages}</div></div>
-                      <div><div className="text-[10px] text-muted-foreground">协调版本</div><div className="text-sm text-foreground num">v{room.stage_version}</div></div>
-                      <div><div className="text-[10px] text-muted-foreground">阶段时限</div><div className="text-sm text-foreground">{room.stage_duration_seconds ? `${room.stage_duration_seconds} 秒` : '不限时'}</div></div>
+                      <div><div className="text-[10px] text-muted-foreground">实训时长</div><div className="text-sm text-foreground">20 分钟</div></div>
                     </div>
                     <div className="flex items-center gap-2">
                       {room.status === 'waiting' && <button onClick={() => void mutateRoom(`/api/coach/rooms/${room.id}/start`, { expectedVersion: room.stage_version }, '房间已开始。')} className="px-3 py-2 rounded-lg btn-primary text-sm font-semibold flex items-center gap-1.5"><Play className="w-4 h-4" /> 开始</button>}
@@ -223,12 +207,10 @@ export default function CoachPage() {
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                       {room.multiplayer_company_slots.map((slot) => {
                         const occupied = Boolean(slot.player_user_id);
-                        const ready = slot.ready_stage === room.current_stage;
                         return <div key={slot.id} className="rounded-lg border border-border p-3 flex flex-wrap items-center justify-between gap-3">
-                          <div><div className="font-medium text-foreground">{slot.company_name}</div><div className="text-xs text-muted-foreground mt-1">{occupied ? `玩家：${slot.player_user_id}` : '尚未加入'}{occupied && room.status === 'running' && ` · ${ready ? (slot.ready_by_admin ? '教练已代确认' : '已确认') : '待确认'}`}</div></div>
+                          <div><div className="font-medium text-foreground">{slot.company_name}</div><div className="text-xs text-muted-foreground mt-1">{occupied ? `玩家：${slot.player_user_id}` : '尚未加入'}</div></div>
                           <div className="flex items-center gap-2">
-                            {room.status === 'running' && occupied && !ready && <button onClick={() => void mutateRoom(`/api/coach/rooms/${room.id}`, { action: 'force_ready', slotId: slot.id, expectedStage: room.current_stage, expectedVersion: room.stage_version }, '已代为确认该公司席位。')} className="px-2.5 py-1.5 rounded-lg btn-glass text-xs text-foreground">代确认</button>}
-                            {room.status === 'waiting' && occupied && <button onClick={() => { if (window.confirm(`确定移除 ${slot.company_name} 的玩家？`)) void mutateRoom(`/api/coach/rooms/${room.id}`, { action: 'remove_player', slotId: slot.id, expectedStage: room.current_stage, expectedVersion: room.stage_version }, '玩家已从公司席位移除。'); }} className="px-2.5 py-1.5 rounded-lg border border-destructive/30 text-destructive text-xs hover:bg-destructive/10 flex items-center gap-1"><X className="w-3.5 h-3.5" /> 移除</button>}
+                            {room.status === 'waiting' && occupied && <button onClick={() => { if (window.confirm(`确定移除 ${slot.company_name} 的玩家？`)) void mutateRoom(`/api/coach/rooms/${room.id}`, { action: 'remove_player', slotId: slot.id, expectedVersion: room.stage_version }, '玩家已从公司席位移除。'); }} className="px-2.5 py-1.5 rounded-lg border border-destructive/30 text-destructive text-xs hover:bg-destructive/10 flex items-center gap-1"><X className="w-3.5 h-3.5" /> 移除</button>}
                           </div>
                         </div>;
                       })}
@@ -247,7 +229,7 @@ export default function CoachPage() {
           <div className="space-y-4">
             <label className="block text-sm text-foreground">公司席位 A<input value={createForm.firstCompanyName} onChange={(event) => setCreateForm({ ...createForm, firstCompanyName: event.target.value })} className="mt-1.5 w-full px-3 py-2 rounded-lg bg-surface-container border border-border text-sm" maxLength={128} /></label>
             <label className="block text-sm text-foreground">公司席位 B<input value={createForm.secondCompanyName} onChange={(event) => setCreateForm({ ...createForm, secondCompanyName: event.target.value })} className="mt-1.5 w-full px-3 py-2 rounded-lg bg-surface-container border border-border text-sm" maxLength={128} /></label>
-            <label className="block text-sm text-foreground">每阶段时限（秒，可留空）<input value={createForm.stageDurationSeconds} onChange={(event) => setCreateForm({ ...createForm, stageDurationSeconds: event.target.value })} inputMode="numeric" className="mt-1.5 w-full px-3 py-2 rounded-lg bg-surface-container border border-border text-sm" placeholder="留空表示不限时" /></label>
+            <p className="rounded-lg bg-surface-container px-3 py-2 text-xs leading-5 text-muted-foreground">实训时长固定为 20 分钟。房间开始后计时，每 5 分钟恢复 5 点行动点，拜访期间暂停。</p>
           </div>
           <div className="flex justify-end gap-2 mt-6"><button onClick={() => setShowCreateRoom(false)} className="px-4 py-2 rounded-lg btn-glass text-sm text-foreground">取消</button><button onClick={() => void handleCreateRoom()} className="px-4 py-2 rounded-lg btn-warning text-sm font-semibold flex items-center gap-1.5"><Clipboard className="w-4 h-4" /> 创建</button></div>
         </div>

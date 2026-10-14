@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import { DEFAULT_PROJECT_ONE_PROMPT_CONFIG } from '../src/lib/designer/prompt-config';
+import {
+  DEFAULT_NPC_SUPPORT_TIER_THRESHOLDS,
+  DEFAULT_PROJECT_ONE_PROMPT_CONFIG,
+  normalizeProjectOnePromptConfig,
+  npcSupportTierThresholdsSchema,
+} from '../src/lib/designer/prompt-config';
 import {
   PROJECT_ONE_CHANNEL_MODIFIERS,
   PROJECT_ONE_FIVE_PERSON_IDS,
@@ -29,6 +34,7 @@ requested.liveEvaluatorPrompt = 'client evaluator';
 requested.previewEvaluatorPrompt = 'client preview evaluator';
 requested.promptTestNpcPrompt.additionalInstructions = 'client test prompt';
 requested.promptTestEvaluatorPrompt = 'client test evaluator';
+requested.supportTierThresholds = { mediumMin: 40, highMin: 80 };
 requested.npcRolePrompts['P1-001'] = '';
 requested.npcRolePrompts['unknown-person'] = 'must not persist';
 requested.npcChannelExceptions['P1-001'] = Object.fromEntries(
@@ -46,6 +52,7 @@ assert.equal(merged.liveEvaluatorPrompt, 'server live evaluator');
 assert.equal(merged.previewEvaluatorPrompt, 'server preview evaluator');
 assert.equal(merged.promptTestNpcPrompt.additionalInstructions, 'server test prompt');
 assert.equal(merged.promptTestEvaluatorPrompt, 'server test evaluator');
+assert.deepEqual(merged.supportTierThresholds, { mediumMin: 40, highMin: 80 });
 assert.equal(merged.npcRolePrompts['P1-001'], '');
 assert.equal(merged.npcRolePrompts['unknown-person'], undefined);
 assert.deepEqual(Object.keys(merged.npcRolePrompts).sort(), [...PROJECT_ONE_FIVE_PERSON_IDS].sort());
@@ -56,5 +63,14 @@ assert.deepEqual(
   Object.keys(PROJECT_ONE_CHANNEL_MODIFIERS).sort(),
 );
 assert.ok(Object.values(merged.npcChannelExceptions['P1-001']).every((value) => value === ''));
+
+const legacyConfig = structuredClone(DEFAULT_PROJECT_ONE_PROMPT_CONFIG) as Record<string, unknown>;
+delete legacyConfig.supportTierThresholds;
+legacyConfig.liveCustomerPrompt = 'legacy live prompt must remain';
+const normalizedLegacy = normalizeProjectOnePromptConfig(legacyConfig);
+assert.equal(normalizedLegacy.liveCustomerPrompt, 'legacy live prompt must remain');
+assert.deepEqual(normalizedLegacy.supportTierThresholds, DEFAULT_NPC_SUPPORT_TIER_THRESHOLDS);
+assert.equal(npcSupportTierThresholdsSchema.safeParse({ mediumMin: 40, highMin: 40 }).success, false);
+assert.equal(npcSupportTierThresholdsSchema.safeParse({ mediumMin: 40.5, highMin: 80 }).success, false);
 
 console.log('prompt config edit scope tests passed');

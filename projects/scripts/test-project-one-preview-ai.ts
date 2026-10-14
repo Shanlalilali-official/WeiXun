@@ -7,6 +7,7 @@ import { previewAiRequestSchema, previewAiResponseSchema, previewNpcEvaluationAi
 import { PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS } from '../src/lib/designer/project-one-five-person';
 import { getPreviewRequestHash } from '../src/lib/game/project-one-preview-session-repository';
 import type { JevInvoker, JevQuestion } from '../src/lib/ai/jev-client';
+import { DEFAULT_PROJECT_ONE_PROMPT_CONFIG } from '../src/lib/designer/prompt-config';
 
 const json = (value: unknown) => JSON.stringify(value);
 let commandIndex = 0;
@@ -119,6 +120,42 @@ async function main() {
   assert.equal(messagePrompt.indexOf('状态节点与披露：') < messagePrompt.indexOf('渠道通用修饰器：'), true);
   assert.equal(prompts.some((prompt) => prompt.includes('SECRET_ATTACHMENT_BODY_SHOULD_NOT_LEAK')), false, 'unviewed attachment content never enters model context');
   assert.equal(state.conversations['P1-002'][0].attachment?.viewed, false, 'attachment viewing state is retained');
+
+  // The preview takes its support snapshot before every narrative generation,
+  // then uses the same configurable thresholds as formal chat. Only the chosen
+  // body is exposed to the model.
+  const tierPromptConfig = structuredClone(DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
+  tierPromptConfig.supportTierThresholds = { mediumMin: 40, highMin: 80 };
+  tierPromptConfig.npcRolePrompts['P1-001'] = {
+    base: 'PREVIEW_TIER_BASE', low: 'PREVIEW_TIER_LOW', medium: 'PREVIEW_TIER_MEDIUM', high: 'PREVIEW_TIER_HIGH',
+  };
+  const tierPrompts: string[] = [];
+  const tierService = createPreviewAiService({ invoker: async (messages) => {
+    const prompt = messages.map((message) => message.content).join('\n');
+    tierPrompts.push(prompt);
+    if (prompt.includes('独立评估刚刚完成的 NPC 正文')) return json(emptyEvaluation);
+    return json(reply('请补充可核验材料。'));
+  } });
+  let tierResult = await tierService.execute('user-preview-tier', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '请确认。' }, 0), tierPromptConfig);
+  const tierState = tierService.store.get('user-preview-tier', tierResult.previewSessionId)!;
+  tierState.npcStates['P1-001'].support = 39;
+  tierResult = await tierService.execute('user-preview-tier', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '请再次确认。' }, tierResult.version, tierResult.previewSessionId), tierPromptConfig);
+  tierState.npcStates['P1-001'].support = 40;
+  tierResult = await tierService.execute('user-preview-tier', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '请补充下一步。' }, tierResult.version, tierResult.previewSessionId), tierPromptConfig);
+  tierState.npcStates['P1-001'].support = 80;
+  await tierService.execute('user-preview-tier', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '请安排正式下一步。' }, tierResult.version, tierResult.previewSessionId), tierPromptConfig);
+  const tierNarratives = tierPrompts.filter((prompt) => prompt.includes('请通过邮件回复'));
+  assert.equal(tierNarratives.length, 4, 'every boundary value generates one preview narrative');
+  for (const [prompt, expected, excluded] of [
+    [tierNarratives[0], 'PREVIEW_TIER_LOW', 'PREVIEW_TIER_MEDIUM|PREVIEW_TIER_HIGH'],
+    [tierNarratives[1], 'PREVIEW_TIER_LOW', 'PREVIEW_TIER_MEDIUM|PREVIEW_TIER_HIGH'],
+    [tierNarratives[2], 'PREVIEW_TIER_MEDIUM', 'PREVIEW_TIER_LOW|PREVIEW_TIER_HIGH'],
+    [tierNarratives[3], 'PREVIEW_TIER_HIGH', 'PREVIEW_TIER_LOW|PREVIEW_TIER_MEDIUM'],
+  ] as const) {
+    assert.match(prompt, new RegExp(expected));
+    assert.doesNotMatch(prompt, new RegExp(excluded));
+    assert.doesNotMatch(prompt, /"support"\s*:|mediumMin|highMin|档位来源/, 'preview runtime context must not expose support values, thresholds, or tier decisions');
+  }
 
   const readPrompts: string[] = [];
   const readService = createPreviewAiService({ invoker: async (messages) => {
@@ -430,13 +467,12 @@ async function main() {
   const appointmentCreated = await appointmentService.execute('user-appointment', withMeta({ action: 'message', npcId: 'P1-001', channel: 'email', text: '明天方便在办公室确认验收口径吗？' }, 0));
   assert(appointmentCreated.appointment, 'accepted invitation must create a server appointment');
   assert.equal(appointmentCreated.appointment.npcId, 'P1-001');
-  assert.equal(appointmentCreated.appointment.phase, 1);
   const appointmentState = appointmentService.store.get('user-appointment', appointmentCreated.previewSessionId)!;
   assert.deepEqual(appointmentState.appointments['P1-001'], appointmentCreated.appointment, 'appointment is stored in the server preview session');
   const appointmentUpdated = await appointmentService.execute('user-appointment', withMeta({ action: 'test_adjust_appointments', appointments: [{
-    npcId: 'P1-001', appointmentId: appointmentCreated.appointment.id, status: 'accepted', phase: 4, timeWindow: '第 4 阶段 14:00', location: '客户办公室 4 楼', agenda: '复核上线与验收计划',
+    npcId: 'P1-001', appointmentId: appointmentCreated.appointment.id, status: 'accepted', timeWindow: '明天 14:00', location: '客户办公室 4 楼', agenda: '复核上线与验收计划',
   }] }, appointmentCreated.version, appointmentCreated.previewSessionId));
-  assert.deepEqual(appointmentUpdated.appointments, [{ ...appointmentCreated.appointment, phase: 4, timeWindow: '第 4 阶段 14:00', location: '客户办公室 4 楼', agenda: '复核上线与验收计划' }], 'appointment test adjustment returns the authoritative server appointment');
+  assert.deepEqual(appointmentUpdated.appointments, [{ ...appointmentCreated.appointment, timeWindow: '明天 14:00', location: '客户办公室 4 楼', agenda: '复核上线与验收计划' }], 'appointment test adjustment returns the authoritative server appointment');
   assert.deepEqual(appointmentState.appointments['P1-001'], appointmentUpdated.appointments[0]);
   appointmentState.approvedVisitPreparations['P1-001'] = '已准备拜访';
   const visitStarted = await appointmentService.execute('user-appointment', withMeta({ action: 'start_visit', npcId: 'P1-001' }, appointmentUpdated.version, appointmentCreated.previewSessionId));

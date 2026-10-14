@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { authGuard, type AuthGuardResult } from '@/lib/auth/guard';
+import { isLegacyCompetitorPlaceholder, type CompetitorProfile } from '@/lib/contracts/competitors';
 import {
   COMPETITOR_PROJECT_IDS,
   MAX_COMPETITOR_CONFIG_BYTES,
@@ -36,6 +37,22 @@ function projectIdFromQuery(request: NextRequest): number {
   const parsed = projectIdSchema.safeParse(Number(raw));
   if (!parsed.success) throw new Error('COMPETITOR_PROJECT_INVALID');
   return parsed.data;
+}
+
+export function toCompetitorProfiles(config: Awaited<ReturnType<typeof loadProjectOneCompetitorConfig>>, projectId: number): CompetitorProfile[] {
+  return config.competitors
+    .filter((competitor) => competitor.project_id === projectId && !isLegacyCompetitorPlaceholder(competitor))
+    .map((competitor) => ({
+      id: competitor.id,
+      project_id: competitor.project_id,
+      company_name: competitor.company_name,
+      features: competitor.features,
+      more_info: competitor.more_info,
+      industry: competitor.industry,
+      solution_summary: competitor.solution_summary,
+      representative_experience: competitor.representative_experience,
+      service_support: competitor.service_support,
+    }));
 }
 
 async function parseJsonBody(request: NextRequest): Promise<unknown> {
@@ -105,6 +122,28 @@ export async function handleCompetitorGet(request: NextRequest): Promise<NextRes
   } catch (error) {
     return parseErrorResponse(error);
   }
+}
+
+/** Public-in-game, authenticated read view. Designer CRUD remains permission-guarded. */
+export async function handleCompetitorProfilesGet(request: NextRequest): Promise<NextResponse> {
+  const guard = authGuard(request);
+  if (!guard.ok) return noStoreResponse(guard.response!);
+  try {
+    const projectId = projectIdFromQuery(request);
+    const config = await loadProjectOneCompetitorConfig();
+    const data = toCompetitorProfiles(config, projectId);
+    return NextResponse.json(
+      { success: true, data, revision: config.revision },
+      { headers: { 'Cache-Control': 'no-store, max-age=0' } },
+    );
+  } catch (error) {
+    return noStoreResponse(parseErrorResponse(error));
+  }
+}
+
+function noStoreResponse(response: NextResponse): NextResponse {
+  response.headers.set('Cache-Control', 'no-store, max-age=0');
+  return response;
 }
 
 export async function handleCompetitorPost(request: NextRequest): Promise<NextResponse> {

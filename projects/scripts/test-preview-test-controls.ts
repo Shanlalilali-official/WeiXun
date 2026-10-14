@@ -13,8 +13,8 @@ function assert(condition: unknown, message: string): asserts condition {
 assert(html.includes('data-action="test-controls"'), '顶部缺少测试调节入口');
 assert(html.includes('data-action="skip-visit-prep"'), '拜访准备页缺少跳过准备直接拜访入口');
 assert(html.includes("if(a==='skip-visit-prep')return startVisitSimulation({skipPreparation:true})"), '跳过准备入口没有进入实际拜访');
-assert(html.includes('id="test-phase" type="number" min="1" max="5"'), '缺少阶段范围控制');
-assert(html.includes('id="test-action-points" type="number" min="0" max="999"'), '缺少行动点范围控制');
+assert(html.includes('id="test-remaining-seconds" type="number" min="0" max="1200"'), '缺少倒计时范围控制');
+assert(html.includes('id="test-action-points" type="number" min="0" max="28"'), '缺少行动点上限控制');
 assert(html.includes('id="test-total-spent" type="number" min="0" max="9999"'), '缺少累计消耗范围控制');
 assert(html.includes("[['','未添加'],['accepted','已添加'],['pending','待处理'],['rejected','已拒绝']]"), '微信测试状态选项不完整');
 assert(html.includes('data-test-field="support" type="number" min="0" max="100"'), '缺少 NPC 支持度控制');
@@ -24,7 +24,7 @@ assert(html.includes('data-test-npc-enable='), '缺少逐 NPC 显式覆盖开关
 assert(html.includes("MockData.npcs.filter(person=>enabledNpcIds.has(person.id))"), '未勾选人物仍会被 NPC 测试调节覆盖');
 assert(html.includes('data-test-appointment-enable='), '缺少逐联系人预约覆盖开关');
 assert(html.includes('data-test-appointment-field="status"'), '缺少预约状态控制');
-assert(html.includes('data-test-appointment-field="phase"'), '缺少预约阶段控制');
+assert(!html.includes('data-test-appointment-field="phase"'), '预约不应再包含阶段控制');
 assert(html.includes('data-test-appointment-field="location"'), '缺少预约地点控制');
 assert(html.includes('test_adjust_appointments'), '缺少预约测试调节 action');
 assert(html.includes('Array.isArray(response.appointments)'), '没有接收服务端返回的预约状态');
@@ -36,10 +36,9 @@ assert(html.includes('id="refresh-test-npc-states"'), '测试调节面板缺少�
 assert(route.includes("['test_adjust_npcs', 'test_adjust_appointments'].includes(parsed.data.action) && !isFastDebugEnabled()"), '生产环境没有默认关闭测试调节 action');
 assert(html.includes("if(value)state.wechat[id]=value;else delete state.wechat[id]"), '微信状态没有写入本地测试状态');
 assert(html.includes("if(state.wechat[n.id]==='accepted')return renderMessageWorkspace('wechat')"), '已添加状态不能直接进入微信对话');
-assert(html.includes('.gold-icon svg{transform:translateY(-.5px)}'), '行动点图标缺少视觉居中校正');
-assert(html.includes('.violet-icon svg{transform:translate(-.5px,-.5px)}'), '竞品情报图标缺少视觉居中校正');
-assert(html.includes('<span class="section-icon gold-icon">${actionIcon}</span>'), '行动点图标未使用校正类');
-assert(html.includes('<span class="section-icon violet-icon">${competitorIcon}</span>'), '竞品情报图标未使用校正类');
+assert(html.includes('function syncCountdown(now=Date.now())'), '倒计时同步逻辑缺失');
+assert(html.includes('pauseCountdown();'), '进入实际拜访时没有暂停倒计时');
+assert(html.includes('resumeCountdown(turn)'), '结束拜访时没有按轮次恢复倒计时');
 assert(html.includes('const immersive=Boolean(state.meeting);'), '进行中的拜访没有切换到沉浸式页面壳');
 assert(html.includes('class="visit-immersive"'), '缺少近全视口沉浸式拜访画面');
 assert(html.includes("uploadedImageUrls['visit_scene:leader_office']||uploadedImageUrls['visit_scene:office']"), '张建国办公室没有优先读取专用场景并回退办公室场景');
@@ -57,7 +56,7 @@ const applyStart = html.indexOf('async function applyTestControls(){');
 const handlerStart = html.indexOf('\nasync function handleAction', applyStart);
 assert(applyStart >= 0 && handlerStart > applyStart, '测试值应用函数缺失');
 const applySource = html.slice(applyStart, handlerStart);
-assert(applySource.indexOf('apiCall(action') < applySource.indexOf('state.phase=phase'), '服务端同步失败前不应先提交本地测试值');
+assert(applySource.indexOf('accountScopedApiCall(action') < applySource.indexOf('state.actionPoints=actionPoints'), '服务端同步失败前不应先提交本地测试值');
 assert(applySource.includes('save();closeModal();render()'), '测试值没有保存并刷新界面');
 
 const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
@@ -182,6 +181,8 @@ function createRuntime(sessionStorage: MemoryStorage, replies: ((url: string, in
     crypto: { randomUUID: () => `test-command-${++commandIndex}` },
     setTimeout: (callback: () => void) => { callback(); return 0; },
     clearTimeout: () => undefined,
+    setInterval: () => 0,
+    clearInterval: () => undefined,
   });
   vm.runInContext(script, context, { filename: 'project1-prototype-v9.inline.js' });
   const hooks = vm.runInContext('globalThis.__previewTestHooks', context) as {

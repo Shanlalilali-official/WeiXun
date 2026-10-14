@@ -33,6 +33,7 @@
     "test:npc-silence-live": "tsx scripts/test-npc-silence-live.ts",
     "test:wechat-expressions": "tsx scripts/test-wechat-expressions.ts",
     "test:preview-test-controls": "tsx scripts/test-preview-test-controls.ts",
+    "test:preview-countdown": "tsx scripts/test-preview-countdown.ts",
     "test:preview-stream-protocol": "tsx scripts/test-preview-stream-protocol.ts",
     "test:preview-designer-auth": "tsx scripts/test-preview-designer-auth.ts",
     "test:designer-excel": "tsx scripts/test-designer-excel.ts",

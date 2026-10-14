@@ -94,8 +94,10 @@ const DEFAULT_PROJECTS: Hotspot[] = [
 export default function StartPage() {
   const router = useRouter();
   const [selected, setSelected] = useState<Hotspot | null>(null);
-  const [identity, setIdentity] = useState<{ displayName: string; role: string } | null>(null);
+  const [identity, setIdentity] = useState<{ displayName: string; role: string; subRole?: string } | null>(null);
   const [playMode, setPlayMode] = useState<'solo' | 'multiplayer'>('solo');
+  const canSelectMode = identity !== null && (identity.role !== 'player' || identity.subRole === 'enterprise_employee');
+  const effectivePlayMode = canSelectMode ? playMode : 'solo';
   const [roomCode, setRoomCode] = useState('');
   const [companyId, setCompanyId] = useState('player-company');
   const [joining, setJoining] = useState(false);
@@ -111,7 +113,7 @@ export default function StartPage() {
     if (raw) {
       try {
         const data = JSON.parse(raw);
-        setIdentity({ displayName: data.displayName, role: data.role });
+        setIdentity({ displayName: data.displayName, role: data.role, subRole: data.subRole });
       } catch {}
     }
   }, []);
@@ -156,7 +158,7 @@ export default function StartPage() {
   const handleStart = async () => {
     if (!selected) return;
     if (selected.id !== 'project-1') return;
-    if (playMode === 'multiplayer') {
+    if (effectivePlayMode === 'multiplayer') {
       if (!roomCode.trim()) { setJoinError('请输入联机房间码'); return; }
       setJoining(true);
       setJoinError('');
@@ -186,7 +188,7 @@ export default function StartPage() {
 
       <main className="mx-auto w-full max-w-[1260px] px-4 pb-12 pt-6 sm:px-6">
         <section className="mb-5 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-          <div><div className="text-[10px] font-black uppercase tracking-[.16em] text-[#2f6bff]">PROJECT SELECTION · SALES SIMULATION</div><h1 className="mt-1.5 bg-gradient-to-r from-[#1b2a47] via-[#244879] to-[#2f6bff] bg-clip-text text-2xl font-black tracking-tight text-transparent sm:text-[28px]">销售攻关实训 · 项目入口</h1><p className="mt-2 max-w-[760px] text-xs leading-6 text-[#68758c]">选择一个项目开始推进。项目一已开放正式五人对局，客户沟通、阶段进度、行动点与最终结算将写入正式存档。</p></div>
+          <div><div className="text-[10px] font-black uppercase tracking-[.16em] text-[#2f6bff]">PROJECT SELECTION · SALES SIMULATION</div><h1 className="mt-1.5 bg-gradient-to-r from-[#1b2a47] via-[#244879] to-[#2f6bff] bg-clip-text text-2xl font-black tracking-tight text-transparent sm:text-[28px]">销售攻关实训 · 项目入口</h1><p className="mt-2 max-w-[760px] text-xs leading-6 text-[#68758c]">选择一个项目开始推进。项目一已开放正式五人对局，客户沟通、20 分钟项目倒计时、行动点与最终结算将写入正式存档。</p></div>
           <div className="inline-flex w-fit items-center rounded-full border border-[#cfdcf4] bg-gradient-to-b from-white to-[#f2f6ff] px-3 py-2 text-[10px] font-extrabold text-[#2c5cd0] shadow-[0_5px_16px_rgba(47,107,255,.1)]"><span className="mr-2 h-1.5 w-1.5 animate-pulse rounded-full bg-[#15966f] shadow-[0_0_8px_rgba(21,150,111,.55)]" />正式存档 · 已启用</div>
         </section>
 
@@ -205,7 +207,7 @@ export default function StartPage() {
 
         <section className="mt-4 grid gap-3 lg:grid-cols-[1.08fr_.92fr]">
           <article className="rounded-2xl border border-[#e0e8f2] bg-gradient-to-b from-white to-[#fbfdff] p-5 shadow-[0_4px_16px_rgba(20,40,80,.05)]"><div className="text-[9px] font-black uppercase tracking-[.14em] text-[#2f6bff]">PROJECT 01</div><h2 className="mt-1.5 text-xl font-bold text-[#17223a]">单单位内部竞标</h2><p className="mt-2 text-xs leading-6 text-[#68758c]">围绕关键客户人物推进项目，从组织关系、公开信息与真实沟通中形成可验证的方案和决策依据。</p><div className="mt-4 grid gap-2 sm:grid-cols-2">{[{ label: '客户需求', items: ['项目可落地', '采购流程合规', '一线使用顺畅'] }, { label: '项目特点', items: ['五人组织关系梳理', '公开信息持续沉淀', '多渠道沟通与拜访'] }].map((group) => <div key={group.label} className="rounded-xl border border-[#e9eff7] bg-[#f7fafd] p-3"><strong className="mb-2 block text-[11px] text-[#33445f]">{group.label}</strong><div className="flex flex-wrap gap-1.5">{group.items.map((item) => <span key={item} className="rounded-full border border-[#dbe4f0] bg-white px-2 py-1 text-[9px] text-[#52627c]">{item}</span>)}</div></div>)}</div></article>
-          <article className="rounded-2xl border border-[#e0e8f2] bg-gradient-to-b from-white to-[#fbfdff] p-5 shadow-[0_4px_16px_rgba(20,40,80,.05)]"><div className="text-[9px] font-black uppercase tracking-[.14em] text-[#2f6bff]">HOW TO START</div><h2 className="mt-1.5 text-[15px] font-bold text-[#17223a]">进入正式项目</h2><p className="mt-2 text-xs leading-6 text-[#68758c]">选择项目一查看负责人、客户诉求和本局模式，然后创建或加入一场正式对局。</p><div className="mt-4 rounded-xl border border-[#d8e4f6] bg-[#f4f8fe] px-3 py-2.5 text-[10px] leading-5 text-[#41547a]">正式模式使用服务端存档；阶段、拜访、招标规则与三家供应商结算共用同一份对局数据。</div></article>
+          <article className="rounded-2xl border border-[#e0e8f2] bg-gradient-to-b from-white to-[#fbfdff] p-5 shadow-[0_4px_16px_rgba(20,40,80,.05)]"><div className="text-[9px] font-black uppercase tracking-[.14em] text-[#2f6bff]">HOW TO START</div><h2 className="mt-1.5 text-[15px] font-bold text-[#17223a]">进入正式项目</h2><p className="mt-2 text-xs leading-6 text-[#68758c]">选择项目一查看负责人、客户诉求和本局模式，然后创建或加入一场正式对局。</p><div className="mt-4 rounded-xl border border-[#d8e4f6] bg-[#f4f8fe] px-3 py-2.5 text-[10px] leading-5 text-[#41547a]">正式模式使用服务端存档；项目计时、拜访、招标规则与三家供应商结算共用同一份对局数据。</div></article>
         </section>
 
         {/* 保留项目详情弹窗和正式开局流程。 */}
@@ -316,16 +318,16 @@ export default function StartPage() {
                   </div>
                 </div>
 
-                <div className="mx-5 mb-2 rounded-xl border border-[#e2eaf4] bg-[#f7fafd] p-4 sm:mx-6">
+                {canSelectMode && <div className="mx-5 mb-2 rounded-xl border border-[#e2eaf4] bg-[#f7fafd] p-4 sm:mx-6">
                   <div className="text-[11px] font-bold text-[#33445f]">游戏模式</div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button onClick={() => setPlayMode('solo')} className={`rounded-[10px] border px-3 py-2.5 text-[10px] font-bold transition ${playMode === 'solo' ? 'border-[#8fb2ff] bg-gradient-to-b from-[#f3f7ff] to-[#e9f0ff] text-[#2c5cd0] shadow-[0_0_0_1px_#c4d7ff,0_8px_20px_rgba(47,107,255,.1)]' : 'border-[#dde6f1] bg-white text-[#52627c] hover:border-[#bccfe9]'}`}>单机 · 正式五人对局</button>
                     <button onClick={() => setPlayMode('multiplayer')} className={`rounded-[10px] border px-3 py-2.5 text-[10px] font-bold transition ${playMode === 'multiplayer' ? 'border-[#8fb2ff] bg-gradient-to-b from-[#f3f7ff] to-[#e9f0ff] text-[#2c5cd0] shadow-[0_0_0_1px_#c4d7ff,0_8px_20px_rgba(47,107,255,.1)]' : 'border-[#dde6f1] bg-white text-[#52627c] hover:border-[#bccfe9]'}`}>联机 · 公司均由玩家控制</button>
                   </div>
-                  {playMode === 'solo' && <div className="mt-3 rounded-lg border border-[#d9e5fa] bg-[#f4f8ff] px-3 py-2 text-[10px] leading-5 text-[#52627c]">阶段进度、行动点、NPC 沟通与最终结算均由服务端会话保存和恢复。</div>}
+                  {playMode === 'solo' && <div className="mt-3 rounded-lg border border-[#d9e5fa] bg-[#f4f8ff] px-3 py-2 text-[10px] leading-5 text-[#52627c]">项目计时、行动点、NPC 沟通与最终结算均由服务端会话保存和恢复。</div>}
                   {playMode === 'multiplayer' && <div className="mt-3 grid grid-cols-2 gap-2"><input value={roomCode} onChange={(event) => setRoomCode(event.target.value.toUpperCase())} placeholder="房间码" className="min-w-0 rounded-lg border border-[#dbe4f0] bg-white px-3 py-2 text-xs outline-none transition focus:border-[#6593e8] focus:ring-4 focus:ring-blue-100" /><select value={companyId} onChange={(event) => setCompanyId(event.target.value)} className="min-w-0 rounded-lg border border-[#dbe4f0] bg-white px-3 py-2 text-xs outline-none focus:border-[#6593e8]"><option value="player-company">我方公司</option><option value="abc-company">ABC公司</option></select></div>}
                   {joinError && <div className="mt-2 text-[11px] text-[#d94c60]">{joinError}</div>}
-                </div>
+                </div>}
 
                 {/* 操作按钮 - 固定在底部 */}
                 </div>
@@ -341,7 +343,7 @@ export default function StartPage() {
                     disabled={selected.id !== 'project-1' || joining}
                     className="flex-1 rounded-[10px] border border-[#2b64ee] bg-gradient-to-b from-[#4080ff] via-[#2b64ee] to-[#2355d6] py-2.5 text-xs font-extrabold text-white shadow-[0_7px_18px_rgba(47,107,255,.26)] transition hover:-translate-y-0.5 hover:shadow-[0_10px_24px_rgba(47,107,255,.36)] disabled:cursor-not-allowed disabled:opacity-45 disabled:saturate-50"
                   >
-                    {selected.id === 'project-1' ? joining ? '正在加入...' : playMode === 'solo' ? '开始单机模式' : '加入联机模式' : '本期暂未开放'}
+                    {selected.id === 'project-1' ? joining ? '正在加入...' : effectivePlayMode === 'solo' ? '开始单机模式' : '加入联机模式' : '本期暂未开放'}
                   </button>
                 </div>
               </div>

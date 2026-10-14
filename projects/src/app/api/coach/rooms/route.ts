@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
   if (!guard.ok || !guard.session) return guard.response!;
   if (!COACH_ROLES.has(guard.session.role)) return NextResponse.json({ error: '权限不足' }, { status: 403 });
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
-  const duration = typeof body.stageDurationSeconds === 'number' && Number.isInteger(body.stageDurationSeconds) && body.stageDurationSeconds >= 60 ? body.stageDurationSeconds : null;
+  if (body.stageDurationSeconds != null) return NextResponse.json({ error: 'GAME_PHASE_DESIGN_REMOVED' }, { status: 400 });
   const companies = Array.isArray(body.companies) && body.companies.length >= 2
     ? body.companies.slice(0, 8).map((item, index) => {
       const row = item as Record<string, unknown>;
@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
   const { data, error } = await supabase.rpc('create_multiplayer_room', {
     p_host_user_id: guard.session.userId,
     p_room_code: roomCode,
-    p_stage_duration_seconds: duration,
+    p_stage_duration_seconds: null,
     p_companies: companies,
   });
   if (error || !data) return NextResponse.json({ error: 'ROOM_CREATE_FAILED' }, { status: 503 });

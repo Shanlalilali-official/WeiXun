@@ -15,7 +15,6 @@ import {
   PROJECT_ONE_MAX_ROUNDS,
   PROJECT_ONE_NPCS,
   PROJECT_ONE_OVERTIME_END_MINUTE,
-  PROJECT_ONE_PHASE_ACTION_POINT_GAIN,
   PROJECT_ONE_PHASE_NAMES,
   PROJECT_ONE_PREPARATION_RULES,
   PROJECT_ONE_PREPARATION_TITLES,
@@ -33,7 +32,7 @@ import {
   type ProjectOneClue,
 } from '@/lib/game/project-one';
 import { BID_RULES, BID_RULE_PROPOSAL_COST, calculateOverallSupportState as getOverallSupportBand, calculateWeightedSupport, getProcurementRuleAccess, getRuleFit, getRuleMatchScore, interpretBidRuleProposal } from '@/lib/game/bid-rules';
-import type { FormalBriefVisitEvaluation, FormalPlanEvaluation } from '@/lib/ai/formal-workflow';
+import type { FormalBriefVisitEvaluation, FormalPlanEvaluation, FormalVisitPreparationEvaluation } from '@/lib/ai/formal-workflow';
 
 export const GAME_DIMENSIONS = [
   'decisionAnalysis',
@@ -189,6 +188,8 @@ export interface GamePreparation {
   title: string;
   content: string;
   brief?: PreparationBrief;
+  /** Server-evaluated guidance for the current visit-preparation workflow. */
+  feedback?: { strengths: string[]; risks: string[]; nextStep: string };
   status: 'ready' | 'used';
   costPoints: number;
   timeMinutes: number;
@@ -302,6 +303,8 @@ export interface ActiveMeeting {
    * client commands never carry them.
    */
   completedTasks?: ProjectOneVisitTask[];
+  /** NPC has made a normal farewell; one player acknowledgement is still due. */
+  awaitingFinalReplyFrom?: 'player';
 }
 
 export interface GameMeetingMinutes {
@@ -318,7 +321,7 @@ export interface GameMeetingMinutes {
   nextStepRound: number;
   nextStepMinute: number;
   /** Persisted end cause lets a restored formal visit explain why it stopped. */
-  endReason: 'completed' | 'player' | 'npc_left' | 'turn_limit';
+  endReason: 'completed' | 'player' | 'npc_left' | 'npc_farewell' | 'turn_limit';
   /** Completed server-validated visit tasks, retained for the meeting audit. */
   completedTasks: ProjectOneVisitTask[];
   owner: string;
@@ -400,6 +403,30 @@ export interface GamePublicResearchRecord {
   costPoints: number;
 }
 
+/**
+ * Server-owned wall-clock budget for the project. `elapsedMs` only advances
+ * while `visitPaused` is false; it is materialised by repository reads and
+ * commits rather than by a browser interval.
+ */
+export interface ProjectTimerState {
+  durationMs: number;
+  elapsedMs: number;
+  lastResumedAt: string | null;
+  recoveredIntervals: number;
+  visitPaused: boolean;
+}
+
+export interface PlayerVisibleProjectTimer extends ProjectTimerState {
+  remainingMs: number;
+  expiresAt: string | null;
+  isPaused: boolean;
+  serverNow: string;
+}
+
+export const PROJECT_TIMER_DURATION_MS = 20 * 60 * 1000;
+export const PROJECT_TIMER_RECOVERY_INTERVAL_MS = 5 * 60 * 1000;
+export const PROJECT_TIMER_RECOVERY_ACTION_POINTS = 5;
+
 export interface GameRuntimeState {
   scenarioCode: string;
   progressionMultiplier: number;
@@ -450,6 +477,7 @@ export interface GameRuntimeState {
   competitorClaims: CompetitorClaimRecord[];
   submissionReady: boolean;
   processedCommandIds: string[];
+  projectTimer: ProjectTimerState;
 
   /** Deprecated wall-clock fields retained while old persisted rows migrate. */
   phaseStartedAt: string;
@@ -457,6 +485,8 @@ export interface GameRuntimeState {
   pausedAt: string | null;
   pausedRemainingMs: number | null;
   npcContacts: Record<string, NpcContactState>;
+  /** Server-owned active telephone conversation; never inferred from a client flag. */
+  activePhoneCall?: { npcId: string; startedRound: number; startedAt: string } | null;
   activeMeeting: ActiveMeeting | null;
   lastAction: string | null;
   version: number;
@@ -526,6 +556,8 @@ export type PlayerVisibleGameOutcome = Omit<
 };
 
 /** Public session shape. Private relationship data never crosses a player API boundary. */
+export type PlayerVisibleNpcExpression = 'angry' | 'serious' | 'calm' | 'pleasant' | 'very_happy';
+
 export type PlayerVisibleGameState = Omit<
   GameRuntimeState,
   | 'npcAffinity'
@@ -534,7 +566,11 @@ export type PlayerVisibleGameState = Omit<
   | 'overallSupportState'
   | 'bidRule'
   | 'ruleProposalHistory'
->;
+> & {
+  /** Five player-facing expressions derived from hidden relationship values. */
+  npcExpressions: Record<string, PlayerVisibleNpcExpression>;
+  projectTimer: PlayerVisibleProjectTimer;
+};
 
 export interface ExecuteGameCommandResult {
   state: GameRuntimeState;
@@ -564,6 +600,7 @@ export interface ExecuteGameCommandOptions {
   /** Server-generated AI feedback; player input never supplies this. */
   workPlanEvaluation?: FormalPlanEvaluation;
   briefVisitEvaluation?: FormalBriefVisitEvaluation;
+  visitPreparationEvaluation?: FormalVisitPreparationEvaluation;
 }
 
 /**
@@ -575,6 +612,8 @@ export interface TrustedMeetingTurnProgress {
   completedTask?: ProjectOneVisitTask | null;
   /** A validated explicit player farewell from the current dialogue turn. */
   playerFarewell?: boolean;
+  /** A normal NPC farewell permits exactly one final player acknowledgement. */
+  npcFarewell?: boolean;
   /** A validated immediate departure from the NPC's actual reply. */
   npcLeft?: boolean;
 }
@@ -583,8 +622,8 @@ export const FORMAL_WORKFLOW_ACTION_POINTS = {
   workPlan: 1,
   postal: 2,
   briefVisit: 2,
-  directVisit: 2,
-  skipPreparationRisk: 1,
+  directVisit: 3,
+  skipPreparationRisk: 0,
 } as const;
 export const FORMAL_ACTUAL_VISIT_MAX_TURNS = 20;
 
@@ -866,6 +905,122 @@ type ProjectOneStateInput = Partial<GameRuntimeState> & Pick<
   | 'version'
 >;
 
+function normalizeProjectTimer(value: Partial<ProjectTimerState> | null | undefined): ProjectTimerState {
+  return {
+    durationMs: PROJECT_TIMER_DURATION_MS,
+    elapsedMs: Math.min(PROJECT_TIMER_DURATION_MS, Math.max(0, Math.floor(value?.elapsedMs ?? 0))),
+    lastResumedAt: typeof value?.lastResumedAt === 'string' && Number.isFinite(Date.parse(value.lastResumedAt))
+      ? value.lastResumedAt
+      : null,
+    recoveredIntervals: Math.max(0, Math.floor(value?.recoveredIntervals ?? 0)),
+    visitPaused: Boolean(value?.visitPaused),
+  };
+}
+
+/** A pure projection; callers may safely render it without persisting. */
+export function getPlayerVisibleProjectTimer(state: GameRuntimeState, nowMs = Date.now()): PlayerVisibleProjectTimer {
+  const timer = state.projectTimer;
+  const runningElapsed = !timer.visitPaused && timer.lastResumedAt
+    ? Math.max(0, nowMs - Date.parse(timer.lastResumedAt))
+    : 0;
+  const elapsedMs = Math.min(timer.durationMs, timer.elapsedMs + runningElapsed);
+  const remainingMs = Math.max(0, timer.durationMs - elapsedMs);
+  return {
+    ...timer,
+    elapsedMs,
+    remainingMs,
+    expiresAt: timer.visitPaused || !timer.lastResumedAt ? null : new Date(nowMs + remainingMs).toISOString(),
+    isPaused: timer.visitPaused || !timer.lastResumedAt || state.status !== 'playing',
+    serverNow: new Date(nowMs).toISOString(),
+  };
+}
+
+/**
+ * Reconcile elapsed wall time at a trusted server boundary. It intentionally
+ * does not write on every client tick: callers persist only when its returned
+ * state differs (a recovery boundary, pause/resume anchor, or settlement).
+ */
+export function synchronizeProjectTimer(state: GameRuntimeState, nowMs = Date.now(), materializeElapsed = false): GameRuntimeState {
+  if (state.status !== 'playing') return state;
+  const timer = normalizeProjectTimer(state.projectTimer);
+  if (timer.visitPaused) return state;
+  const elapsedMs = Math.min(
+    timer.durationMs,
+    timer.elapsedMs + (timer.lastResumedAt ? Math.max(0, nowMs - Date.parse(timer.lastResumedAt)) : 0),
+  );
+  const reachedIntervals = Math.floor(elapsedMs / PROJECT_TIMER_RECOVERY_INTERVAL_MS);
+  const recoveredIntervals = Math.max(timer.recoveredIntervals, reachedIntervals);
+  const gained = Math.max(0, recoveredIntervals - timer.recoveredIntervals) * PROJECT_TIMER_RECOVERY_ACTION_POINTS;
+  // A regular timer poll projects time from the persisted anchor. It must not
+  // create a new version every few seconds; materialise only recovery edges,
+  // expiry, or the one resume/migration anchor.
+  const needsAnchor = !timer.lastResumedAt;
+  const needsCheckpoint = materializeElapsed || needsAnchor || gained > 0 || elapsedMs >= timer.durationMs;
+  if (!needsCheckpoint) return state;
+  let next: GameRuntimeState = {
+    ...state,
+    actionPoints: Math.min(PROJECT_ONE_ACTION_POINT_CAP, state.actionPoints + gained),
+    projectTimer: { ...timer, elapsedMs, recoveredIntervals, lastResumedAt: new Date(nowMs).toISOString() },
+  };
+  if (gained > 0) next = applyProjectTimerCheckpoints(next, timer.recoveredIntervals, recoveredIntervals);
+  if (elapsedMs >= timer.durationMs) {
+    // A visit can only cross the deadline when it closes and its dialogue cost
+    // is applied. Settlement must never retain an interaction lock.
+    next = submitGame({ ...next, activeMeeting: null, activePhoneCall: null }, 'project-timer-expired');
+    next = { ...next, projectTimer: { ...next.projectTimer, elapsedMs: timer.durationMs, lastResumedAt: null, visitPaused: false } };
+  }
+  return next;
+}
+
+function resumeProjectTimerAfterVisit(state: GameRuntimeState, turnCount: number): GameRuntimeState {
+  const timer = normalizeProjectTimer(state.projectTimer);
+  const elapsedMs = Math.min(timer.durationMs, timer.elapsedMs + Math.max(0, turnCount) * 15_000);
+  const recoveredIntervals = Math.max(timer.recoveredIntervals, Math.floor(elapsedMs / PROJECT_TIMER_RECOVERY_INTERVAL_MS));
+  let next: GameRuntimeState = {
+    ...state,
+    actionPoints: Math.min(PROJECT_ONE_ACTION_POINT_CAP, state.actionPoints + (recoveredIntervals - timer.recoveredIntervals) * PROJECT_TIMER_RECOVERY_ACTION_POINTS),
+    projectTimer: {
+      ...timer,
+      elapsedMs,
+      recoveredIntervals,
+      visitPaused: false,
+      // The repository installs the trusted resume anchor as part of the same
+      // atomic command commit, so reducers remain deterministic.
+      lastResumedAt: null,
+    },
+  };
+  if (recoveredIntervals > timer.recoveredIntervals) {
+    next = applyProjectTimerCheckpoints(next, timer.recoveredIntervals, recoveredIntervals);
+  }
+  if (elapsedMs >= timer.durationMs) {
+    next = submitGame({ ...next, activeMeeting: null, activePhoneCall: null }, 'project-timer-expired');
+    next = { ...next, projectTimer: { ...next.projectTimer, elapsedMs: timer.durationMs, lastResumedAt: null, visitPaused: false } };
+  }
+  return next;
+}
+
+/**
+ * World consequences formerly advanced on stages now occur once for each
+ * elapsed five-minute checkpoint.  Keep compatibility rounds local to the
+ * deterministic policy calculation, then restore their inert save aliases.
+ */
+function applyProjectTimerCheckpoints(state: GameRuntimeState, fromExclusive: number, toInclusive: number): GameRuntimeState {
+  let next = state;
+  for (let index = fromExclusive + 1; index <= toInclusive; index += 1) {
+    const timeIndex = Math.min(PROJECT_ONE_MAX_ROUNDS, index);
+    const compat = { ...next, currentRound: timeIndex, currentStage: timeIndex };
+    const competitor = processCompetitorAction(compat);
+    next = {
+      ...processComplianceRisks(competitor.state, false, `timer:${index}`),
+      currentRound: 1,
+      currentStage: 1,
+      maxRounds: 1,
+      maxStages: 1,
+    };
+  }
+  return next;
+}
+
 /** Pure legacy migration: no Date.now() and no wall-clock phase advancement. */
 export function normalizeProjectOneState(state: ProjectOneStateInput): GameRuntimeState {
   const contacts = Object.fromEntries(PROJECT_ONE_NPCS.map((npc) => {
@@ -899,10 +1054,12 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
   const normalized: GameRuntimeState = {
     ...state,
     progressionMultiplier: state.progressionMultiplier ?? 1,
-    currentRound: state.currentStage ?? state.currentRound,
-    maxRounds: state.maxStages ?? state.maxRounds,
-    currentStage: state.currentStage ?? state.currentRound,
-    maxStages: state.maxStages ?? state.maxRounds,
+    // Stage fields remain stable save/audit aliases. New progression is driven
+    // exclusively by projectTimer, never by a client-controlled phase.
+    currentRound: 1,
+    maxRounds: 1,
+    currentStage: 1,
+    maxStages: 1,
     gameMode: state.gameMode ?? 'solo',
     companyId,
     roomStageVersion: state.gameMode === 'multiplayer'
@@ -949,14 +1106,27 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
     publicResearch: normalizePublicResearchRecords(state.publicResearch),
     competitorState: normalizeCompetitorState(state.competitorState),
     competitorClaims: normalizePlayerVisibleCompetitorClaims(state.competitorClaims),
-    submissionReady: state.submissionReady ?? false,
+    submissionReady: false,
     processedCommandIds: state.processedCommandIds ?? [],
+    projectTimer: {
+      ...normalizeProjectTimer(state.projectTimer),
+      // A pre-timer save may already be inside a visit. Preserve that lock on
+      // migration rather than silently starting the countdown on reload.
+      visitPaused: state.status === 'playing' && (Boolean(state.activeMeeting) || Boolean(state.projectTimer?.visitPaused)),
+      lastResumedAt: state.status !== 'playing' || state.activeMeeting ? null : normalizeProjectTimer(state.projectTimer).lastResumedAt,
+    },
     phaseStartedAt: LEGACY_SIMULATION_MARKER,
     phaseEndsAt: LEGACY_SIMULATION_MARKER,
     pausedAt: null,
     pausedRemainingMs: null,
     npcContacts: contacts,
-    activeMeeting: state.activeMeeting ? normalizeActiveMeeting(state.activeMeeting) : null,
+    // A legacy save could contain both modes. The active visit owns the
+    // interaction boundary, so discard its stale phone flag during recovery.
+    activePhoneCall: state.status === 'playing' && !state.activeMeeting && state.activePhoneCall && state.activePhoneCall.startedRound === (state.currentStage ?? state.currentRound)
+      && getProjectOneNpc(state.activePhoneCall.npcId)
+      ? state.activePhoneCall
+      : null,
+    activeMeeting: state.status === 'playing' && state.activeMeeting ? normalizeActiveMeeting(state.activeMeeting) : null,
   };
   return reconcileAutomaticBidRule(normalized);
 }
@@ -974,6 +1144,7 @@ function normalizeActiveMeeting(meeting: ActiveMeeting): ActiveMeeting {
     workTopicOpenedBy: meeting.workTopicOpenedBy ?? null,
     usedPreparationIds: meeting.usedPreparationIds ?? [],
     completedTasks: meeting.completedTasks ?? [],
+    awaitingFinalReplyFrom: meeting.awaitingFinalReplyFrom === 'player' ? 'player' : undefined,
   };
 }
 
@@ -1011,6 +1182,13 @@ export function createProjectOneState(progressionMultiplier = 1, _legacyNow?: nu
     unlockedClues: [],
     conversationMemories: {},
     npcContacts: Object.fromEntries(PROJECT_ONE_NPCS.map((npc) => [npc.id, defaultContact(npc.id)])),
+    projectTimer: {
+      durationMs: PROJECT_TIMER_DURATION_MS,
+      elapsedMs: 0,
+      lastResumedAt: new Date().toISOString(),
+      recoveredIntervals: 0,
+      visitPaused: false,
+    },
     lastAction: null,
     version: 1,
   };
@@ -1214,7 +1392,7 @@ export function applyNpcEvaluation(
   state: GameRuntimeState,
   npcId: string,
   evaluation: NpcTurnEvaluation,
-  replyContent = '',
+  replyContent: string | null = null,
   channel?: ContactChannel,
 ): GameRuntimeState {
   if (state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
@@ -1223,9 +1401,10 @@ export function applyNpcEvaluation(
   // verbatim in the NPC reply generated for this command.  Keep this second
   // check here even though the evaluator parses it too: persistence is the
   // authority boundary and callers can invoke this function directly.
-  const sourcedEvaluation = verifyNpcEvaluationSources(evaluation, replyContent);
+  const sourcedEvaluation = verifyNpcEvaluationSources(evaluation, replyContent ?? '');
   let next = state;
-  if (channel && channel !== 'offline') next = consumeCommunicationTime(next, channel);
+  const activePhoneTurn = channel === 'work_phone' && next.activePhoneCall?.npcId === npcId;
+  if (channel && channel !== 'offline' && !activePhoneTurn) next = consumeCommunicationTime(next, channel);
 
   const dimensions = { ...next.dimensions };
   for (const key of GAME_DIMENSIONS) {
@@ -1269,12 +1448,12 @@ export function applyNpcEvaluation(
     ? { ...next.activeMeeting, workTopicOpenedBy: next.activeMeeting.workTopicOpenedBy ?? extended.workTopicOpenedBy }
     : next.activeMeeting;
 
-  const competitorClaims = /竞品|ABC|其他厂商/.test(replyContent)
+  const competitorClaims = /竞品|ABC|其他厂商/.test(replyContent ?? '')
     ? [...next.competitorClaims, {
       id: `claim:${npcId}:${next.currentRound}:${next.competitorClaims.length + 1}`,
       npcId,
       stage: next.currentRound,
-      statement: replyContent.slice(0, 500),
+      statement: (replyContent ?? '').slice(0, 500),
       truthStatus: 'unverified' as const,
     }].slice(-80)
     : next.competitorClaims;
@@ -1367,6 +1546,16 @@ export function consumeCommunicationTime(state: GameRuntimeState, channel: Commu
   return consumeGameTime(state, PROJECT_ONE_COMMUNICATION_MINUTES[channel], {
     pointCost: PROJECT_ONE_COMMUNICATION_POINTS[channel],
   });
+}
+
+/** Cost preflight for one written chat action; attachments cost once per send. */
+export function consumeChatCommunicationTime(
+  state: GameRuntimeState,
+  channel: CommunicationChannel,
+  hasAttachments: boolean,
+): GameRuntimeState {
+  const communicated = consumeCommunicationTime(state, channel);
+  return hasAttachments ? consumeGameTime(communicated, 0, { pointCost: 1 }) : communicated;
 }
 
 function advanceClockWithoutInvestment(state: GameRuntimeState, minutes: number): GameRuntimeState {
@@ -1690,6 +1879,14 @@ export function getWinConditions(state: GameRuntimeState) {
   };
 }
 
+function playerVisibleNpcExpression(pleasantness: number): PlayerVisibleNpcExpression {
+  if (pleasantness <= 19) return 'angry';
+  if (pleasantness <= 39) return 'serious';
+  if (pleasantness <= 59) return 'calm';
+  if (pleasantness <= 79) return 'pleasant';
+  return 'very_happy';
+}
+
 /** Never serialize hidden competitor progress or AI stage actions to a player. */
 export function toPlayerVisibleGameState(state: GameRuntimeState): PlayerVisibleGameState {
   const playerState = { ...state } as Partial<GameRuntimeState>;
@@ -1701,6 +1898,9 @@ export function toPlayerVisibleGameState(state: GameRuntimeState): PlayerVisible
   delete playerState.ruleProposalHistory;
   return {
     ...playerState,
+    projectTimer: getPlayerVisibleProjectTimer(state),
+    npcExpressions: Object.fromEntries(Object.entries(state.npcAttitudes)
+      .map(([npcId, attitude]) => [npcId, playerVisibleNpcExpression(attitude.pleasantness)])),
     // These records represent public facts the player explicitly searched;
     // never synthesize profiles for people whose search was not completed.
     publicResearch: normalizePublicResearchRecords(state.publicResearch),
@@ -1890,7 +2090,15 @@ export function submitGame(state: GameRuntimeState, probabilitySeed = 'legacy-su
   if (state.activeMeeting) throw new Error('MEETING_ALREADY_ACTIVE');
   const audited = processComplianceRisks(state, true, probabilitySeed);
   const outcome = getGameOutcome(audited);
-  return refreshCompetitivePosition({ ...audited, status: outcome.eligible ? 'won' : 'lost', submissionReady: false, activeMeeting: null, lastAction: null });
+  return refreshCompetitivePosition({
+    ...audited,
+    status: outcome.eligible ? 'won' : 'lost',
+    submissionReady: false,
+    activeMeeting: null,
+    activePhoneCall: null,
+    projectTimer: { ...audited.projectTimer, visitPaused: false, lastResumedAt: null },
+    lastAction: null,
+  });
 }
 
 /** @deprecated Simulated time naturally stops when the player does not act. */
@@ -1962,6 +2170,25 @@ export function recordNpcOutbound(state: GameRuntimeState, npcId: string): GameR
       },
     },
   };
+}
+
+export function startPhoneCall(state: GameRuntimeState, npcId: string): GameRuntimeState {
+  if (!getProjectOneNpc(npcId)) throw new Error('NPC_UNKNOWN');
+  if (state.activeMeeting) throw new Error('MEETING_ALREADY_ACTIVE');
+  if (state.activePhoneCall && state.activePhoneCall.npcId !== npcId) throw new Error('PHONE_CALL_ACTIVE');
+  return {
+    ...state,
+    // This is a server-generated wall-clock marker used only to restore the
+    // visible call timer after refresh. Keep the authoritative phase boundary
+    // separately in startedRound.
+    activePhoneCall: { npcId, startedRound: state.currentRound, startedAt: new Date().toISOString() },
+  };
+}
+
+export function endPhoneCall(state: GameRuntimeState, npcId?: string): GameRuntimeState {
+  if (!state.activePhoneCall) return state;
+  if (npcId && state.activePhoneCall.npcId !== npcId) throw new Error('PHONE_CALL_NPC_MISMATCH');
+  return { ...state, activePhoneCall: null };
 }
 
 /**
@@ -2062,7 +2289,7 @@ function completeMeeting(state: GameRuntimeState, reason: GameMeetingMinutes['en
     nextStep: minutes.nextStep,
   };
   minutes.revisionCount = 0;
-  return {
+  return resumeProjectTimerAfterVisit({
     ...state,
     simulatedClockMinutes: Math.min(PROJECT_ONE_EVENING_END_MINUTE, simulatedClockMinutes),
     cumulativeTimeMinutes,
@@ -2085,7 +2312,7 @@ function completeMeeting(state: GameRuntimeState, reason: GameMeetingMinutes['en
     }],
     activeMeeting: null,
     lastAction: null,
-  };
+  }, meeting.turnCount);
 }
 
 function allowedMeetingTasks(npcId: string): readonly ProjectOneVisitTask[] {
@@ -2105,6 +2332,15 @@ export function recordMeetingTurn(
 ): GameRuntimeState {
   if (!state.activeMeeting) throw new Error('MEETING_NOT_ACTIVE');
   const meeting = state.activeMeeting;
+  if (meeting.awaitingFinalReplyFrom === 'player') {
+    // The NPC has already supplied its one permitted final statement. The
+    // player acknowledgement is recorded as this turn, then the appointment
+    // closes without another model invocation or NPC transcript row.
+    return completeMeeting({
+      ...state,
+      activeMeeting: { ...meeting, turnCount: meeting.turnCount + 1 },
+    }, 'npc_farewell');
+  }
   const allowedTasks = allowedMeetingTasks(meeting.npcId);
   const completedTasks = meeting.completedTasks ?? [];
   const completedTask = progress.completedTask ?? null;
@@ -2124,12 +2360,15 @@ export function recordMeetingTurn(
   // This must happen after incrementing the turn and before the hard limit.
   if (progress.playerFarewell) return completeMeeting(next, 'player');
   if (progress.npcLeft) return completeMeeting(next, 'npc_left');
-  if (allowedTasks.length > 0 && nextCompletedTasks.length >= allowedTasks.length) {
-    return completeMeeting(next, 'completed');
-  }
-  if (nextMeeting.turnCount >= nextMeeting.maxTurns) {
-    return completeMeeting(next, 'turn_limit');
-  }
+  // A farewell is not a forced departure. The other party may acknowledge it
+  // once, even where the task or content limit would otherwise close now.
+  if (progress.npcFarewell) return {
+    ...next,
+    activeMeeting: { ...nextMeeting, awaitingFinalReplyFrom: 'player' },
+  };
+  if (allowedTasks.length > 0 && nextCompletedTasks.length >= allowedTasks.length) return completeMeeting(next, 'completed');
+  // Actual-test semantics allow turn 20 and end only once the count exceeds it.
+  if (nextMeeting.turnCount > nextMeeting.maxTurns) return completeMeeting(next, 'turn_limit');
   return next;
 }
 
@@ -2145,39 +2384,12 @@ export function endMeeting(state: GameRuntimeState): GameRuntimeState {
 }
 
 export function advanceRound(
-  state: GameRuntimeState,
+  _state: GameRuntimeState,
   _legacyNow?: number,
-  probabilitySeed = 'legacy-advance',
-  competitorStageAction?: CompetitorStageActionCandidate,
+  _probabilitySeed = 'legacy-advance',
+  _competitorStageAction?: CompetitorStageActionCandidate,
 ): GameRuntimeState {
-  if (state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
-  if (state.activeMeeting) throw new Error('MEETING_ALREADY_ACTIVE');
-  let next = processComplianceRisks(state, false, probabilitySeed);
-  next = processCompetitorAction(next, competitorStageAction).state;
-  if (state.currentRound >= state.maxRounds) {
-    return refreshCompetitivePosition({ ...next, submissionReady: true, lastAction: 'submission_check' });
-  }
-  const currentRound = state.currentRound + 1;
-  return {
-    ...next,
-    currentRound,
-    currentStage: currentRound,
-    actionPoints: Math.min(PROJECT_ONE_ACTION_POINT_CAP, next.actionPoints + PROJECT_ONE_PHASE_ACTION_POINT_GAIN),
-    simulatedClockMinutes: PROJECT_ONE_DAY_START_MINUTE,
-    dayAvailableMinutes: 0,
-    overtimeMinutes: 0,
-    phaseStartedAt: LEGACY_SIMULATION_MARKER,
-    phaseEndsAt: LEGACY_SIMULATION_MARKER,
-    pausedAt: null,
-    pausedRemainingMs: null,
-    submissionReady: false,
-    npcContacts: Object.fromEntries(Object.entries(next.npcContacts).map(([npcId, contact]) => [npcId, {
-      ...contact,
-      unansweredRound: null,
-      channelCooldownUntil: {},
-    }])),
-    lastAction: null,
-  };
+  throw new Error('PHASE_CONTROLS_REMOVED');
 }
 
 /** Wall-clock reconciliation was removed; reads are now pure and time-neutral. */
@@ -2368,6 +2580,7 @@ function createAppointmentFromCommand(
 function prepareForVisit(
   state: GameRuntimeState,
   command: Extract<GameCommand, { type: 'prepare' }>,
+  evaluation?: FormalVisitPreparationEvaluation,
 ): { state: GameRuntimeState; preparation: GamePreparation } {
   const { payload } = command;
   if (!state.unlockedNpcIds.includes(payload.npcId)) throw new Error('NPC_LOCKED');
@@ -2376,10 +2589,12 @@ function prepareForVisit(
     if (!appointment || appointment.npcId !== payload.npcId) throw new Error('APPOINTMENT_NOT_FOUND');
   }
   if (payload.content.trim().length < 10) throw new Error('PREPARATION_BRIEF_REQUIRED');
+  if (isCurrentPreparationType(payload.preparationType) && !evaluation) throw new Error('PREPARATION_AI_REQUIRED');
+  if (isCurrentPreparationType(payload.preparationType) && evaluation?.needsDetail) throw new Error('PREPARATION_NEEDS_DETAIL');
   const brief = isCurrentPreparationType(payload.preparationType)
     ? extractPreparationBrief(payload.content, payload.npcId)
     : undefined;
-  if (brief && !hasReliablePreparationSemantics(brief)) throw new Error('PREPARATION_BRIEF_REQUIRED');
+  if (brief && !evaluation && !hasReliablePreparationSemantics(brief)) throw new Error('PREPARATION_BRIEF_REQUIRED');
   const rule = PROJECT_ONE_PREPARATION_RULES[payload.preparationType];
   const next = consumeGameTime(state, rule.timeMinutes, { pointCost: rule.costPoints });
   const preparation: GamePreparation = {
@@ -2392,6 +2607,7 @@ function prepareForVisit(
     title: PROJECT_ONE_PREPARATION_TITLES[payload.preparationType],
     content: payload.content,
     brief,
+    ...(evaluation ? { feedback: { strengths: evaluation.strengths.slice(0, 4), risks: evaluation.risks.slice(0, 4), nextStep: evaluation.nextStep } } : {}),
     status: 'ready',
     costPoints: rule.costPoints,
     timeMinutes: rule.timeMinutes,
@@ -2407,6 +2623,7 @@ function startVisit(
   command: Extract<GameCommand, { type: 'start_visit' }>,
 ): { state: GameRuntimeState; appointment: GameAppointment } {
   if (state.activeMeeting) throw new Error('MEETING_ALREADY_ACTIVE');
+  if (state.activePhoneCall) throw new Error('PHONE_CALL_ACTIVE');
   let appointment = command.payload.appointmentId
     ? state.appointments.find((item) => item.id === command.payload.appointmentId)
     : undefined;
@@ -2414,8 +2631,6 @@ function startVisit(
   if (isDirectVisit) {
     const npcId = command.payload.npcId;
     if (!npcId || !state.unlockedNpcIds.includes(npcId)) throw new Error('NPC_UNKNOWN');
-    const contact = state.npcContacts[npcId];
-    if (!contact || contact.status === 'known') throw new Error('DIRECT_VISIT_CONTACT_REQUIRED');
     appointment = {
       id: `drop-in:${command.commandId}`,
       npcId,
@@ -2435,25 +2650,14 @@ function startVisit(
     };
   }
   if (!appointment || appointment.status !== 'accepted') throw new Error('APPOINTMENT_NOT_ACCEPTED');
-  let next = isDirectVisit
-    ? consumeGameTime(state, 0, { pointCost: FORMAL_WORKFLOW_ACTION_POINTS.directVisit })
-    : state;
+  const next = consumeGameTime(state, 0, { pointCost: FORMAL_WORKFLOW_ACTION_POINTS.directVisit });
   const selectedPreparationIds = command.payload.preparationIds ?? [];
   const usable = new Set(next.preparations
     .filter((item) => item.npcId === appointment.npcId && item.status === 'ready' && isCurrentPreparationType(item.type))
     .map((item) => item.id));
   if (selectedPreparationIds.some((id) => !usable.has(id))) throw new Error('PREPARATION_NOT_AVAILABLE');
-  if (isDirectVisit && selectedPreparationIds.length === 0 && !command.payload.skipPreparation) {
+  if (selectedPreparationIds.length === 0 && !command.payload.skipPreparation) {
     throw new Error('VISIT_PREPARATION_REQUIRED');
-  }
-  if (command.payload.skipPreparation) {
-    next = consumeGameTime(next, 0, { pointCost: FORMAL_WORKFLOW_ACTION_POINTS.skipPreparationRisk });
-    next = applyNpcAttitudeDelta(next, appointment.npcId, {
-      pleasantnessDelta: -2,
-      supportDelta: -2,
-      reason: '未完成拜访准备即临时沟通',
-      source: `visit-skip-preparation:${command.commandId}`,
-    });
   }
   const activeMeeting: ActiveMeeting = {
     id: `meeting:${appointment.id}`,
@@ -2477,6 +2681,7 @@ function startVisit(
         ? { ...item, usedCount: item.usedCount + 1, status: item.reusable ? 'ready' as const : 'used' as const }
         : item),
       activeMeeting,
+      projectTimer: { ...next.projectTimer, visitPaused: true, lastResumedAt: null },
       lastAction: `visit:${appointment.visitType}`,
     },
     appointment,
@@ -2726,10 +2931,15 @@ function recordWorkPlan(
   command: Extract<GameCommand, { type: 'work_plan' }>,
   evaluation: FormalPlanEvaluation | undefined,
 ): { state: GameRuntimeState; record: GameWorkPlanRecord } {
-  if (!evaluation) throw new Error('WORK_PLAN_AI_REQUIRED');
   if (command.payload.scope === 'npc' && (!command.payload.npcId || !state.unlockedNpcIds.includes(command.payload.npcId))) {
     throw new Error('NPC_UNKNOWN');
   }
+  const duplicate = state.workPlans.find((item) => item.scope === command.payload.scope
+    && item.npcId === (command.payload.npcId ?? null)
+    && item.content.trim() === command.payload.content.trim());
+  if (duplicate) return { state, record: duplicate };
+  if (!evaluation) throw new Error('WORK_PLAN_AI_REQUIRED');
+  if (evaluation.needsDetail) throw new Error('WORK_PLAN_NEEDS_DETAIL');
   const next = consumeGameTime(state, 0, { pointCost: FORMAL_WORKFLOW_ACTION_POINTS.workPlan });
   const record: GameWorkPlanRecord = {
     id: `work-plan:${command.commandId}`,
@@ -2797,10 +3007,14 @@ export function executeGameCommand(
   }
   if (command.expectedVersion !== state.version) throw new Error('STATE_VERSION_CONFLICT');
   if (state.status !== 'playing' && command.type !== 'mark_notification_read') throw new Error('GAME_ALREADY_FINISHED');
-  if (state.gameMode === 'multiplayer' && command.type === 'advance_phase') {
-    throw new Error('MULTIPLAYER_STAGE_ADVANCE_REQUIRES_ROOM_READY');
+  if (state.activePhoneCall) {
+    const activePhoneAllowsCommand = command.type === 'end_phone_call'
+      || command.type === 'mark_notification_read'
+      || (command.type === 'invite'
+        && command.payload.npcId === state.activePhoneCall.npcId
+        && command.payload.channel === 'work_phone');
+    if (!activePhoneAllowsCommand) throw new Error('PHONE_CALL_ACTIVE');
   }
-  if (state.submissionReady && !['submit', 'mark_notification_read'].includes(command.type)) throw new Error('SUBMISSION_CHECK_REQUIRED');
   if (state.activeMeeting && !['end_visit', 'give_gift', 'follow_up', 'mark_notification_read', 'propose_bid_rule'].includes(command.type)) {
     throw new Error('MEETING_ALREADY_ACTIVE');
   }
@@ -2841,10 +3055,9 @@ export function executeGameCommand(
       const contact = state.npcContacts[npcId];
       if (!contact || contact.status !== 'connected') throw new Error('NPC_NOT_CONNECTED');
       if (contact.wechatStatus === 'accepted') throw new Error('WECHAT_ALREADY_ADDED');
-      if (contact.onlineRequestedRound === state.currentRound) throw new Error('WECHAT_REQUEST_ALREADY_MADE_THIS_STAGE');
       state = consumeGameTime(state, 0, { pointCost: PROJECT_ONE_COMMUNICATION_POINTS.wechat });
       const support = state.npcAttitudes[npcId]?.support ?? 35;
-      const accepted = shouldNpcRespond(`${command.commandId}:wechat`, 18 + state.currentRound * 8 + Math.max(0, support - 35));
+      const accepted = shouldNpcRespond(`${command.commandId}:wechat`, 42 + Math.max(0, support - 35));
       const wechatStatus: NpcContactState['wechatStatus'] = accepted ? 'accepted'
         : shouldNpcRespond(`${command.commandId}:pending`, 35) ? 'pending'
           : shouldNpcRespond(`${command.commandId}:later`, 50) ? 'later' : 'rejected';
@@ -2869,7 +3082,9 @@ export function executeGameCommand(
       break;
     }
     case 'invite': {
-      state = consumeCommunicationTime(state, command.payload.channel);
+      const continuingActivePhoneCall = command.payload.channel === 'work_phone'
+        && state.activePhoneCall?.npcId === command.payload.npcId;
+      if (!continuingActivePhoneCall) state = consumeCommunicationTime(state, command.payload.channel);
       const created = createAppointmentFromCommand(state, command);
       state = created.state;
       result = { appointment: created.appointment };
@@ -2959,7 +3174,7 @@ export function executeGameCommand(
       break;
     }
     case 'prepare': {
-      const prepared = prepareForVisit(state, command);
+      const prepared = prepareForVisit(state, command, options.visitPreparationEvaluation);
       state = prepared.state;
       result = { preparation: prepared.preparation };
       eventType = 'preparation.completed';
@@ -3021,6 +3236,7 @@ export function executeGameCommand(
       if (!state.activeMeeting) throw new Error('MEETING_NOT_ACTIVE');
       if (command.payload.appointmentId && command.payload.appointmentId !== state.activeMeeting.appointmentId) throw new Error('APPOINTMENT_NOT_ACTIVE');
       if (command.payload.meetingId && command.payload.meetingId !== state.activeMeeting.id) throw new Error('MEETING_NOT_ACTIVE');
+      if (state.activeMeeting.awaitingFinalReplyFrom === 'player') throw new Error('FINAL_PLAYER_REPLY_REQUIRED');
       const meeting = state.activeMeeting;
       state = completeMeeting(state, command.payload.reason, command.payload.summary);
       result = {
@@ -3040,6 +3256,14 @@ export function executeGameCommand(
         usedPreparationCount: meeting.usedPreparationIds.length,
         hasPlayerSummary: command.payload.summary.trim().length > 0,
       };
+      break;
+    }
+    case 'end_phone_call': {
+      const npcId = command.payload.npcId;
+      state = endPhoneCall(state, npcId);
+      result = { npcId: npcId ?? null, ended: true };
+      eventType = 'npc.call.ended';
+      eventPayload = { ...eventPayload, npcId: npcId ?? null };
       break;
     }
     case 'give_gift': {
@@ -3132,42 +3356,6 @@ export function executeGameCommand(
       state = advanceClockWithoutInvestment(state, command.payload.minutes);
       result = { simulatedClockMinutes: state.simulatedClockMinutes };
       eventType = 'time.waited';
-      break;
-    }
-    case 'advance_phase': {
-      const fromRound = state.currentRound;
-      const pendingAppointmentCount = state.appointments.filter((item) =>
-        item.scheduledRound === fromRound && ['accepted', 'countered', 'pending'].includes(item.status)).length;
-      const unreadNotificationCount = state.notifications.filter((item) => !item.isRead).length;
-      state = advanceRound(state, undefined, command.commandId, options.competitorStageAction);
-      const outcome = state.status === 'playing' ? null : getGameOutcome(state);
-      const competitorAction = state.competitorState.actions.find((item) => item.round === fromRound) ?? null;
-      // Competitor actions are internal simulation evidence. Keep only the
-      // coarse kind/mitigation flags in the audit event; never return the
-      // action record through the player-facing command result.
-      result = { fromRound, toRound: state.currentRound, status: state.status, submissionReady: state.submissionReady, outcome };
-      eventType = state.status === 'playing' ? 'phase.advanced' : 'session.finished';
-      eventPayload = {
-        ...eventPayload,
-        fromRound,
-        toRound: state.currentRound,
-        status: state.status,
-        pendingAppointmentCount,
-        unreadNotificationCount,
-        missedAppointmentCount: state.appointments.filter((item) => item.status === 'missed').length,
-        competitorActionKind: competitorAction?.kind ?? null,
-        competitorActionMitigated: competitorAction?.mitigated ?? null,
-        competitorActionSource: isCompetitorStageActionCandidate(options.competitorStageAction, fromRound)
-          ? (options.competitorStageSource ?? 'model')
-          : 'fallback',
-        ...(outcome ? {
-          finalScore: outcome.finalScore,
-          won: outcome.won,
-          publicValueEvidenceCount: state.outcomeEvidence.publicValue.length,
-          personalBenefitEvidenceCount: state.outcomeEvidence.personalBenefit.length,
-          complianceRiskCount: state.complianceRisks.filter((risk) => risk.status === 'triggered').length,
-        } : {}),
-      };
       break;
     }
     case 'submit': {

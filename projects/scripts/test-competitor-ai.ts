@@ -7,10 +7,11 @@ import {
 import type { JevInvoker } from '../src/lib/ai/jev-client';
 import {
   createProjectOneState,
-  executeGameCommand,
   isCompetitorStageActionCandidate,
+  synchronizeProjectTimer,
   toPlayerVisibleGameState,
   type CompetitorStageActionCandidate,
+  type GameRuntimeState,
 } from '../src/lib/game/state';
 
 const validCandidate: CompetitorStageActionCandidate = {
@@ -30,13 +31,6 @@ const competitorJev: JevInvoker = async () => ({
     pressureDelta: { type: 'choice', choice: '4', probabilities: {}, confidence: 1 },
   },
 });
-const command = (commandId: string) => ({
-  commandId,
-  expectedVersion: 1,
-  type: 'advance_phase' as const,
-  payload: {},
-});
-
 async function main() {
   const state = createProjectOneState();
   let invocations = 0;
@@ -67,18 +61,33 @@ assert.equal(cached.source, 'cached', 'the same session/stage reuses one decisio
 assert.equal(invocations, 1, 'same-stage retries do not invoke the model twice');
 assert.equal(isCompetitorStageActionCandidate(generated.candidate, 1), true);
 
-const applied = executeGameCommand(state, command('competitor-ai-apply'), {
-  competitorStageAction: generated.candidate,
-  competitorStageSource: 'model',
-});
-const appliedAction = applied.state.competitorState.actions[0];
-assert.equal(appliedAction?.summary, validCandidate.summary);
-assert.equal(appliedAction?.targetNpcId, validCandidate.targetNpcId);
-assert.equal(appliedAction?.pressureDelta, validCandidate.pressureDelta);
-assert.equal(applied.eventPayload.competitorActionSource, 'model');
-assert.equal('competitorAction' in applied.result, false, 'player result never exposes the action record');
-assert.equal(toPlayerVisibleGameState(applied.state).competitorState.actions.length, 0);
-assert.equal(applied.state.npcAttitudes[validCandidate.targetNpcId].support, 27, 'support impact is derived by the reducer');
+// The hidden rival simulation advances at each timer checkpoint. Stage fields
+// stay fixed for compatibility; the elapsed timer selects the world time index.
+const timerStart = Date.parse('2026-10-12T00:00:00.000Z');
+let checkpointState: GameRuntimeState = {
+  ...createProjectOneState(),
+  actionPoints: 26,
+  projectTimer: {
+    durationMs: 20 * 60_000,
+    elapsedMs: 0,
+    lastResumedAt: new Date(timerStart).toISOString(),
+    recoveredIntervals: 0,
+    visitPaused: false,
+  },
+};
+checkpointState = synchronizeProjectTimer(checkpointState, timerStart + 5 * 60_000);
+assert.equal(checkpointState.projectTimer.recoveredIntervals, 1);
+assert.equal(checkpointState.actionPoints, 28, 'timer recovery is capped at 28 action points');
+assert.equal(checkpointState.currentRound, 1, 'timer checkpoint does not advance round metadata');
+assert.equal(checkpointState.competitorState.actions.length, 1, 'the first five-minute checkpoint advances the hidden rival world');
+assert.equal(checkpointState.competitorState.actions[0]?.round, 1);
+assert.equal(toPlayerVisibleGameState(checkpointState).competitorState.actions.length, 0);
+
+checkpointState = synchronizeProjectTimer(checkpointState, timerStart + 10 * 60_000);
+assert.equal(checkpointState.projectTimer.recoveredIntervals, 2);
+assert.equal(checkpointState.currentRound, 1);
+assert.equal(checkpointState.competitorState.actions.length, 2, 'each elapsed five-minute checkpoint advances the rival world once');
+assert.equal(checkpointState.competitorState.actions[1]?.round, 2, 'the second timer checkpoint uses world time index two');
 
   clearCompetitorStageDecisionCache();
   let invalidInvocations = 0;
@@ -95,10 +104,6 @@ assert.equal(applied.state.npcAttitudes[validCandidate.targetNpcId].support, 27,
 assert.deepEqual(invalid.candidate, validCandidate, 'invalid LLM prose falls back without replacing Jev choice');
 assert.equal(invalid.source, 'model');
 assert.equal(invalidInvocations, 1);
-const fallback = executeGameCommand(state, command('competitor-ai-fallback'));
-assert.equal(fallback.state.competitorState.actions[0]?.title, '竞品正在接触项目执行人员');
-assert.equal(fallback.eventPayload.competitorActionSource, 'fallback');
-
   let multiplayerInvocations = 0;
   const multiplayer = await evaluateCompetitorStageAction({
   sessionId: 'competitor-ai-multiplayer',
@@ -114,7 +119,7 @@ assert.equal(multiplayer.validationErrors[0], 'MULTIPLAYER_DEFERRED');
 assert.equal(multiplayerInvocations, 0, 'multiplayer stage transitions do not call solo competitor AI');
 
   clearCompetitorStageDecisionCache();
-  console.log('competitor stage AI contracts passed');
+  console.log('competitor timer checkpoint AI contracts passed');
 }
 
 main().catch((error) => {

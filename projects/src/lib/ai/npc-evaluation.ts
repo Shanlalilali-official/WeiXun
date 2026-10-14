@@ -37,7 +37,9 @@ export interface NpcEvaluationContext {
     priorBoundaryGiftCount?: number;
   };
   playerMessage: string;
-  npcReply: string;
+  /** Null means the NPC read an asynchronous written message without replying. */
+  npcReply: string | null;
+  responseAction?: 'reply' | 'read_no_reply';
   recentConversation: Array<{ role: 'user' | 'assistant'; content: string }>;
   confirmedFacts: string[];
   commitments: string[];
@@ -47,6 +49,26 @@ export interface NpcEvaluationResult {
   evaluation: NpcTurnEvaluation;
   source: 'model' | 'retry' | 'fallback';
   validationErrors: string[];
+}
+
+/**
+ * A written read-without-reply is still evaluated for the player's conduct,
+ * but cannot create an NPC statement, disclosure, commitment, handoff, or
+ * conversation-stage transition. Keep this deterministic boundary separate
+ * from prompt compliance because Jev/narrative output is untrusted.
+ */
+export function sanitizeReadNoReplyEvaluation(evaluation: NpcTurnEvaluation): NpcTurnEvaluation {
+  return {
+    ...evaluation,
+    cluesUnlocked: [],
+    confirmedFacts: [],
+    commitments: [],
+    publicValueEvidence: [],
+    personalBenefitEvidence: [],
+    workTopicOpenedBy: 'none',
+    handoff: null,
+    emotion: 'thinking',
+  };
 }
 
 export interface GiftDecisionContext {
@@ -221,7 +243,7 @@ function classifySemantics(ctx: NpcEvaluationContext): SemanticFlags {
 function inferWorkTopicOpener(ctx: NpcEvaluationContext): 'none' | 'player' | 'npc' {
   if (ctx.workTopicOpenedBy && ctx.workTopicOpenedBy !== 'none') return ctx.workTopicOpenedBy;
   if (workTopicPattern.test(ctx.playerMessage)) return 'player';
-  if (workTopicPattern.test(ctx.npcReply)) return 'npc';
+  if (workTopicPattern.test(ctx.npcReply ?? '')) return 'npc';
   return 'none';
 }
 
@@ -236,7 +258,7 @@ function inferGiftAssessment(
   flags: SemanticFlags,
   giftType: GiftAssessment['giftType'],
 ): GiftAssessment {
-  const reply = ctx.npcReply;
+  const reply = ctx.npcReply ?? '';
   if (flags.explicitQuidProQuo) {
     const reported = /上报|纪检|合规|报警|反映情况/.test(reply);
     return {
@@ -325,7 +347,7 @@ function normalizeEvaluation(evaluation: NpcTurnEvaluation, ctx: NpcEvaluationCo
     semanticFlags: flags,
     giftAssessment,
   };
-  return verifyNpcEvaluationSources(normalized, ctx.npcReply);
+  return verifyNpcEvaluationSources(normalized, ctx.npcReply ?? '');
 }
 
 export function parseNpcTurnEvaluation(raw: string, ctx: NpcEvaluationContext): { evaluation: NpcTurnEvaluation | null; errors: string[] } {
@@ -367,13 +389,14 @@ function scoringInput(ctx: NpcEvaluationContext): string {
     commitments: ctx.commitments,
     recentConversation: ctx.recentConversation.slice(-8),
     playerMessage: ctx.playerMessage,
+    responseAction: ctx.responseAction ?? (ctx.npcReply === null ? 'read_no_reply' : 'reply'),
     npcActualReply: ctx.npcReply,
   }, { maxStringLength: 1000, maxTotalLength: 14_000 });
 }
 
 export function createFallbackNpcEvaluation(ctx: NpcEvaluationContext): NpcTurnEvaluation {
   const player = ctx.playerMessage.trim();
-  const reply = ctx.npcReply.trim();
+  const reply = (ctx.npcReply ?? '').trim();
   const flags = classifySemantics(ctx);
   const giftType = inferGiftType(ctx, flags);
   const giftAssessment = inferGiftAssessment(ctx, flags, giftType);
@@ -545,7 +568,7 @@ function npcDecisionQuestions(): JevQuestions {
 
 function npcNarrativeMessages(ctx: NpcEvaluationContext, decision: NpcTurnEvaluation, designerInstructions: string): ChatMessage[] {
   return [
-    { role: 'system', content: `你只为已确定的NPC状态撰写说明、事实和NPC已说出的证据。不得改变任何数值、布尔值、枚举、礼品结果、线索、情绪或转交对象。只返回 JSON：{"affinityReason":"...","confirmedFacts":[],"commitments":[],"publicValueEvidence":[],"personalBenefitEvidence":[],"giftRiskReason":"...","handoffSummary":"..."}。所有事实、承诺和证据须来自NPC实际回复。${designerInstructions ? `\n${designerInstructions}` : ''}` },
+    { role: 'system', content: `你只为已确定的NPC状态撰写说明、事实和NPC已说出的证据。不得改变任何数值、布尔值、枚举、礼品结果、线索、情绪或转交对象。只返回 JSON：{"affinityReason":"...","confirmedFacts":[],"commitments":[],"publicValueEvidence":[],"personalBenefitEvidence":[],"giftRiskReason":"...","handoffSummary":"..."}。所有事实、承诺和证据须来自NPC实际回复；responseAction 为 read_no_reply 时不得虚构NPC事实、承诺、证据或转交。${designerInstructions ? `\n${designerInstructions}` : ''}` },
     { role: 'user', content: serializeUntrustedPromptData('npc_narrative_context', { context: ctx, decision }, { maxStringLength: 1000, maxTotalLength: 14_000 }) },
   ];
 }
@@ -563,6 +586,7 @@ function npcDecisionState(ctx: NpcEvaluationContext) {
     workTopicOpenedBy: ctx.workTopicOpenedBy ?? 'none',
     giftContext: ctx.giftContext ?? { giftType: 'none' },
     playerMessage: ctx.playerMessage,
+    responseAction: ctx.responseAction ?? (ctx.npcReply === null ? 'read_no_reply' : 'reply'),
     npcReply: ctx.npcReply,
     recentConversation: ctx.recentConversation.slice(-8),
     confirmedFacts: ctx.confirmedFacts,

@@ -5,7 +5,7 @@ import {
   generateNpcReplyWithIdentityGuard,
   npcSpeakerIdentityInstruction,
 } from '@/lib/ai/npc-speaker-identity';
-import { evaluateNpcTurn } from '@/lib/ai/npc-evaluation';
+import { evaluateNpcTurn, sanitizeReadNoReplyEvaluation } from '@/lib/ai/npc-evaluation';
 import {
   appendViewedAttachmentsToPlayerMessage,
   attachmentsForNpcContext,
@@ -13,7 +13,7 @@ import {
   npcHistoryWithViewedAttachments,
   type ChatAttachmentTreatment,
 } from '@/lib/ai/chat-attachments';
-import { evaluateFormalVisitTurn } from '@/lib/ai/formal-visit-decision';
+import { decideFormalMessageResponse, evaluateFormalVisitTurn } from '@/lib/ai/formal-visit-decision';
 import { authGuard } from '@/lib/auth/guard';
 import { npcChatRequestSchema } from '@/lib/contracts/ai';
 import type { GameCommand } from '@/lib/contracts/game';
@@ -29,27 +29,30 @@ import {
   getCommittedGameCommand,
   getNpcConversation,
   getNpcInbox,
-  getOwnedGameSession,
+  synchronizeOwnedGameTimer,
 } from '@/lib/game/repository';
 import {
   applyNpcEvaluation,
   connectNpc,
+  consumeChatCommunicationTime,
+  consumeGameTime,
   consumeCommunicationTime,
   getGameOutcome,
-  getPhaseName,
   markNpcUnanswered,
   recordMeetingTurn,
   recordNpcOutbound,
+  startPhoneCall,
   setMeetingWorkTopicOpenedBy,
   shouldNpcRespond,
   toPlayerVisibleGameState,
+  synchronizeProjectTimer,
   type GameRuntimeState,
   executeGameCommand,
 } from '@/lib/game/state';
 import { createServerProbabilitySeed } from '@/lib/game/server-random';
 import { refreshConversationMemory } from '@/lib/game/memory';
 import { runWithFastTestObservability } from '@/lib/testing/fast-test-observability';
-import { DEFAULT_PROJECT_ONE_PROMPT_CONFIG } from '@/lib/designer/prompt-config';
+import { composeNpcRolePrompt, DEFAULT_PROJECT_ONE_PROMPT_CONFIG } from '@/lib/designer/prompt-config';
 import { loadProjectOnePromptConfig } from '@/lib/designer/prompt-config-repository';
 
 export const dynamic = 'force-dynamic';
@@ -85,17 +88,6 @@ function telephoneGreeting(npcName: string, npcTitle: string, seed: string): str
   ];
   const index = Array.from(seed).reduce((sum, character) => sum + character.charCodeAt(0), 0) % options.length;
   return options[index];
-}
-
-function attitudeBand(value: number, kind: 'pleasure' | 'support') {
-  if (kind === 'pleasure') {
-    if (value >= 70) return '交流放松、愿意展开';
-    if (value >= 45) return '克制、正常商务交流';
-    return '不悦或戒备，需要注意措辞和边界';
-  }
-  if (value >= 70) return '较认可项目，但仍受职责与合规约束';
-  if (value >= 45) return '中立观察，需要更多可信证据';
-  return '对项目保留或反对，需要先解决核心顾虑';
 }
 
 function unseenImpressionSummary(value: number) {
@@ -169,6 +161,7 @@ function addExplicitComplianceEvent(
 export async function POST(req: NextRequest) {
   const guard = authGuard(req);
   if (!guard.ok || !guard.session) return guard.response!;
+  const userId = guard.session.userId;
 
   const parsed = npcChatRequestSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return jsonResponse('聊天请求字段无效', 400, parsed.error.flatten());
@@ -188,7 +181,13 @@ export async function POST(req: NextRequest) {
 
   let gameSession;
   try {
-    gameSession = await getOwnedGameSession(gameSessionId, guard.session.userId);
+    const timerSynchronized = await synchronizeOwnedGameTimer(gameSessionId, guard.session.userId);
+    gameSession = {
+      ...timerSynchronized,
+      state: timerSynchronized.state.gameMode === 'multiplayer' && !timerSynchronized.state.projectTimer.lastResumedAt
+        ? timerSynchronized.state
+        : synchronizeProjectTimer(timerSynchronized.state, Date.now(), true),
+    };
   } catch {
     return jsonResponse('对局不存在或无权访问', 404);
   }
@@ -196,13 +195,18 @@ export async function POST(req: NextRequest) {
   const replay = await getCommittedGameCommand(gameSessionId, commandId).catch(() => null);
   if (replay) {
     const reply = typeof replay.result.reply === 'string' ? replay.result.reply : '';
-    const deliveryStatus = replay.result.deliveryStatus === 'unanswered' ? 'unanswered' : 'replied';
+    const deliveryStatus = replay.result.deliveryStatus === 'unanswered'
+      ? 'unanswered'
+      : replay.result.deliveryStatus === 'read_no_reply'
+        ? 'read_no_reply'
+        : 'replied';
     return immediateSse([
       ...(reply ? [{ type: 'delta', content: reply }] : []),
       {
         type: 'result',
         state: toPlayerVisibleGameState(replay.state),
         deliveryStatus,
+        responseAction: replay.result.responseAction,
         emailAttachments: replay.result.emailAttachments ?? [],
         attachments: replay.result.attachments ?? [],
         replayed: true,
@@ -234,6 +238,8 @@ export async function POST(req: NextRequest) {
   const attachments = requestedAttachments.length > 0 ? requestedAttachments : emailAttachments;
   const emailAttachmentList = channel === 'email' ? attachments : [];
 
+  if (meeting && channel !== 'offline') return jsonResponse('MEETING_ALREADY_ACTIVE', 409);
+
   if (intent === 'outreach') {
     if (contact.status !== 'known') return jsonResponse('CONTACT_ALREADY_ESTABLISHED', 409);
     if (channel !== contact.initialChannel) return jsonResponse('CONTACT_CHANNEL_UNAVAILABLE', 409);
@@ -245,6 +251,13 @@ export async function POST(req: NextRequest) {
     if (!meeting || meeting.npcId !== npcId) return jsonResponse('MEETING_NOT_ACTIVE', 409);
   } else if (!(contact.status === 'connected' && channel === contact.initialChannel) && contact.status !== 'online') {
     return jsonResponse('ONLINE_CONTACT_REQUIRED', 409);
+  }
+  if (initialState.activePhoneCall && !(channel === 'work_phone' && initialState.activePhoneCall.npcId === npcId)) {
+    return jsonResponse('PHONE_CALL_ACTIVE', 409);
+  }
+  if (intent === 'call_connect' && initialState.activePhoneCall) return jsonResponse('PHONE_CALL_ACTIVE', 409);
+  if (channel === 'work_phone' && intent !== 'call_connect' && initialState.activePhoneCall?.npcId !== npcId) {
+    return jsonResponse('PHONE_CALL_NOT_ACTIVE', 409);
   }
 
   if (emailAttachments.length > 0 && channel !== 'email') {
@@ -262,12 +275,14 @@ export async function POST(req: NextRequest) {
     if (cooldownUntil > initialState.simulatedClockMinutes) {
       return jsonResponse('CHANNEL_COOLDOWN_ACTIVE', 409, { cooldownUntil });
     }
-    try {
-      // Pure preflight: avoid invoking the model when the action cannot fit in
-      // today's capacity or the player cannot afford an overtime block.
-      consumeCommunicationTime(initialState, channel);
-    } catch (error) {
-      return jsonResponse(error instanceof Error ? error.message : 'TIME_RESOURCE_INSUFFICIENT', 409);
+    if (!(channel === 'work_phone' && initialState.activePhoneCall?.npcId === npcId)) {
+      try {
+        // Pure preflight: avoid invoking the model when the action cannot fit in
+        // today's capacity or the player cannot afford the entire action.
+        consumeChatCommunicationTime(initialState, channel, attachments.length > 0);
+      } catch (error) {
+        return jsonResponse(error instanceof Error ? error.message : 'TIME_RESOURCE_INSUFFICIENT', 409);
+      }
     }
   }
 
@@ -281,12 +296,22 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // Decide a written delivery outcome before treating any wording as an
+  // invitation. A read-without-reply must stay silent and must never be
+  // converted into an accepted, declined, or counter-offered appointment.
+  const messageResponseDecision = channel === 'email' || channel === 'online'
+    ? await decideFormalMessageResponse({ npcId, channel, playerMessage: message })
+    : { responseAction: 'reply' as const };
+
   // Natural-language invitations use the same deterministic command path as
   // the former dedicated UI. This keeps visit extraction, acceptance or
   // counter-offers, action-point charging, notifications and idempotency under
   // the server-side game state machine. The model still handles ordinary
   // phone/email/WeChat conversation.
-  if (channel !== 'offline' && intent !== 'call_connect' && isNaturalLanguageInvitation(message)) {
+  if (channel !== 'offline'
+    && intent !== 'call_connect'
+    && messageResponseDecision.responseAction === 'reply'
+    && isNaturalLanguageInvitation(message)) {
     const invitationCommand: GameCommand = {
       commandId: createServerProbabilitySeed([gameSessionId, commandId, 'invite']),
       expectedVersion,
@@ -309,12 +334,21 @@ export async function POST(req: NextRequest) {
         ? initialState.notifications.find((item) => item.id === `invite-response:${appointmentId}`)?.body
           ?? execution.state.notifications.find((item) => item.id === `invite-response:${appointmentId}`)?.body
         : undefined;
+      const stateWithAttachmentCost = attachments.length > 0
+        ? consumeGameTime(execution.state, 0, { pointCost: 1 })
+        : execution.state;
+      // Invitation extraction and message-response classification may have
+      // waited on AI. Recheck the persisted deadline before this fast branch
+      // creates an appointment or writes a transcript.
+      const latest = await synchronizeOwnedGameTimer(gameSessionId, userId);
+      if (latest.state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
+      if (latest.state.version !== expectedVersion) throw new Error('STATE_VERSION_CONFLICT');
       const committed = await commitGameCommand({
         sessionId: gameSessionId,
         commandId,
         commandType: 'invite',
         expectedVersion,
-        state: execution.state,
+        state: stateWithAttachmentCost,
         eventType: execution.eventType,
         eventPayload: {
           ...execution.eventPayload,
@@ -408,7 +442,7 @@ export async function POST(req: NextRequest) {
       }
       const reply = telephoneGreeting(npc.name, npc.title, `${gameSessionId}:${npcId}:${commandId}`);
       let changed = consumeCommunicationTime(initialState, channel);
-      changed = connectNpc(recordNpcOutbound(changed, npcId), npcId);
+      changed = startPhoneCall(connectNpc(recordNpcOutbound(changed, npcId), npcId), npcId);
       const committed = await commitGameCommand({
         sessionId: gameSessionId,
         commandId,
@@ -434,50 +468,35 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const responseChance = channel === 'offline'
-    ? 100
-    : intent === 'outreach'
-      ? channel === 'email' ? 55 : 70
-      : Math.max(35, Math.min(90, 65 + ((initialState.npcAffinity[npcId] ?? 35) - 35) * 0.5));
-  const responseSeed = createServerProbabilitySeed([
-    gameSessionId,
-    commandId,
-    'npc-response',
-    npcId,
-    initialState.currentRound,
-    contact.outboundCount,
-    channel,
-  ]);
-  if (!shouldNpcRespond(responseSeed, responseChance)) {
+  if (channel === 'offline' && meeting?.awaitingFinalReplyFrom === 'player') {
     try {
-      let changed = channel === 'offline' ? initialState : consumeCommunicationTime(initialState, channel);
-      changed = markNpcUnanswered(changed, npcId, channel === 'offline' ? undefined : channel);
+      const changed = recordMeetingTurn(initialState);
       const committed = await commitGameCommand({
         sessionId: gameSessionId,
         commandId,
-        commandType: 'chat.unanswered',
+        commandType: 'chat.final_player_reply',
         expectedVersion,
         state: changed,
-        eventType: 'npc.message.unanswered',
-        eventPayload: { npcId, channel, intent, responseChance, emailAttachmentCount: emailAttachmentList.length, attachmentCount: attachmentTreatments.length },
-        result: { deliveryStatus: 'unanswered', channel, emailAttachments: emailAttachmentList, attachments: attachmentTreatments },
+        eventType: 'npc.turn.completed',
+        eventPayload: { npcId, channel, intent, meetingEnded: true, finalPlayerReply: true },
+        result: { deliveryStatus: 'replied', responseAction: 'final_player_reply', channel, meetingEnded: true },
         chatMessages: [{
           round: initialState.currentRound,
           role: 'user',
           content: message,
           metadata: {
-            npcId, intent, channel, deliveryStatus: 'unanswered',
-            emailAttachments: emailAttachmentList,
-            attachments: attachmentTreatments,
+            npcId, intent, channel, deliveryStatus: 'sent', finalPlayerReply: true,
+            meetingId: meeting.id,
+            meetingTurn: meeting.turnCount + 1,
           },
         }],
       });
       return immediateSse([
-        { type: 'result', state: toPlayerVisibleGameState(committed.state), deliveryStatus: 'unanswered', channel, emailAttachments: emailAttachmentList, attachments: attachmentTreatments },
+        { type: 'result', state: toPlayerVisibleGameState(committed.state), deliveryStatus: 'replied', responseAction: 'final_player_reply', channel, meetingEnded: true },
         { type: 'done' },
       ]);
     } catch (error) {
-      const code = error instanceof Error ? error.message : 'MESSAGE_COMMIT_FAILED';
+      const code = error instanceof Error ? error.message : 'FINAL_PLAYER_REPLY_COMMIT_FAILED';
       return jsonResponse(code, code === 'STATE_VERSION_CONFLICT' ? 409 : 503);
     }
   }
@@ -512,15 +531,13 @@ export async function POST(req: NextRequest) {
     playerKnownPersonalInfo: initialState.knownPersonalInfo[npcId] ?? [],
     round: initialState.currentRound,
     maxRounds: initialState.maxRounds,
-    phaseName: getPhaseName(initialState.currentRound),
+    phaseName: '项目限时推进',
     channel,
     meetingTurn: meeting ? meeting.turnCount + 1 : undefined,
     meetingType,
     maxMeetingTurns: meeting?.maxTurns,
     workTopicOpenedBy,
     affinity: initialState.npcAffinity[npcId] ?? 35,
-    pleasureBand: attitudeBand(attitude?.pleasantness ?? 50, 'pleasure'),
-    supportBand: attitudeBand(attitude?.support ?? 35, 'support'),
     unseenImpressionSummary: unseenImpressionSummary(attitude?.unmetImpression ?? 0),
     preparedItems: relevantPreparations.map((item) => ({ type: item.type, title: item.title })),
     emailAttachments: attachmentsForNpcContext(attachmentTreatments),
@@ -544,10 +561,19 @@ export async function POST(req: NextRequest) {
   const promptConfig = await loadProjectOnePromptConfig()
     .then((stored) => stored.config)
     .catch(() => DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
-  const rolePrompt = promptConfig.npcRolePrompts[npcId];
+  // Snapshot before any generation or evaluation. Support chooses the prompt
+  // tier deterministically; pleasantness only changes the wording instruction.
+  const supportAtTurnStart = attitude?.support ?? 35;
+  const pleasantnessAtTurnStart = attitude?.pleasantness ?? 50;
+  const rolePrompt = composeNpcRolePrompt(
+    promptConfig.npcRolePrompts[npcId],
+    supportAtTurnStart,
+    pleasantnessAtTurnStart,
+    promptConfig.supportTierThresholds,
+  );
   const npcHistory = npcHistoryWithViewedAttachments(recentHistory);
   const messages: ChatMessage[] = [
-    { role: 'system', content: `${promptConfig.liveCustomerPrompt || CUSTOMER_PROMPT()}${rolePrompt ? `\n\n## 当前人物角色提示\n${rolePrompt}` : ''}` },
+    { role: 'system', content: `${promptConfig.liveCustomerPrompt || CUSTOMER_PROMPT()}\n\n## 当前人物角色提示\n${rolePrompt}` },
     { role: 'system', content: npcSpeakerIdentityInstruction(npc, channel) },
     { role: 'user', content: CUSTOMER_CONTEXT(customerContext) },
     ...npcHistory,
@@ -560,16 +586,18 @@ export async function POST(req: NextRequest) {
         try {
         // Buffer the provider stream until the versioned transaction commits.
         // This preserves the all-or-nothing contract visible to the player.
-        const guardedReply = await generateNpcReplyWithIdentityGuard(npc, channel, async (retryInstruction) => {
-          let generated = '';
-          const requestMessages = retryInstruction
-            ? [...messages, { role: 'system' as const, content: retryInstruction }]
-            : messages;
-          for await (const chunk of streamLLM(requestMessages, { temperature: 0.7, thinking: 'disabled' })) generated += chunk;
-          if (!generated.trim()) throw new Error('AI_PROVIDER_EMPTY_RESPONSE');
-          return generated;
-        });
-        const reply = guardedReply.reply;
+        const responseDecision = messageResponseDecision;
+        const reply = responseDecision.responseAction === 'reply'
+          ? (await generateNpcReplyWithIdentityGuard(npc, channel, async (retryInstruction) => {
+            let generated = '';
+            const requestMessages = retryInstruction
+              ? [...messages, { role: 'system' as const, content: retryInstruction }]
+              : messages;
+            for await (const chunk of streamLLM(requestMessages, { temperature: 0.7, thinking: 'disabled' })) generated += chunk;
+            if (!generated.trim()) throw new Error('AI_PROVIDER_EMPTY_RESPONSE');
+            return generated;
+          })).reply
+          : null;
 
         const assessment = await evaluateNpcTurn({
           npcId,
@@ -582,25 +610,33 @@ export async function POST(req: NextRequest) {
           pleasure: attitude?.pleasantness ?? 50,
           support: attitude?.support ?? 35,
           round: initialState.currentRound,
-          phaseName: getPhaseName(initialState.currentRound),
+          phaseName: '项目限时推进',
           channel,
           meetingType,
           workTopicOpenedBy,
           giftContext: { giftType: 'none' },
           playerMessage: appendViewedAttachmentsToPlayerMessage(message, attachmentTreatments),
           npcReply: reply,
+          responseAction: responseDecision.responseAction,
           recentConversation: npcHistory,
           confirmedFacts: memory?.confirmedFacts ?? [],
           commitments: memory?.commitments ?? [],
         }, promptConfig.liveEvaluatorPrompt);
-        const evaluation = assessment.evaluation;
+        const evaluation = responseDecision.responseAction === 'read_no_reply'
+          ? sanitizeReadNoReplyEvaluation(assessment.evaluation)
+          : assessment.evaluation;
         const priorOutcome = getGameOutcome(initialState);
         let changedState = applyNpcEvaluation(initialState, npcId, evaluation, reply, channel);
-        changedState = recordNpcOutbound(changedState, npcId);
-        if (intent === 'outreach') changedState = connectNpc(changedState, npcId);
+        // The attachment charge is once per message, independent of how many
+        // files were attached or whether their contents were useful to the NPC.
+        if (attachments.length > 0) changedState = consumeGameTime(changedState, 0, { pointCost: 1 });
+        if (reply) {
+          changedState = recordNpcOutbound(changedState, npcId);
+          if (intent === 'outreach') changedState = connectNpc(changedState, npcId);
+        }
         changedState = applySelectedPreparations(changedState, npcId, usedPreparationIds);
 
-        if (channel === 'offline') {
+        if (channel === 'offline' && reply) {
           const opener = evaluation.workTopicOpenedBy;
           if (opener === 'player' || opener === 'npc') changedState = setMeetingWorkTopicOpenedBy(changedState, opener);
           const activeMeeting = changedState.activeMeeting;
@@ -626,6 +662,17 @@ export async function POST(req: NextRequest) {
           changedState = await refreshConversationMemory(gameSessionId, npcId, changedState);
         } catch (error) {
           memoryRefreshError = error instanceof Error ? error.message.slice(0, 80) : 'MEMORY_REFRESH_FAILED';
+        }
+
+        // Model/evaluator work may outlive the wall-clock budget. For normal
+        // channels, reload the authoritative timer before writing a reply so
+        // post-expiry prose cannot add affinity, clues or chat rows. An actual
+        // visit is paused and intentionally commits its closing turn, whose
+        // 15-second-per-turn debit is applied by recordMeetingTurn.
+        if (channel !== 'offline') {
+          const latest = await synchronizeOwnedGameTimer(gameSessionId, userId);
+          if (latest.state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
+          if (latest.state.version !== expectedVersion) throw new Error('STATE_VERSION_CONFLICT');
         }
 
         const nextOutcome = getGameOutcome(changedState);
@@ -655,8 +702,9 @@ export async function POST(req: NextRequest) {
             attachmentCount: attachmentTreatments.length,
           },
           result: {
-            reply,
-            deliveryStatus: 'replied',
+            ...(reply ? { reply } : {}),
+            deliveryStatus: responseDecision.responseAction === 'read_no_reply' ? 'read_no_reply' : 'replied',
+            responseAction: responseDecision.responseAction,
             emailAttachments: emailAttachmentList,
             attachments: attachmentTreatments,
             emotion: evaluation.emotion,
@@ -668,16 +716,18 @@ export async function POST(req: NextRequest) {
               role: 'user',
               content: message,
               metadata: {
-                npcId, intent, channel, deliveryStatus: 'sent',
+                npcId, intent, channel,
+                deliveryStatus: responseDecision.responseAction === 'read_no_reply' ? 'read_no_reply' : 'sent',
+                ...(responseDecision.responseAction === 'read_no_reply' ? { readStatus: 'read' } : {}),
                 meetingId: meeting?.id ?? null,
                 meetingTurn: meeting ? meeting.turnCount + 1 : null,
                 emailAttachments: emailAttachmentList,
                 attachments: attachmentTreatments,
               },
             },
-            {
+            ...(reply ? [{
               round: initialState.currentRound,
-              role: 'assistant',
+          role: 'assistant' as const,
               content: reply,
               affinityDelta: evaluation.supportDelta ?? evaluation.affinityDelta,
               scoreDelta,
@@ -694,11 +744,11 @@ export async function POST(req: NextRequest) {
                 meetingTurn: meeting ? meeting.turnCount + 1 : null,
                 usedPreparationIds,
               },
-            },
+            }] : []),
           ],
         });
 
-        await appendCompetitorClaim(gameSessionId, committed.state.companyId, npcId, committed.state.currentRound, reply).catch(() => undefined);
+        if (reply) await appendCompetitorClaim(gameSessionId, committed.state.companyId, npcId, committed.state.currentRound, reply).catch(() => undefined);
 
         if (validHandoff) {
           await appendGameEvent(gameSessionId, initialState.currentRound, 'npc.handoff.promised', {
@@ -711,15 +761,16 @@ export async function POST(req: NextRequest) {
 
         // Emit content only after the transaction succeeds. Chunking keeps the
         // existing typewriter client behavior without exposing partial state.
-        for (let index = 0; index < reply.length; index += 24) {
+        for (let index = 0; reply && index < reply.length; index += 24) {
           emit({ type: 'delta', content: reply.slice(index, index + 24) });
         }
         emit({
           type: 'result',
           state: toPlayerVisibleGameState(committed.state),
-          deliveryStatus: 'replied',
+          deliveryStatus: responseDecision.responseAction === 'read_no_reply' ? 'read_no_reply' : 'replied',
+          responseAction: responseDecision.responseAction,
           meetingEnded,
-          emotion: evaluation.emotion,
+          ...(reply ? { emotion: evaluation.emotion } : {}),
           emailAttachments: emailAttachmentList,
           attachments: attachmentTreatments,
         });
@@ -727,12 +778,14 @@ export async function POST(req: NextRequest) {
         return immediateSse(events);
         } catch (error) {
           const rawCode = error instanceof Error ? error.message : '';
-          const code = /^(AI_PROVIDER_(?:HTTP_\d{3}|TIMEOUT|NETWORK_ERROR|EMPTY_RESPONSE|STREAM_UNAVAILABLE|STREAM_PROTOCOL)|STATE_VERSION_CONFLICT|COMMAND_IN_PROGRESS|MEETING_NOT_ACTIVE)$/.test(rawCode)
+          const code = /^(AI_PROVIDER_(?:HTTP_\d{3}|TIMEOUT|NETWORK_ERROR|EMPTY_RESPONSE|STREAM_UNAVAILABLE|STREAM_PROTOCOL)|STATE_VERSION_CONFLICT|COMMAND_IN_PROGRESS|MEETING_NOT_ACTIVE|GAME_ALREADY_FINISHED)$/.test(rawCode)
             ? rawCode : 'CHAT_TURN_FAILED';
-          const status = ['STATE_VERSION_CONFLICT', 'COMMAND_IN_PROGRESS'].includes(code) ? 409 : code === 'MEETING_NOT_ACTIVE' ? 400
+          const status = ['STATE_VERSION_CONFLICT', 'COMMAND_IN_PROGRESS', 'GAME_ALREADY_FINISHED'].includes(code) ? 409 : code === 'MEETING_NOT_ACTIVE' ? 400
             : code.startsWith('AI_PROVIDER_') ? 503 : 500;
           console.error('Chat turn failed', { code, status });
-          return jsonResponse(code === 'COMMAND_IN_PROGRESS'
+          return jsonResponse(code === 'GAME_ALREADY_FINISHED'
+              ? '项目已结束，请查看当前进度的结算结果。'
+              : code === 'COMMAND_IN_PROGRESS'
               ? '上一条操作仍在处理，请稍后重试。'
               : code === 'STATE_VERSION_CONFLICT'
               ? '对局已在其他页面更新，本次未扣除时间或行动点，请刷新后重试。'

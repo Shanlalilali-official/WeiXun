@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { gameCommandSchema } from '../src/lib/contracts/game';
 import {
   applyNpcEvaluation,
@@ -15,33 +14,22 @@ import {
   toPlayerVisibleGameState,
 } from '../src/lib/game/state';
 import {
-  advanceMultiplayerRuntime,
-  allCompaniesOccupied,
-  calculateHiddenProgressDelta,
-  assertMultiplayerCommandAllowed,
   assertMultiplayerRoomRunning,
-  decideMultiplayerStageVersion,
-  decideMultiplayerReadyRetry,
-  nextStageDeadline,
-  shouldAdvanceSharedStage,
-  updateSharedCustomerState,
 } from '../src/lib/game/multiplayer';
 
 let state = createProjectOneState();
 assert.equal(state.currentStage, 1);
-assert.equal(state.maxStages, 5);
+assert.equal(state.maxStages, 1, 'new games no longer have stage progression');
 assert.equal(state.dayAvailableMinutes, 0);
+assert.equal(state.projectTimer.durationMs, 20 * 60 * 1000);
 
-// GAME-014 regression: stages are pure action-point transitions.  Legacy
-// wall-clock arguments must not expire a stage or alter the transition.
-const oldClockAdvance = advanceRound(createProjectOneState(), 0, 'game-014');
-const futureClockAdvance = advanceRound(createProjectOneState(), Number.MAX_SAFE_INTEGER, 'game-014');
-assert.deepEqual(oldClockAdvance, futureClockAdvance);
-assert.equal(oldClockAdvance.currentStage, 2);
-assert.equal(oldClockAdvance.actionPoints, 28, 'stage transition only applies the capped action-point grant');
-
-const command = (type: Parameters<typeof executeGameCommand>[1]['type'], payload: Record<string, unknown>, id: string) => {
-  const result = executeGameCommand(state, { commandId: id, expectedVersion: state.version, type, payload } as Parameters<typeof executeGameCommand>[1]);
+const command = (
+  type: Parameters<typeof executeGameCommand>[1]['type'],
+  payload: Record<string, unknown>,
+  id: string,
+  options: Parameters<typeof executeGameCommand>[2] = {},
+) => {
+  const result = executeGameCommand(state, { commandId: id, expectedVersion: state.version, type, payload } as Parameters<typeof executeGameCommand>[1], options);
   state = result.state;
   return result;
 };
@@ -67,7 +55,7 @@ command('prepare', {
   preparationType: 'visit_preparation',
   title: '拜访前准备',
   content: '目标人物：赵晓晨；客户问题：一线重复录入与跨部门确认成本；方案维度：流程和交付；证据：同类案例和可验证的交付记录；下一步：确认技术交流和责任人。',
-}, 'prepare-1');
+}, 'prepare-1', { visitPreparationEvaluation: { needsDetail: false, strengths: ['目标明确'], risks: [], nextStep: '确认责任人' } });
 assert.equal(state.preparations.at(-1)?.type, 'visit_preparation');
 assert.equal(state.preparations.at(-1)?.timeMinutes, 0);
 assert.ok(state.preparations.at(-1)?.brief);
@@ -89,9 +77,9 @@ assert.throws(
     npcId: 'P1-004',
     preparationType: 'visit_preparation',
     content: '随便写一点拜访内容，没有具体标签。',
-  }, 'prepare-invalid'),
-  /PREPARATION_BRIEF_REQUIRED/,
-  'free-text preparation without semantic coverage is not usable',
+  }, 'prepare-invalid', { visitPreparationEvaluation: { needsDetail: true, strengths: [], risks: ['缺少具体目标'], nextStep: '补充信息' } }),
+  /PREPARATION_NEEDS_DETAIL/,
+  'server assessment rejects an insufficient visit preparation before it becomes usable',
 );
 const preparationId = state.preparations.at(-1)?.id;
 assert.ok(preparationId);
@@ -261,21 +249,17 @@ assert.equal(acceptedWechatResult?.state.npcContacts['P1-004'].wechatStatus, 'ac
 assert.equal(acceptedWechatResult?.state.actionPoints, connectedWechatState.actionPoints - 1, 'wechat request charges one action point once');
 assert.equal(acceptedWechatResult?.state.npcContacts['P1-004'].onlineRequestedRound, 1);
 
-const beforeAdvance = state.actionPoints;
-const advanced = command('advance_phase', {}, 'advance-1');
-assert.equal(state.currentStage, 2);
-assert.equal(state.currentRound, 2);
-assert.equal(state.actionPoints, Math.min(28, beforeAdvance + 8));
-assert.equal(state.competitorState.actions.length, 1, 'solo ABC simulation runs once per completed stage');
-assert.equal('competitorAction' in advanced.result, false, 'advance result does not expose the internal competitor action');
-assert.equal(state.notifications.some((item) => item.title === '竞品动态'), false, 'hidden competitor progress must not be pushed to the player');
+const beforeCommand = state.actionPoints;
+assert.equal(state.currentStage, 1, 'ordinary commands do not advance historical round aliases');
+assert.equal(state.currentRound, 1);
+assert.equal(state.actionPoints, beforeCommand, 'ordinary commands do not grant stage-based action points');
 const visibleState = toPlayerVisibleGameState({ ...state, competitorClaims: [{ id: 'claim-1', npcId: 'P1-004', stage: 1, statement: '内部竞品主张', truthStatus: 'unverified' }] });
 assert.deepEqual(visibleState.competitorClaims, [{ id: 'claim-1', npcId: 'P1-004', stage: 1, statement: '内部竞品主张', truthStatus: 'unverified' }], 'player state exposes only NPC statements already heard');
 assert.equal(visibleState.competitorState.actions.length, 0, 'player state does not expose competitor actions');
-assert.equal(normalizeProjectOneState({ ...createProjectOneState(), gameMode: 'multiplayer', roomStageVersion: 4 }).roomStageVersion, 4, 'room stage concurrency token survives player-state normalization');
-const duplicate = executeGameCommand(state, { commandId: 'advance-1', expectedVersion: state.version, type: 'advance_phase', payload: {} });
-assert.equal(duplicate.result.duplicate, true);
-assert.equal(duplicate.state.currentStage, 2);
+assert.throws(() => advanceRound(state), /PHASE_CONTROLS_REMOVED/);
+assert.equal(gameCommandSchema.safeParse({
+  commandId: 'removed-phase-contract', expectedVersion: state.version, type: 'advance_phase', payload: {},
+}).success, false, 'new clients cannot submit a stage advancement command');
 
 // DATA-001 regression: an unverified competitor claim is evidence to review,
 // not a command that can rewrite the server-authoritative ABC state. A long
@@ -328,59 +312,9 @@ assert.deepEqual(afterLiedClaim.competitorState, competitorStateBeforeClaim,
 assert.equal(afterLiedClaim.competitorClaims.at(-1)?.truthStatus, 'unverified',
   'competitor claims remain explicitly unverified until corroborated');
 
-const slots = [
-  { playerUserId: 'u1', readyStage: 1, connected: true },
-  { playerUserId: 'u2', readyStage: 1, connected: true },
-];
-assert.equal(allCompaniesOccupied(slots), true);
-assert.equal(shouldAdvanceSharedStage(1, slots, null, 0), 'all_ready');
-assert.equal(shouldAdvanceSharedStage(1, [{ ...slots[0], readyStage: null }, slots[1]], '2000-01-01T00:00:00.000Z', Date.now()), 'timeout');
-assert.equal(nextStageDeadline(null, 0), null);
-assert.equal(decideMultiplayerStageVersion(3, 3), 'advance');
-assert.equal(decideMultiplayerStageVersion(4, 3), 'replay');
-assert.equal(decideMultiplayerStageVersion(5, 3), 'conflict', 'older retries must not be treated as idempotent');
-assert.equal(decideMultiplayerReadyRetry(1, 3, 1, 3, false), 'mark_ready');
-assert.equal(decideMultiplayerReadyRetry(1, 3, 1, 3, true), 'ready_replay', 'same slot retry remains idempotent before the stage moves');
-assert.equal(decideMultiplayerReadyRetry(2, 4, 1, 3, false), 'stage_replay', 'lost last-ready response returns the advanced room');
-assert.equal(decideMultiplayerReadyRetry(5, 6, 5, 5, false, true), 'stage_replay', 'terminal transition can replay without a sixth stage');
-assert.equal(decideMultiplayerReadyRetry(3, 5, 1, 3, false), 'conflict', 'a stale ready request must not mark a later stage ready');
-assert.throws(
-  () => assertMultiplayerCommandAllowed('multiplayer', 'advance_phase'),
-  /MULTIPLAYER_STAGE_ADVANCE_REQUIRES_ROOM_READY/,
-  'the generic session command API cannot bypass room readiness',
-);
-assert.doesNotThrow(() => assertMultiplayerCommandAllowed('solo', 'advance_phase'));
 assert.throws(() => assertMultiplayerRoomRunning('multiplayer', 'waiting'), /MULTIPLAYER_ROOM_NOT_RUNNING/, 'multiplayer writes are blocked before room start');
 assert.throws(() => assertMultiplayerRoomRunning('multiplayer', 'finished'), /MULTIPLAYER_ROOM_NOT_RUNNING/, 'multiplayer writes are blocked after room end');
 assert.doesNotThrow(() => assertMultiplayerRoomRunning('multiplayer', 'running'));
 assert.doesNotThrow(() => assertMultiplayerRoomRunning('solo', 'waiting'));
-const multiplayerMigration = readFileSync(new URL('../supabase/migrations/20260819000200_five_stage_multiplayer.sql', import.meta.url), 'utf8');
-assert.match(multiplayerMigration, /WHERE user_id = p_user_id AND status = 'playing' AND multiplayer = false/, 'solo save replacement excludes multiplayer sessions');
-assert.match(multiplayerMigration, /CREATE OR REPLACE FUNCTION public\.mark_multiplayer_ready\([\s\S]*p_expected_stage integer,[\s\S]*p_expected_version integer/, 'ready RPC requires stage and version preconditions');
-assert.match(multiplayerMigration, /CREATE OR REPLACE FUNCTION public\.create_multiplayer_room/, 'room and slots are created atomically by RPC');
-assert.match(multiplayerMigration, /IF r\.status <> 'waiting' THEN RAISE EXCEPTION 'ROOM_NOT_MUTABLE'/, 'player removal is limited to the lobby until running-room backfill exists');
-assert.match(multiplayerMigration, /SELECT \* INTO runtime_row FROM public\.game_runtime_states[\s\S]*WHERE session_id = s\.game_session_id FOR UPDATE[\s\S]*last_action = 'multiplayer_player_removed', version = version \+ 1/, 'lobby removal locks and invalidates the detached runtime before replacing its session');
-const advancedRuntime = advanceMultiplayerRuntime({
-  actionPoints: 23,
-  version: 7,
-  simulationState: { companyId: 'player-company' },
-  dimensions: { decisionAnalysis: 60, relationshipBuilding: 60, valuePresentation: 60, objectionHandling: 60, informationDiscovery: 60 },
-  npcAffinity: { wang: 45 },
-}, 2);
-assert.equal(advancedRuntime.currentStage, 3);
-assert.equal(advancedRuntime.actionPoints, 28, 'multiplayer stage gain respects the action-point cap');
-assert.equal(advancedRuntime.version, 8);
-assert.equal(advancedRuntime.simulationState.currentStage, 3);
-assert.equal(calculateHiddenProgressDelta(advancedRuntime.dimensions, advancedRuntime.npcAffinity), 2);
-assert.deepEqual(updateSharedCustomerState({}, 2, 3, 2, '2026-08-20T00:00:00.000Z'), {
-  currentStage: 3,
-  lastCompletedStage: 2,
-  companyCount: 2,
-  updatedAt: '2026-08-20T00:00:00.000Z',
-});
-const finalRuntime = advanceMultiplayerRuntime(advancedRuntime, 5);
-assert.equal(finalRuntime.currentStage, 5);
-assert.equal(finalRuntime.submissionReady, true);
-assert.equal(finalRuntime.actionPoints, 28, 'final stage does not grant action points again');
 
-console.log('five-stage action-point and multiplayer state tests passed');
+console.log('timer-based game state tests passed');

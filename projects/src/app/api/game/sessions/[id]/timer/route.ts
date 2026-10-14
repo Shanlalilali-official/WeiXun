@@ -1,14 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
+import { synchronizeOwnedGameTimer } from '@/lib/game/repository';
+import { getGameOutcome, toPlayerVisibleGameOutcome, toPlayerVisibleGameState } from '@/lib/game/state';
 
 export const runtime = 'nodejs';
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+async function sync(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const guard = authGuard(request);
   if (!guard.ok || !guard.session) return guard.response!;
-  await context.params;
-  return NextResponse.json({
-    error: 'SIMULATED_TIME_DOES_NOT_REQUIRE_PAUSE',
-    message: '模拟时间只会在成功操作后推进，离开页面即自然停留。',
-  }, { status: 410 });
+  const { id } = await context.params;
+  try {
+    const session = await synchronizeOwnedGameTimer(id, guard.session.userId);
+    return NextResponse.json({
+      success: true,
+      state: toPlayerVisibleGameState(session.state),
+      ...(session.state.status === 'playing' ? {} : { outcome: toPlayerVisibleGameOutcome(getGameOutcome(session.state)) }),
+    });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'TIMER_SYNC_FAILED';
+    return NextResponse.json({ error: code }, { status: code === 'STATE_VERSION_CONFLICT' ? 409 : 404 });
+  }
+}
+
+export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  return sync(request, context);
+}
+
+/** No pause/resume body is accepted: only an active server visit may pause time. */
+export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  return sync(request, context);
 }

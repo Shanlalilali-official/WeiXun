@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { authGuard } from '@/lib/auth/guard';
-import { projectOnePromptConfigSchema } from '@/lib/designer/prompt-config';
+import { projectOnePromptConfigSchema, type NpcRolePrompt } from '@/lib/designer/prompt-config';
 import {
   PROJECT_ONE_CHANNEL_MODIFIERS,
   PROJECT_ONE_FIVE_PERSON_IDS,
@@ -39,7 +39,7 @@ export function mergeEditablePromptConfig(
   current: z.infer<typeof projectOnePromptConfigSchema>,
   requested: z.infer<typeof projectOnePromptConfigSchema>,
 ): z.infer<typeof projectOnePromptConfigSchema> {
-  const npcRolePrompts: Record<string, string> = {};
+  const npcRolePrompts: Record<string, NpcRolePrompt> = {};
   const npcChannelExceptions: Record<string, Record<string, string>> = {};
 
   for (const npcId of PROJECT_ONE_FIVE_PERSON_IDS) {
@@ -68,6 +68,9 @@ export function mergeEditablePromptConfig(
 
   return {
     ...current,
+    // Thresholds are a designer-controlled deterministic rule. All other
+    // workflow fields remain protected from this page's write request.
+    supportTierThresholds: requested.supportTierThresholds ?? current.supportTierThresholds,
     npcRolePrompts,
     npcChannelExceptions,
   };

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Wand2, Building2, Users, FileText, Save, ArrowLeft, UserCog, BarChart3, Plus, Trash2, Pencil, X, LogOut, ShieldCheck, FlaskConical, Library, Database, ImageIcon, FileBarChart, TestTube2, PlayCircle, ClipboardList, Upload, Sparkles, FolderOpen, BrainCircuit, Bot } from 'lucide-react';
 import { aMetrics, bMetrics, cMetrics } from '@/lib/metrics-data';
 import { PROJECT_ONE_FIVE_PERSON_NPCS } from '@/lib/designer/project-one-five-person';
+import type { CompetitorProfile } from '@/lib/contracts/competitors';
 import { ROLE_COLOR, ROLE_LABEL } from '@/components/app-shell';
 
 type DesignerImageAssetCategory = 'person_intro' | 'person_expression' | 'visit_scene';
@@ -117,18 +118,16 @@ interface ProjectConfig {
   scoringStandard: string;
 }
 
-interface Competitor {
-  id: string;
-  project_id: number;
-  company_name: string;
-  features: string;
-  more_info: string;
-}
+type Competitor = CompetitorProfile;
 
 interface CompetitorForm {
   company_name: string;
   features: string;
   more_info: string;
+  industry: string;
+  solution_summary: string;
+  representative_experience: string;
+  service_support: string;
 }
 
 interface ProjectApiItem {
@@ -164,7 +163,15 @@ export default function DesignerPage() {
   const [competitorNotice, setCompetitorNotice] = useState('');
   const [competitorFormOpen, setCompetitorFormOpen] = useState(false);
   const [editingCompetitorId, setEditingCompetitorId] = useState<string | null>(null);
-  const [competitorForm, setCompetitorForm] = useState<CompetitorForm>({ company_name: '', features: '', more_info: '' });
+  const [competitorForm, setCompetitorForm] = useState<CompetitorForm>({
+    company_name: '',
+    features: '',
+    more_info: '',
+    industry: '',
+    solution_summary: '',
+    representative_experience: '',
+    service_support: '',
+  });
   const [competitorSaving, setCompetitorSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedModule, setSelectedModule] = useState<'assets' | 'data' | 'reports' | 'testing'>('assets');
@@ -450,13 +457,29 @@ export default function DesignerPage() {
   };
 
   const resetCompetitorForm = () => {
-    setCompetitorForm({ company_name: '', features: '', more_info: '' });
+    setCompetitorForm({
+      company_name: '',
+      features: '',
+      more_info: '',
+      industry: '',
+      solution_summary: '',
+      representative_experience: '',
+      service_support: '',
+    });
     setEditingCompetitorId(null);
     setCompetitorFormOpen(false);
   };
 
   const startAddCompetitor = () => {
-    setCompetitorForm({ company_name: '', features: '', more_info: '' });
+    setCompetitorForm({
+      company_name: '',
+      features: '',
+      more_info: '',
+      industry: '',
+      solution_summary: '',
+      representative_experience: '',
+      service_support: '',
+    });
     setEditingCompetitorId(null);
     setCompetitorNotice('');
     setCompetitorFormOpen(true);
@@ -467,6 +490,10 @@ export default function DesignerPage() {
       company_name: competitor.company_name,
       features: competitor.features,
       more_info: competitor.more_info,
+      industry: competitor.industry,
+      solution_summary: competitor.solution_summary,
+      representative_experience: competitor.representative_experience,
+      service_support: competitor.service_support,
     });
     setEditingCompetitorId(competitor.id);
     setCompetitorNotice('');
@@ -1102,7 +1129,7 @@ export default function DesignerPage() {
                   maxLength={2_000}
                   value={competitorForm.features}
                   onChange={(event) => setCompetitorForm((current) => ({ ...current, features: event.target.value }))}
-                  placeholder="产品特点与竞争优势"
+                  placeholder="核心优势（必填）"
                   rows={3}
                   className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
@@ -1111,7 +1138,38 @@ export default function DesignerPage() {
                   maxLength={4_000}
                   value={competitorForm.more_info}
                   onChange={(event) => setCompetitorForm((current) => ({ ...current, more_info: event.target.value }))}
-                  placeholder="更多信息、主张或配置说明"
+                  placeholder="基本介绍（必填）"
+                  rows={3}
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <input
+                  maxLength={120}
+                  value={competitorForm.industry}
+                  onChange={(event) => setCompetitorForm((current) => ({ ...current, industry: event.target.value }))}
+                  placeholder="所属行业（选填）"
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <textarea
+                  maxLength={1_500}
+                  value={competitorForm.solution_summary}
+                  onChange={(event) => setCompetitorForm((current) => ({ ...current, solution_summary: event.target.value }))}
+                  placeholder="方案概况（选填）"
+                  rows={3}
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <textarea
+                  maxLength={2_000}
+                  value={competitorForm.representative_experience}
+                  onChange={(event) => setCompetitorForm((current) => ({ ...current, representative_experience: event.target.value }))}
+                  placeholder="代表性经验（选填；仅填写有依据的信息）"
+                  rows={3}
+                  className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <textarea
+                  maxLength={1_500}
+                  value={competitorForm.service_support}
+                  onChange={(event) => setCompetitorForm((current) => ({ ...current, service_support: event.target.value }))}
+                  placeholder="交付与服务支持（选填）"
                   rows={3}
                   className="w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/30"
                 />
@@ -1140,10 +1198,14 @@ export default function DesignerPage() {
                       </div>
                     </div>
                     <div className="text-xs text-muted-foreground mb-1">
-                      <span className="font-medium">产品特点：</span>{c.features}
+                      <span className="font-medium">核心优势：</span>{c.features}
                     </div>
-                    <div className="text-xs text-muted-foreground">
-                      <span className="font-medium">更多信息：</span>{c.more_info}
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      <div><span className="font-medium">基本介绍：</span>{c.more_info}</div>
+                      {c.industry && <div><span className="font-medium">所属行业：</span>{c.industry}</div>}
+                      {c.solution_summary && <div><span className="font-medium">方案概况：</span>{c.solution_summary}</div>}
+                      {c.representative_experience && <div><span className="font-medium">代表性经验：</span>{c.representative_experience}</div>}
+                      {c.service_support && <div><span className="font-medium">交付与服务支持：</span>{c.service_support}</div>}
                     </div>
                   </div>
                 ))}

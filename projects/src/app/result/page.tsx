@@ -18,6 +18,7 @@ import {
   Sparkles,
   Swords,
   Target,
+  Timer,
   Trophy,
   UserRound,
   Users,
@@ -147,6 +148,11 @@ function firstNumber(source: Record<string, unknown> | null, keys: string[]): nu
   return undefined;
 }
 
+function formatTrainingDuration(milliseconds: number): string {
+  const totalSeconds = Math.floor(Math.max(0, milliseconds) / 1000);
+  return `${Math.floor(totalSeconds / 60)}分${String(totalSeconds % 60).padStart(2, '0')}秒`;
+}
+
 function firstString(source: Record<string, unknown> | null, keys: string[], fallback = ''): string {
   if (!source) return fallback;
   for (const key of keys) if (typeof source[key] === 'string') return source[key] as string;
@@ -271,7 +277,7 @@ function getComplianceEvents(state: GameRuntimeState): ComplianceView[] {
       status,
       description: firstString(item, ['description', 'reason', 'summary'], '本次行为留下了合规风险记录。'),
       immediateEffect: firstString(item, ['immediateEffect', 'shortTermEffect']) || GIFT_OUTCOME_LABELS[outcome] || undefined,
-      delayedEffect: firstString(item, ['delayedEffect', 'consequence']) || (status === 'triggered' ? '隐藏风险已在后续阶段触发，并进入最终结算。' : undefined),
+      delayedEffect: firstString(item, ['delayedEffect', 'consequence']) || (status === 'triggered' ? '隐藏风险已在本局推进中触发，并进入最终结算。' : undefined),
       penalty: firstNumber(item, ['penalty', 'scorePenalty']),
     };
   });
@@ -371,6 +377,9 @@ function ResultInner() {
     ? `${winningSupplier.name}凭借“${winningSupplier.coreAdvantage}”以及本次方案表现，在客户关注重点与供应能力的综合比较中排名第一。`
     : '客户综合比较了本次项目需求、方案表现与各家供应商能力后，选出了最终中标者。';
   const cumulativeSpent = firstNumber(root, ['cumulativeSpentPoints', 'totalActionPointsSpent']) ?? 0;
+  const projectTimer = firstRecord(root, ['projectTimer']);
+  const elapsedMs = firstNumber(projectTimer, ['elapsedMs']);
+  const trainingDuration = elapsedMs === undefined ? '未记录' : formatTrainingDuration(elapsedMs);
   const completeHybridData = outcome.publicValueScore !== undefined && outcome.personalBenefitScore !== undefined;
   const restartGame = () => {
     localStorage.removeItem(`game-session:${state.scenarioCode}`);
@@ -400,7 +409,7 @@ function ResultInner() {
           </div>
           <div className="relative mt-6 grid gap-3 border-t border-white/15 pt-5 sm:grid-cols-4">
             <SummaryStat icon={Target} label="基础结果" value={outcome.baseScore !== undefined ? `${outcome.baseScore}分` : '旧存档'} />
-            <SummaryStat icon={Sparkles} label="阶段进度" value={`第${state.currentStage}/${state.maxStages}阶段`} />
+            <SummaryStat icon={Timer} label="实训耗时" value={trainingDuration} />
             <SummaryStat icon={Sparkles} label="行动点" value={cumulativeSpent ? `已消耗${cumulativeSpent}点` : `剩余${state.actionPoints}点`} />
             <SummaryStat icon={FileCheck2} label="确认价值证据" value={`${evidence.filter((item) => item.confirmed).length}条`} />
           </div>

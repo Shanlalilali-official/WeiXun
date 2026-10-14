@@ -19,6 +19,7 @@ import {
   type ProjectOneFivePersonNpc,
 } from '@/lib/designer/project-one-five-person';
 import {
+  composeNpcRolePrompt,
   DEFAULT_PROJECT_ONE_PROMPT_CONFIG,
   type ProjectOnePromptConfig,
 } from '@/lib/designer/prompt-config';
@@ -503,12 +504,12 @@ function layeredNpcContext(state: PreviewServerState, npcId: PreviewNpcId, chann
   const node = resolvePreviewNode(runtime);
   const guidance = node === 'BLOCKED' ? undefined : PREVIEW_NPCS[npcId].nodeGuidance[node];
   const nodeRule = node === 'BLOCKED'
-    ? { goal: '优先说明阻断或修复所需的正式下一步，不因普通好感或支持度升级。', disclosure: '仅讨论纠正、合规和可验证修复。' }
+    ? { goal: '优先说明阻断或修复所需的正式下一步。', disclosure: '仅讨论纠正、合规和可验证修复。' }
     : { ...NODE_REQUIREMENTS[node], ...(guidance ? { memoryFocus: guidance.memoryFocus, preferredTopics: guidance.preferredTopics, avoidTopics: guidance.avoidTopics } : {}) };
   return {
     personalityType: getProjectOnePersonalityType(PREVIEW_NPCS[npcId].personalityType),
     stateNode: { node, goal: nodeRule.goal, disclosure: nodeRule.disclosure },
-    runtimeState: { support: runtime.support, pleasantness: runtime.pleasantness, effectiveContactCount: runtime.effectiveContactCount, activeBlockers: runtime.activeBlockers },
+    runtimeState: { effectiveContactCount: runtime.effectiveContactCount, activeBlockers: runtime.activeBlockers },
     highValueWorkingMemory: highValueMemory(runtime),
     recentHistory: historyFor(state, npcId),
     channelModifier: promptConfig.channelModifiers[channel] ?? '保持正式沟通边界。',
@@ -516,13 +517,16 @@ function layeredNpcContext(state: PreviewServerState, npcId: PreviewNpcId, chann
   };
 }
 function layeredNpcPrompt(state: PreviewServerState, npcId: PreviewNpcId, channel: string, task: string, promptConfig: ProjectOnePromptConfig, speakAsNpc = false): string {
-  void state;
-  void channel;
   const layers = PROJECT_ONE_PROMPT_LAYERS;
   const npc = PREVIEW_NPCS[npcId];
   const layerText = (id: keyof typeof PROJECT_ONE_PROMPT_LAYERS) => promptConfig.promptLayers[id] ?? layers[id].template;
   return [
-    layers.npc_baseline.label + '：' + (promptConfig.npcRolePrompts[npcId] || layerText('npc_baseline')),
+    layers.npc_baseline.label + '：' + composeNpcRolePrompt(
+      promptConfig.npcRolePrompts[npcId],
+      state.npcStates[npcId].support,
+      state.npcStates[npcId].pleasantness,
+      promptConfig.supportTierThresholds,
+    ),
     '通用性格类型字典（行为风格参考）：\n' + buildPreviewNpcPersonalityPrompt(npcId),
     layers.state_node.label + '：' + layerText('state_node') + '只读取 <untrusted_data> 中 npcContext.stateNode，并严格遵守其披露边界。',
     layers.runtime_state.label + '：' + layerText('runtime_state'),
@@ -1163,9 +1167,9 @@ export function toPreviewRecoveryDto(state: PreviewServerState, options: { inclu
     ...(options.includeNpcTestStates ? { npcTestStates: toPreviewNpcTestStates(state) } : {}),
   };
 }
-function saveAppointment(state: PreviewServerState, npcId: PreviewNpcId, draft: AppointmentDraft, phase: number, status: PreviewAppointmentStatus = 'accepted'): PreviewAppointment {
+function saveAppointment(state: PreviewServerState, npcId: PreviewNpcId, draft: AppointmentDraft, status: PreviewAppointmentStatus = 'accepted'): PreviewAppointment {
   const appointment = previewAppointmentSchema.parse({
-    id: state.appointments[npcId]?.id ?? randomUUID(), npcId, status, phase,
+    id: state.appointments[npcId]?.id ?? randomUUID(), npcId, status,
     timeWindow: draft.timeWindow, location: draft.location, agenda: draft.agenda,
   });
   state.appointments[npcId] = appointment;
@@ -1180,12 +1184,11 @@ function applyAppointmentAdjustment(state: PreviewServerState, adjustment: Previ
     return undefined;
   }
   const status = adjustment.status ?? current?.status ?? 'accepted';
-  const phase = adjustment.phase ?? current?.phase ?? 1;
   return saveAppointment(state, adjustment.npcId, {
     timeWindow: adjustment.timeWindow ?? current?.timeWindow ?? '待设置时间',
     location: adjustment.location ?? current?.location ?? '待设置地点',
     agenda: adjustment.agenda ?? current?.agenda ?? '待设置议题',
-  }, phase, status);
+  }, status);
 }
 function completeAppointment(state: PreviewServerState, npcId: PreviewNpcId): PreviewAppointment | undefined {
   const appointment = state.appointments[npcId];
@@ -1228,7 +1231,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
     if (request.action === 'plan') {
       const narrative = await callStructuredAi(invoker,
         '你是项目一五人版的工作计划建议撰写器。只生成给玩家看的具体建议，不判断计划是否充分，也不选择人物。输出 {recommendations:string[]}。',
-        { scopeNpcId: request.npcId ?? null, plan: request.text, people: PREVIEW_NPC_IDS.map((id) => ({ id, name: PREVIEW_NPCS[id].name, title: PREVIEW_NPCS[id].title })), phase: request.phase ?? 1 },
+        { scopeNpcId: request.npcId ?? null, plan: request.text, people: PREVIEW_NPC_IDS.map((id) => ({ id, name: PREVIEW_NPCS[id].name, title: PREVIEW_NPCS[id].title })) },
         narrativePlanAiOutputSchema,
       );
       const decision = await askPlanDecision(jevInvoker, { scopeNpcId: request.npcId, plan: request.text });
@@ -1283,7 +1286,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
         attachmentResult = { title: attachment.title, viewed: decision.viewed, impact: impact.impact, ...(decision.viewed ? { content: attachment.content } : {}) };
       }
       const playerMessage = newMessage('player', channel, request.text, attachmentResult);
-      const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, channel, promptConfig), recentHistory: [...historyFor(state, npcId), { ...playerMessage, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : undefined }] }, npc: { id: npc.id, name: npc.name, title: npc.title }, channel, playerText: request.text, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : null, phase: request.phase ?? 1 };
+      const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, channel, promptConfig), recentHistory: [...historyFor(state, npcId), { ...playerMessage, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : undefined }] }, npc: { id: npc.id, name: npc.name, title: npc.title }, channel, playerText: request.text, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : null };
       type MessageOutput = z.infer<typeof messageAiOutputSchema>;
       const hardBlocker = isHardBlockerText(request.text);
       const decision = hardBlocker
@@ -1305,7 +1308,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
         ? { responseAction: 'read_no_reply', content: null, invitationStatus: 'none', reasonCode: decision.reasonCode ?? 'current_priority_low', reasonEvidence: 'Jev 判断本轮没有需要立即回复的新事项。' }
         : { responseAction: 'reply', content: hardBlocker ? COMPLIANCE_REFUSAL : (content ?? '请补充可验证的目标、证据和下一步。'), invitationStatus, ...(appointmentDraft && invitationStatus === 'accepted' ? { appointment: appointmentDraft } : {}) };
       const appointment = safeOutput.responseAction === 'reply' && safeOutput.invitationStatus === 'accepted' && safeOutput.appointment
-        ? saveAppointment(state, npcId, safeOutput.appointment, request.phase ?? 1)
+        ? saveAppointment(state, npcId, safeOutput.appointment)
         : undefined;
       const npcMessage = safeOutput.responseAction === 'reply' ? newMessage('npc', channel, safeOutput.content) : null;
       playerMessage.delivery = safeOutput.responseAction === 'read_no_reply'
@@ -1332,7 +1335,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
       const hardBlocker = isHardBlockerText(request.text);
       const decision = hardBlocker ? { accepted: false } : await askWechatDecision(jevInvoker, { playerText: request.text, npcId });
       const narrative = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'wechat_request', '只撰写工作微信申请的 NPC 回复正文，不得输出或改变是否接受的决定。输出 {content:string}。', promptConfig, true),
-        { npcContext: { ...layeredNpcContext(state, npcId, 'wechat_request', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npc.id, name: npc.name, title: npc.title }, playerText: request.text, accepted: decision.accepted, phase: request.phase ?? 1 }, narrativeWechatAiOutputSchema,
+        { npcContext: { ...layeredNpcContext(state, npcId, 'wechat_request', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npc.id, name: npc.name, title: npc.title }, playerText: request.text, accepted: decision.accepted }, narrativeWechatAiOutputSchema,
         npcSpeakerIdentityQualityGate(npcId, 'wechat_request'));
       const safeOutput = { content: hardBlocker ? COMPLIANCE_REFUSAL : narrative.content, accepted: decision.accepted };
       const npcMessage = newMessage('npc', 'wechat_request', safeOutput.content);
@@ -1343,7 +1346,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
       return previewAiResponseSchema.parse({ ...base, content: safeOutput.content, wechatAccepted: safeOutput.accepted });
     }
     if (request.action === 'visit_preparation') {
-      const context = { npcContext: layeredNpcContext(state, npcId, 'visit', promptConfig), npc: { id: npc.id, name: npc.name, title: npc.title }, visitPreparation: request.text, phase: request.phase ?? 1 };
+      const context = { npcContext: layeredNpcContext(state, npcId, 'visit', promptConfig), npc: { id: npc.id, name: npc.name, title: npc.title }, visitPreparation: request.text };
       const narrative = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', '只撰写本次拜访准备的优点、风险和下一步建议，不判断是否足够具体。输出 {strengths:string[],risks:string[],nextStep:string}。', promptConfig),
         context, narrativeVisitPreparationAiOutputSchema);
       const decision = await askVisitPreparationDecision(jevInvoker, { text: request.text, npcId });
@@ -1353,7 +1356,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
     }
     if (request.action === 'brief_visit') {
       const output = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', '请作为拜访方案评估者评估该次拜访简述，不续写固定话术。输出 {content,strengths:string[],risks:string[],nextStep:string}。', promptConfig),
-        { npcContext: layeredNpcContext(state, npcId, 'visit', promptConfig), npc: { id: npc.id, name: npc.name, title: npc.title }, visitBrief: request.text, phase: request.phase ?? 1 }, briefVisitAiOutputSchema);
+        { npcContext: layeredNpcContext(state, npcId, 'visit', promptConfig), npc: { id: npc.id, name: npc.name, title: npc.title }, visitBrief: request.text }, briefVisitAiOutputSchema);
       return previewAiResponseSchema.parse({ ...base, ...output });
     }
     if (request.action === 'visit_turn') {

@@ -32,7 +32,6 @@ const commonRequestSchema = z.object({
   previewSessionId: previewSessionIdSchema,
   commandId: commandIdSchema,
   expectedVersion: z.number().int().min(0),
-  phase: z.number().int().min(1).max(5).optional(),
 }).strict();
 const previewNpcTestAdjustmentSchema = z.object({
   npcId: previewNpcIdSchema,
@@ -53,7 +52,6 @@ const previewAppointmentAdjustmentSchema = z.object({
   npcId: previewNpcIdSchema,
   appointmentId: previewAppointmentIdSchema.optional(),
   status: previewTestAppointmentStatusSchema.optional(),
-  phase: z.number().int().min(1).max(5).optional(),
   timeWindow: z.string().trim().min(1).max(120).optional(),
   location: z.string().trim().min(1).max(120).optional(),
   agenda: z.string().trim().min(1).max(300).optional(),
@@ -95,7 +93,6 @@ export const previewAppointmentSchema = z.object({
   id: previewAppointmentIdSchema,
   npcId: previewNpcIdSchema,
   status: previewAppointmentStatusSchema,
-  phase: z.number().int().min(1).max(5),
   timeWindow: z.string().min(1).max(120),
   location: z.string().min(1).max(120),
   agenda: z.string().min(1).max(300),

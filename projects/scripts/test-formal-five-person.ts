@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createFallbackNpcEvaluation } from '../src/lib/ai/npc-evaluation';
+import { CUSTOMER_CONTEXT } from '../src/lib/ai/prompts/customer';
 import { npcTurnEvaluationSchema } from '../src/lib/contracts/ai';
 import { PROJECT_ONE_NPCS, getProjectOneNpc } from '../src/lib/game/project-one';
 import { createProjectOneState, getGameOutcome } from '../src/lib/game/state';
@@ -38,6 +39,18 @@ const evaluation = createFallbackNpcEvaluation({
 });
 assert.equal(evaluation.handoff?.targetNpcId, 'P1-002');
 assert.equal(npcTurnEvaluationSchema.parse(evaluation).handoff?.targetNpcId, 'P1-002');
+
+const formalChatRoute = readFileSync(
+  new URL('../src/app/api/chat/stream/route.ts', import.meta.url),
+  'utf8',
+);
+assert.match(formalChatRoute, /composeNpcRolePrompt\([\s\S]*?promptConfig\.supportTierThresholds/, 'formal chat passes configured shared thresholds to the deterministic role prompt selector');
+assert.doesNotMatch(formalChatRoute, /attitudeBand|档位来源/, 'formal chat does not send support tier labels or a generic tier rule to the model');
+const formalContext = CUSTOMER_CONTEXT({
+  scenarioId: 'project-1', gameSessionId: 'formal-tier-test', npc: { name: '张建国', title: '信息中心主任', category: '决策层', personality: '谨慎', weakness: '担责' },
+  round: 1, maxRounds: 10, affinity: 35, lastAction: null, canRevealPersonalInterest: false, canRevealKeyContact: false,
+});
+assert.doesNotMatch(formalContext, /support|pleasantness|mediumMin|highMin/i, 'formal runtime context does not expose support values, thresholds, or tier selection');
 
 const cutoverMigration = readFileSync(
   new URL('../supabase/migrations/20260921000400_replace_project_one_four_person_saves.sql', import.meta.url),

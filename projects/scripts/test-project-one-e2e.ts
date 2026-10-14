@@ -6,7 +6,7 @@ import type { GameAppointment, GameRuntimeState } from '../src/lib/game/state';
 dotenv.config({ path: '.env.local', override: false, quiet: true });
 
 const baseUrl = (process.env.E2E_BASE_URL || 'http://127.0.0.1:5000').replace(/\/+$/, '');
-const userId = `u_project_one_action_points_e2e_${Date.now()}`;
+const userId = `u_project_one_timer_e2e_${Date.now()}`;
 let sessionId = '';
 let currentState: GameRuntimeState;
 
@@ -110,15 +110,16 @@ async function main() {
   );
   sessionId = created.gameSession.id;
   currentState = created.gameSession.state;
-  console.log(`project-one action-point e2e started: session=${sessionId}`);
+  console.log(`project-one timer e2e started: session=${sessionId}`);
 
-  // The current baseline is five stages with an action-point budget. Do not
-  // assert the deprecated simulated-workday capacity or wall-clock fields.
+  // Progress now follows one 20-minute project timer; legacy round fields are
+  // fixed compatibility metadata and no longer gate submission.
   assert.equal(currentState.currentStage, 1);
-  assert.equal(currentState.maxStages, 5);
+  assert.equal(currentState.maxStages, 1);
   assert.equal(currentState.currentRound, 1);
-  assert.equal(currentState.maxRounds, 5);
+  assert.equal(currentState.maxRounds, 1);
   assert.equal(currentState.actionPoints, 28);
+  assert.equal(currentState.projectTimer.durationMs, 20 * 60 * 1000);
   assert.equal(currentState.status, 'playing');
 
   const firstRead = await jsonRequest<{ gameSession: { state: GameRuntimeState } }>(
@@ -250,33 +251,63 @@ async function main() {
   assert.equal(currentState.appointments.find((item) => item.id === appointment?.id)?.status, 'completed');
   assert.equal(currentState.meetingMinutes.some((item) => item.appointmentId === appointment?.id), true);
 
-  // Explicit stage commands are the only progression mechanism. The fifth
-  // stage enters submission check first; submit then performs settlement.
-  for (let expectedStage = 2; expectedStage <= 5; expectedStage += 1) {
-    const advanced = await command(login.token, 'advance_phase');
-    assert.equal(currentState.currentStage, expectedStage);
-    assert.equal(currentState.currentRound, expectedStage);
-    assert.equal(currentState.actionPoints <= 28, true);
-    assert.equal(advanced.result.fromRound, expectedStage - 1);
-  }
-  assert.equal(currentState.currentStage, 5);
-  const submissionCheck = await command(login.token, 'advance_phase');
-  assert.equal(submissionCheck.result.fromRound, 5);
-  assert.equal(currentState.currentStage, 5);
-  assert.equal(currentState.submissionReady, true);
-  assert.equal(currentState.status, 'playing');
+  const legacyPhaseResponse = await fetch(`${baseUrl}/api/game/sessions/${sessionId}/commands`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-session': login.token },
+    body: JSON.stringify({
+      commandId: makeCommandId('removed-phase'),
+      expectedVersion: currentState.version,
+      type: 'advance_phase',
+      payload: {},
+    }),
+  });
+  assert.equal(legacyPhaseResponse.status, 400, 'the formal command API rejects obsolete stage advancement');
+  assert.equal((await legacyPhaseResponse.json() as { error?: string }).error, 'GAME_COMMAND_INVALID');
 
-  const submitted = await command(login.token, 'submit');
-  assert(['won', 'lost'].includes(currentState.status));
-  assert.equal(submitted.result.status, currentState.status);
-  assert.equal(currentState.submissionReady, false);
+  // Fast-forward only this E2E fixture through the service-role test database,
+  // then use the same authenticated timer endpoint the formal game polls.
+  const supabase = createAdminClient();
+  const { data: runtimeBeforeExpiry, error: runtimeReadError } = await supabase
+    .from('game_runtime_states')
+    .select('simulation_state')
+    .eq('session_id', sessionId)
+    .single();
+  assert.equal(runtimeReadError, null);
+  assert(runtimeBeforeExpiry);
+  const persistedState = runtimeBeforeExpiry.simulation_state as GameRuntimeState;
+  const elapsedBeforeExpiry = 20 * 60 * 1000 - 1_000;
+  const checkpointedState = {
+    ...persistedState,
+    projectTimer: {
+      ...persistedState.projectTimer,
+      durationMs: 20 * 60 * 1000,
+      elapsedMs: elapsedBeforeExpiry,
+      lastResumedAt: new Date(Date.now() - 2_000).toISOString(),
+      recoveredIntervals: 3,
+      visitPaused: false,
+    },
+  };
+  const { error: timerFixtureError } = await supabase
+    .from('game_runtime_states')
+    .update({ simulation_state: checkpointedState })
+    .eq('session_id', sessionId);
+  assert.equal(timerFixtureError, null);
+  const actionPointsBeforeExpiry = currentState.actionPoints;
+  const timerResult = await jsonRequest<{ state: GameRuntimeState & { projectTimer: GameRuntimeState['projectTimer'] & { remainingMs: number } } }>(
+    `/api/game/sessions/${sessionId}/timer`, {}, login.token,
+  );
+  currentState = timerResult.state;
+  assert.notEqual(currentState.status, 'playing', 'timer expiry settles the current game automatically');
+  assert.equal(currentState.projectTimer.elapsedMs, 20 * 60 * 1000);
+  assert.equal(timerResult.state.projectTimer.remainingMs, 0);
+  assert.equal(currentState.actionPoints, Math.min(28, actionPointsBeforeExpiry + 5));
 
   const restored = await jsonRequest<{ gameSession: { state: GameRuntimeState } }>(
     `/api/game/sessions/${sessionId}`, {}, login.token,
   );
   assert.equal(restored.gameSession.state.version, currentState.version);
   assert.equal(restored.gameSession.state.status, currentState.status);
-  assert.equal(restored.gameSession.state.currentStage, 5);
+  assert.equal(restored.gameSession.state.currentStage, 1);
   assert.equal(restored.gameSession.state.actionPoints, currentState.actionPoints);
 
   const { data: observedEvents, error: observedEventError } = await createAdminClient()
@@ -284,7 +315,7 @@ async function main() {
     .select('event_type, payload')
     .eq('session_id', sessionId);
   assert.equal(observedEventError, null);
-  const events = observedEvents ?? [];
+  const events = (observedEvents ?? []) as Array<{ event_type: string; payload: unknown }>;
   const eventTypes = new Set(events.map((event) => event.event_type));
   for (const requiredType of [
     'session.created',
@@ -293,8 +324,7 @@ async function main() {
     'preparation.completed',
     'visit.started',
     'visit.completed',
-    'phase.advanced',
-    'session.submitted',
+    'project_timer.expired',
   ]) {
     assert(eventTypes.has(requiredType), `missing observation event: ${requiredType}`);
   }
@@ -313,12 +343,12 @@ async function main() {
   assert.equal(preparationEvent.hasPreparationBrief, true);
   assert.equal('content' in preparationEvent, false);
 
-  console.log(`project-one action-point e2e passed: session=${sessionId}, result=${currentState.status}`);
+  console.log(`project-one timer e2e passed: session=${sessionId}, result=${currentState.status}`);
   await cleanup();
 }
 
 main().catch(async (error) => {
-  console.error(`project-one action-point e2e failed: session=${sessionId || 'not-created'}`);
+  console.error(`project-one timer e2e failed: session=${sessionId || 'not-created'}`);
   console.error(error instanceof Error ? error.message : error);
   await cleanup();
   process.exitCode = 1;

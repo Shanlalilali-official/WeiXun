@@ -6,12 +6,6 @@ export const createGameSessionRequestSchema = z.object({
   replaceExisting: z.boolean().default(false),
 });
 
-/** Version/stage precondition for the multiplayer room-owned stage advance. */
-export const multiplayerReadyRequestSchema = z.object({
-  expectedStage: z.number().int().min(1).max(5),
-  expectedVersion: z.number().int().min(1),
-});
-
 export const relationshipActionRequestSchema = z.object({
   npcId: z.string().trim().min(1).max(128),
   actionId: z.enum(['gift', 'dinner', 'tea', 'festival', 'roadshow', 'visit', 'sample', 'video']),
@@ -145,6 +139,12 @@ export const endVisitGameCommandSchema = z.object({
   }),
 });
 
+export const endPhoneCallGameCommandSchema = z.object({
+  ...commandBaseSchema,
+  type: z.literal('end_phone_call'),
+  payload: z.object({ npcId: npcIdSchema.optional() }),
+});
+
 export const giveGiftGameCommandSchema = z.object({
   ...commandBaseSchema,
   type: z.literal('give_gift'),
@@ -200,12 +200,6 @@ export const updateMeetingMinutesGameCommandSchema = z.object({
   }),
 });
 
-export const advancePhaseGameCommandSchema = z.object({
-  ...commandBaseSchema,
-  type: z.literal('advance_phase'),
-  payload: emptyPayloadSchema,
-});
-
 /** Legacy no-op retained so an old open client does not corrupt a save. */
 export const waitGameCommandSchema = z.object({
   ...commandBaseSchema,
@@ -255,11 +249,11 @@ export const gameCommandSchema = z.discriminatedUnion('type', [
   briefVisitGameCommandSchema,
   startVisitGameCommandSchema,
   endVisitGameCommandSchema,
+  endPhoneCallGameCommandSchema,
   giveGiftGameCommandSchema,
   followUpGameCommandSchema,
   updateMeetingMinutesGameCommandSchema,
   waitGameCommandSchema,
-  advancePhaseGameCommandSchema,
   submitGameCommandSchema,
   markNotificationReadGameCommandSchema,
   researchPublicInfoGameCommandSchema,

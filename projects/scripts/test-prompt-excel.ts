@@ -14,7 +14,7 @@ import {
   exportPromptExcel,
   parsePromptExcel,
 } from '../src/lib/designer/prompt-excel';
-import { DEFAULT_PROJECT_ONE_PROMPT_CONFIG } from '../src/lib/designer/prompt-config';
+import { DEFAULT_PROJECT_ONE_PROMPT_CONFIG, normalizeNpcRolePrompt } from '../src/lib/designer/prompt-config';
 import type { ProjectOnePromptConfig } from '../src/lib/designer/prompt-config';
 
 async function workbookBuffer(workbook: ExcelJS.Workbook): Promise<Buffer> {
@@ -22,7 +22,7 @@ async function workbookBuffer(workbook: ExcelJS.Workbook): Promise<Buffer> {
 }
 
 function editableConfig(config: ProjectOnePromptConfig) {
-  const npcRolePrompts: Record<string, string> = {};
+  const npcRolePrompts: ProjectOnePromptConfig['npcRolePrompts'] = {};
   const npcChannelExceptions: Record<string, Record<string, string>> = {};
   for (const npcId of PROMPT_EXCEL_NPC_IDS) {
     npcRolePrompts[npcId] = config.npcRolePrompts[npcId] ?? '';
@@ -39,7 +39,13 @@ function editableConfig(config: ProjectOnePromptConfig) {
 
 async function testRoundTrip(): Promise<void> {
   const config = structuredClone(DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
-  config.npcRolePrompts['P1-001'] = '张建国角色提示词\n保留换行和尾部标点。';
+  config.npcRolePrompts['P1-001'] = {
+    ...normalizeNpcRolePrompt(config.npcRolePrompts['P1-001']),
+    base: '张建国角色提示词\n保留换行和尾部标点。',
+    low: '低档提示词',
+    medium: '中档提示词',
+    high: '高档提示词',
+  };
   config.npcChannelExceptions['P1-002'] = {
     ...(config.npcChannelExceptions['P1-002'] ?? {}),
     work_phone: '电话例外提示词',
@@ -52,10 +58,10 @@ async function testRoundTrip(): Promise<void> {
   assert.equal(result.ok, true);
   assert.equal(result.errors.length, 0);
   assert.deepEqual(result.editable, editableConfig(config));
-  assert.equal(result.rows.filter((row) => row.scope === 'role').length, 5);
+  assert.equal(result.rows.filter((row) => row.scope.startsWith('role_')).length, 20);
   assert.equal(
     result.rows.length,
-    5 + Object.values(editableConfig(config).npcChannelExceptions)
+    20 + Object.values(editableConfig(config).npcChannelExceptions)
       .reduce((count, exceptions) => count + Object.keys(exceptions).length, 0),
   );
 
@@ -79,7 +85,7 @@ async function testWorkbookShape(): Promise<void> {
   assert.equal(firstRow[1], PROMPT_EXCEL_NPC_NAMES[0]);
   assert.equal(firstRow[2], PROMPT_EXCEL_PROMPT_TYPE_LABELS[0]);
   assert.equal(firstRow[3], '');
-  assert.equal(firstRow[4], DEFAULT_PROJECT_ONE_PROMPT_CONFIG.npcRolePrompts[PROMPT_EXCEL_NPC_IDS[0]]);
+  assert.equal(firstRow[4], normalizeNpcRolePrompt(DEFAULT_PROJECT_ONE_PROMPT_CONFIG.npcRolePrompts[PROMPT_EXCEL_NPC_IDS[0]]).base);
 
   const visibleValues = worksheet.getRows(1, worksheet.actualRowCount)
     ?.flatMap((row) => (row.values as unknown[]).slice(1, 4).map((value) => String(value ?? '')))
@@ -125,24 +131,35 @@ async function testLegacyWorkbookCompatibility(): Promise<void> {
   const result = await parsePromptExcel(await workbookBuffer(workbook));
   assert.equal(result.ok, true);
   assert.equal(result.errors.length, 0);
-  assert.equal(result.editable?.npcRolePrompts['P1-001'], 'P1-001人物总提示词');
+  assert.equal(normalizeNpcRolePrompt(result.editable?.npcRolePrompts['P1-001']).base, 'P1-001人物总提示词');
   assert.equal(result.editable?.npcChannelExceptions['P1-002']?.email, '旧版邮件补充提示词');
   assert.equal(result.rows[0].npcId, 'P1-001');
-  assert.equal(result.rows[0].scope, 'role');
+  assert.equal(result.rows[0].scope, 'role_base');
   assert.equal(result.rows[5].channelId, 'email');
+}
+
+async function testModernWorkbookRequiresAllNpcTiers(): Promise<void> {
+  const workbook = createPromptExcelWorkbook(DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
+  const worksheet = workbook.getWorksheet(PROMPT_EXCEL_DATA_SHEET);
+  assert.ok(worksheet);
+  // Delete the first NPC's low-tier row while keeping the other new tier rows.
+  worksheet.spliceRows(3, 1);
+  const result = await parsePromptExcel(await workbookBuffer(workbook));
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.code === 'MISSING_ROLE_TIER_ROW'));
 }
 
 async function testDuplicateAndUnknownChannel(): Promise<void> {
   const workbook = createPromptExcelWorkbook(DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
   const worksheet = workbook.getWorksheet(PROMPT_EXCEL_DATA_SHEET);
   assert.ok(worksheet);
-  // 前五行是五个人物的人物总提示词。
+  // 每位人物均有基础、低、中、高四行；第 2 行是第一个人物的基础提示词。
   worksheet.getCell(3, 1).value = PROMPT_EXCEL_NPC_NAMES[0];
   worksheet.getCell(3, 2).value = PROMPT_EXCEL_PROMPT_TYPE_LABELS[0];
   worksheet.getCell(3, 3).value = '';
-  const channelRow = 2 + PROMPT_EXCEL_NPC_IDS.length;
+  const channelRow = 2 + PROMPT_EXCEL_NPC_IDS.length * 4;
   worksheet.getCell(channelRow, 1).value = PROMPT_EXCEL_NPC_NAMES[0];
-  worksheet.getCell(channelRow, 2).value = PROMPT_EXCEL_PROMPT_TYPE_LABELS[1];
+  worksheet.getCell(channelRow, 2).value = PROMPT_EXCEL_PROMPT_TYPE_LABELS.at(-1);
   worksheet.getCell(channelRow, 3).value = '未知方式';
   const result = await parsePromptExcel(await workbookBuffer(workbook));
   assert.equal(result.ok, false);
@@ -193,9 +210,9 @@ async function testChineseEntryInReservedRow(): Promise<void> {
   const workbook = createPromptExcelWorkbook(config);
   const worksheet = workbook.getWorksheet(PROMPT_EXCEL_DATA_SHEET);
   assert.ok(worksheet);
-  const rowNumber = PROMPT_EXCEL_NPC_IDS.length + 2;
+  const rowNumber = PROMPT_EXCEL_NPC_IDS.length * 4 + 2;
   worksheet.getCell(rowNumber, 1).value = PROMPT_EXCEL_NPC_NAMES[0];
-  worksheet.getCell(rowNumber, 2).value = PROMPT_EXCEL_PROMPT_TYPE_LABELS[1];
+  worksheet.getCell(rowNumber, 2).value = PROMPT_EXCEL_PROMPT_TYPE_LABELS.at(-1);
   worksheet.getCell(rowNumber, 3).value = PROMPT_EXCEL_CHANNEL_LABELS[0];
   worksheet.getCell(rowNumber, 4).value = '没有新增价值时可直接已读不回，不编造理由。';
 
@@ -223,6 +240,7 @@ async function main(): Promise<void> {
   await testWorkbookShape();
   await testStrictHeadersAndMissingRoles();
   await testLegacyWorkbookCompatibility();
+  await testModernWorkbookRequiresAllNpcTiers();
   await testDuplicateAndUnknownChannel();
   await testPromptLengthAndScopeShape();
   await testBlankRowsDoNotBreakSummary();

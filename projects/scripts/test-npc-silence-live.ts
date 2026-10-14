@@ -345,7 +345,6 @@ async function runSession(
       previewSessionId: session.previewSessionId,
       commandId: commandId(npcId, channel, index + 1),
       expectedVersion: before.version,
-      phase: 1,
       npcId,
       channel,
       text: scenario.text,

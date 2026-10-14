@@ -12,7 +12,13 @@ export async function POST(request: NextRequest) {
   if (!/^[A-Z0-9]{1,12}$/.test(roomCode) || !/^[A-Za-z0-9_-]{1,64}$/.test(companyId)) {
     return NextResponse.json({ error: 'JOIN_PARAMETERS_INVALID' }, { status: 400 });
   }
-  const initialState = { ...createProjectOneState(), gameMode: 'multiplayer' as const, companyId };
+  const createdState = createProjectOneState();
+  const initialState = {
+    ...createdState,
+    gameMode: 'multiplayer' as const,
+    companyId,
+    projectTimer: { ...createdState.projectTimer, lastResumedAt: null, visitPaused: false },
+  };
   const { data, error } = await createServerClient().rpc('join_multiplayer_company', {
     p_room_code: roomCode,
     p_company_id: companyId,

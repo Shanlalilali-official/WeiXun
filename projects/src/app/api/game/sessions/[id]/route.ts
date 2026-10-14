@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
-import { appendGameEvent, deleteOwnedActiveGameSave, getOwnedGameSession } from '@/lib/game/repository';
+import { appendGameEvent, deleteOwnedActiveGameSave, synchronizeOwnedGameTimer } from '@/lib/game/repository';
 import { getGameOutcome, toPlayerVisibleGameOutcome, toPlayerVisibleGameState } from '@/lib/game/state';
 
 export const runtime = 'nodejs';
@@ -11,7 +11,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
   const { id } = await context.params;
 
   try {
-    const gameSession = await getOwnedGameSession(id, guard.session.userId);
+    const gameSession = await synchronizeOwnedGameTimer(id, guard.session.userId);
     if (request.nextUrl.searchParams.get('entry') === 'continue') {
       await appendGameEvent(id, gameSession.state.currentRound, 'session.continued', {
         round: gameSession.state.currentRound,

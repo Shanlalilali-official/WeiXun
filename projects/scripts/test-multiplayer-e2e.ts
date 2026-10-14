@@ -9,12 +9,12 @@ type HttpResult = { status: number; payload: JsonObject };
 type Account = { userId: string; token: string };
 type RoomSnapshot = {
   id: string;
+  /** Legacy DB metadata is read only; room operations no longer advance it. */
   currentStage: number;
   stageVersion: number;
   status: string;
   raw: JsonObject;
 };
-type ReadyResult = RoomSnapshot & { advanced: boolean; replayed: boolean };
 
 const baseUrl = (process.env.E2E_BASE_URL || 'http://127.0.0.1:5000').replace(/\/+$/, '');
 const runTag = `${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`;
@@ -101,17 +101,6 @@ function parseRoom(payload: JsonObject): RoomSnapshot {
   };
 }
 
-function parseReady(payload: JsonObject): ReadyResult {
-  const room = parseRoom(payload);
-  assert.equal(typeof payload.advanced, 'boolean', 'ready response must expose advanced');
-  assert.equal(typeof payload.replayed, 'boolean', 'ready response must expose replayed');
-  return {
-    ...room,
-    advanced: payload.advanced as boolean,
-    replayed: payload.replayed as boolean,
-  };
-}
-
 function parseSessionId(payload: JsonObject): string {
   const gameSession = extractObject(payload, 'gameSession');
   const id = stringField(gameSession, 'id');
@@ -141,7 +130,6 @@ async function createRoom(coach: Account): Promise<RoomSnapshot> {
   const payload = expectStatus(await request('/api/coach/rooms', {
     method: 'POST',
     body: JSON.stringify({
-      stageDurationSeconds: 60,
       companies: [
         { id: 'e2e-player-company', name: 'E2E 甲公司' },
         { id: 'e2e-abc-company', name: 'E2E 乙公司' },
@@ -175,10 +163,10 @@ async function fetchRoom(coach: Account): Promise<RoomSnapshot> {
   return room;
 }
 
-async function markReady(account: Account, stage: number, version: number): Promise<HttpResult> {
+async function requestLegacyReady(account: Account, version: number): Promise<HttpResult> {
   return request(`/api/multiplayer/rooms/${roomId}/ready`, {
     method: 'POST',
-    body: JSON.stringify({ expectedStage: stage, expectedVersion: version }),
+    body: JSON.stringify({ expectedStage: 1, expectedVersion: version }),
   }, account.token);
 }
 
@@ -233,6 +221,19 @@ async function main(): Promise<void> {
   const playerA = await authenticate(usernames.playerA, 'player');
   const playerB = await authenticate(usernames.playerB, 'player');
 
+  const removedStageConfig = await request('/api/coach/rooms', {
+    method: 'POST',
+    body: JSON.stringify({
+      stageDurationSeconds: 60,
+      companies: [
+        { id: 'e2e-player-company', name: 'E2E 甲公司' },
+        { id: 'e2e-abc-company', name: 'E2E 乙公司' },
+      ],
+    }),
+  }, coach.token);
+  expectStatus(removedStageConfig, 400, 'removed per-stage room configuration');
+  assert.equal(removedStageConfig.payload.error, 'GAME_PHASE_DESIGN_REMOVED');
+
   const waitingRoom = await createRoom(coach);
   assert.equal(waitingRoom.currentStage, 1);
   assert.equal(waitingRoom.stageVersion, 1);
@@ -243,6 +244,8 @@ async function main(): Promise<void> {
   // slot, so an in-flight command cannot revive an orphan session.
   const detachedPlayerASessionId = await joinRoom(playerA, 'e2e-player-company');
   const detachedState = readState(await readGameSession(playerA, detachedPlayerASessionId));
+  const waitingTimer = extractObject(detachedState, 'projectTimer');
+  assert.equal(waitingTimer.isPaused, true, 'a company room timer stays paused until the coach starts it');
   const preStartCommand = await request(`/api/game/sessions/${detachedPlayerASessionId}/commands`, {
     method: 'POST',
     body: JSON.stringify({
@@ -280,20 +283,24 @@ async function main(): Promise<void> {
   const playerASessionId = await joinRoom(playerA, 'e2e-player-company');
   const playerBSessionId = await joinRoom(playerB, 'e2e-abc-company');
   const readyToStartRoom = await fetchRoom(coach);
-  const startedPayload = expectStatus(await request(`/api/coach/rooms/${roomId}/start`, {
+  expectStatus(await request(`/api/coach/rooms/${roomId}/start`, {
     method: 'POST',
     body: JSON.stringify({ expectedVersion: readyToStartRoom.stageVersion }),
   }, coach.token), 200, 'room start');
-  const startedRoom = parseRoom(startedPayload);
+  const startedRoom = await fetchRoom(coach);
   assert.equal(startedRoom.currentStage, 1);
   assert.equal(startedRoom.stageVersion, readyToStartRoom.stageVersion + 1);
   assert.equal(startedRoom.status, 'running');
-  const initialStage = startedRoom.currentStage;
   const initialVersion = startedRoom.stageVersion;
+  const startedPlayerState = readState(await readGameSession(playerA, playerASessionId));
+  const startedTimer = extractObject(startedPlayerState, 'projectTimer');
+  assert.equal(startedTimer.isPaused, false, 'starting the room resumes each company timer');
+  assert.equal(startedTimer.durationMs, 1_200_000, 'each company receives a twenty-minute timer');
+  assert.equal(typeof startedTimer.lastResumedAt, 'string', 'room start persists the timer anchor');
 
-  // A multiplayer stage cannot be advanced through the generic per-session
-  // command endpoint; only the room-owned ready RPC may advance it.
-  const initialSession = readState(await readGameSession(playerA, playerASessionId));
+  // Legacy phase commands and both ready routes are disabled. Each must leave
+  // the running room and its player runtimes untouched.
+  const initialSession = startedPlayerState;
   const genericAdvance = await request(`/api/game/sessions/${playerASessionId}/commands`, {
     method: 'POST',
     body: JSON.stringify({
@@ -304,89 +311,35 @@ async function main(): Promise<void> {
     }),
   }, playerA.token);
   expectStatus(genericAdvance, [400, 409], 'generic multiplayer advance rejection');
-  assert.equal(genericAdvance.payload.error, 'MULTIPLAYER_STAGE_ADVANCE_REQUIRES_ROOM_READY');
-
-  // Both players confirm the same room version concurrently. Exactly one
-  // request owns the transition; a retried/later request must not grant AP a
-  // second time or move the room more than one stage.
-  const concurrentReady = await Promise.all([
-    markReady(playerA, initialStage, initialVersion),
-    markReady(playerB, initialStage, initialVersion),
-  ]);
-  const firstReadyResults = concurrentReady.map((result, index) => {
-    expectStatus(result, 200, `concurrent ready ${index + 1}`);
-    return parseReady(result.payload);
+  const unauthenticatedReady = await request(`/api/multiplayer/rooms/${roomId}/ready`, {
+    method: 'POST',
+    body: JSON.stringify({ expectedStage: 1, expectedVersion: initialVersion }),
   });
-  assert.equal(firstReadyResults.filter((result) => result.advanced && !result.replayed).length, 1);
-  const stageTwoFromReady = firstReadyResults.reduce((latest, result) =>
-    result.stageVersion > latest.stageVersion ? result : latest, firstReadyResults[0]);
-  assert.equal(stageTwoFromReady.currentStage, initialStage + 1);
-  assert.equal(stageTwoFromReady.stageVersion, initialVersion + 1);
-  assert.equal(stageTwoFromReady.status, 'running');
-
-  const stageTwo = await fetchRoom(coach);
-  assert.equal(stageTwo.currentStage, initialStage + 1);
-  assert.equal(stageTwo.stageVersion, initialVersion + 1);
-  const stageTwoStage = stageTwo.currentStage;
-  const stageTwoVersion = stageTwo.stageVersion;
-
-  // A response lost immediately after the stage transition can be replayed
-  // with the previous expected pair. It must not mark the player ready for
-  // the now-current stage.
-  const oldReplay = await markReady(playerA, initialStage, initialVersion);
-  expectStatus(oldReplay, 200, 'one-stage-old ready replay');
-  const oldReplayResult = parseReady(oldReplay.payload);
-  assert.equal(oldReplayResult.replayed, true);
-  const afterOldReplay = await fetchRoom(coach);
-  assert.equal(afterOldReplay.currentStage, stageTwoStage);
-  assert.equal(afterOldReplay.stageVersion, stageTwoVersion);
-  const slots = afterOldReplay.raw.multiplayer_company_slots;
-  assert(Array.isArray(slots), 'coach room response must include multiplayer slots');
-  const playerASlot = slots.find((slot) => isRecord(slot) && slot.player_user_id === playerA.userId);
+  expectStatus(unauthenticatedReady, 401, 'ready endpoint authentication');
+  const playerReady = await requestLegacyReady(playerA, initialVersion);
+  expectStatus(playerReady, 410, 'removed player phase-ready endpoint');
+  assert.equal(playerReady.payload.error, 'GAME_PHASE_DESIGN_REMOVED');
+  const startedSlots = startedRoom.raw.multiplayer_company_slots;
+  assert(Array.isArray(startedSlots));
+  const playerASlot = startedSlots.find((slot) => isRecord(slot) && slot.player_user_id === playerA.userId);
   assert(isRecord(playerASlot), 'player A slot must be recoverable');
-  assert.equal(playerASlot.ready_stage, null, 'old replay must not mark the next stage ready');
-
-  // A same-stage duplicate is acknowledged idempotently and does not advance
-  // the room by itself.
-  const stageTwoFirstReady = await markReady(playerA, stageTwoStage, stageTwoVersion);
-  expectStatus(stageTwoFirstReady, 200, 'stage two first ready');
-  const stageTwoFirstResult = parseReady(stageTwoFirstReady.payload);
-  assert.equal(stageTwoFirstResult.advanced, false);
-  assert.equal(stageTwoFirstResult.replayed, false);
-  const stageTwoDuplicate = await markReady(playerA, stageTwoStage, stageTwoVersion);
-  expectStatus(stageTwoDuplicate, 200, 'same-stage duplicate ready');
-  const stageTwoDuplicateResult = parseReady(stageTwoDuplicate.payload);
-  assert.equal(stageTwoDuplicateResult.advanced, false);
-  assert.equal(stageTwoDuplicateResult.replayed, true);
-
-  // The second player's ready is the only request that can now advance stage
-  // two. This also gives us a stable recovery checkpoint at stage three.
-  const stageThreeReady = await markReady(playerB, stageTwoStage, stageTwoVersion);
-  expectStatus(stageThreeReady, 200, 'stage three transition');
-  const stageThree = parseReady(stageThreeReady.payload);
-  assert.equal(stageThree.advanced, true);
-  assert.equal(stageThree.replayed, false);
-  assert.equal(stageThree.currentStage, stageTwoStage + 1);
-  assert.equal(stageThree.stageVersion, stageTwoVersion + 1);
-  const stageThreeStage = stageThree.currentStage;
-  const stageThreeVersion = stageThree.stageVersion;
-
-  const recoveredA = readState(await readGameSession(playerA, playerASessionId));
-  const recoveredB = readState(await readGameSession(playerB, playerBSessionId));
-  const expectedRuntimeVersionAtStageThree = 4;
-  for (const [label, state] of [['player A', recoveredA], ['player B', recoveredB]] as const) {
-    assert.equal(numberField(state, 'currentStage'), stageThreeStage, `${label} stage recovery`);
-    assert.equal(numberField(state, 'currentRound'), stageThreeStage, `${label} round recovery`);
-    assert.equal(numberField(state, 'version'), expectedRuntimeVersionAtStageThree, `${label} runtime version recovery`);
-    assert.equal(numberField(state, 'roomStageVersion'), stageThreeVersion, `${label} room stage version recovery`);
-    assert.equal(numberField(state, 'actionPoints'), 28, `${label} action-point cap recovery`);
-  }
-
-  // Once the room is three versions ahead, the first-stage request is truly
-  // stale and must be rejected instead of writing a ready marker.
-  const staleReady = await markReady(playerA, initialStage, initialVersion);
-  expectStatus(staleReady, 409, 'stale ready conflict');
-  assert.equal(staleReady.payload.error, 'ROOM_VERSION_CONFLICT');
+  const unauthorizedCoachForceReady = await request(`/api/coach/rooms/${roomId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ action: 'force_ready', slotId: playerASlot.id, expectedVersion: initialVersion }),
+  }, playerA.token);
+  expectStatus(unauthorizedCoachForceReady, 403, 'coach force-ready authorization');
+  const coachForceReady = await request(`/api/coach/rooms/${roomId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ action: 'force_ready', slotId: playerASlot.id, expectedVersion: initialVersion }),
+  }, coach.token);
+  expectStatus(coachForceReady, 410, 'removed coach force-ready endpoint');
+  assert.equal(coachForceReady.payload.error, 'GAME_PHASE_DESIGN_REMOVED');
+  const afterLegacyEndpoints = await fetchRoom(coach);
+  assert.equal(afterLegacyEndpoints.currentStage, startedRoom.currentStage, 'legacy ready APIs cannot advance stage metadata');
+  assert.equal(afterLegacyEndpoints.stageVersion, initialVersion, 'legacy ready APIs cannot mutate room version');
+  const unchangedPlayerState = readState(await readGameSession(playerA, playerASessionId));
+  assert.equal(numberField(unchangedPlayerState, 'version'), numberField(initialSession, 'version'), 'removed phase commands cannot mutate player runtime');
+  assert.equal(numberField(unchangedPlayerState, 'actionPoints'), numberField(initialSession, 'actionPoints'), 'removed phase commands cannot grant action points');
 
   // Replacing a player's solo save must not touch the already-running room
   // runtime for that same user. Use two solo saves so this covers the actual
@@ -406,54 +359,146 @@ async function main(): Promise<void> {
   const admin = createAdminClient();
   const rows = await admin.from('game_sessions').select('id,status,multiplayer').in('id', [playerASessionId, soloFirstId, soloReplacementId]);
   assert.equal(rows.error, null);
-  const rowById = new Map((rows.data ?? []).map((row) => [String(row.id), row]));
+  const sessionRows = (rows.data ?? []) as unknown as Array<{ id: string; status: string; multiplayer: boolean }>;
+  const rowById = new Map<string, { id: string; status: string; multiplayer: boolean }>(
+    sessionRows.map((row): [string, { id: string; status: string; multiplayer: boolean }] => [String(row.id), row]),
+  );
   assert.equal(rowById.get(playerASessionId)?.status, 'playing');
   assert.equal(rowById.get(playerASessionId)?.multiplayer, true);
   assert.equal(rowById.get(soloFirstId)?.status, 'replaced');
   assert.equal(rowById.get(soloReplacementId)?.status, 'playing');
 
   const roomAfterSoloReplace = await fetchRoom(coach);
-  assert.equal(roomAfterSoloReplace.currentStage, stageThreeStage);
-  assert.equal(roomAfterSoloReplace.stageVersion, stageThreeVersion);
+  assert.equal(roomAfterSoloReplace.currentStage, startedRoom.currentStage);
+  assert.equal(roomAfterSoloReplace.stageVersion, initialVersion);
   const slotsAfterSoloReplace = roomAfterSoloReplace.raw.multiplayer_company_slots;
   assert(Array.isArray(slotsAfterSoloReplace), 'room recovery after solo replace must include slots');
   const playerASlotAfterSoloReplace = slotsAfterSoloReplace.find((slot) => isRecord(slot) && slot.player_user_id === playerA.userId);
   assert(isRecord(playerASlotAfterSoloReplace), 'player A slot must survive solo replacement');
   assert.equal(playerASlotAfterSoloReplace.game_session_id, playerASessionId);
   const multiplayerAfterReplace = readState(await readGameSession(playerA, playerASessionId));
-  assert.equal(numberField(multiplayerAfterReplace, 'currentStage'), stageThreeStage);
-  assert.equal(numberField(multiplayerAfterReplace, 'version'), expectedRuntimeVersionAtStageThree);
-  assert.equal(numberField(multiplayerAfterReplace, 'roomStageVersion'), stageThreeVersion);
+  assert.equal(numberField(multiplayerAfterReplace, 'version'), numberField(initialSession, 'version'));
 
-  // Finish stages three through five through the room-owned ready path, then
-  // verify the finished room still allows the required per-player submit.
-  let finalRoom = roomAfterSoloReplace;
-  for (let stage = finalRoom.currentStage; stage <= 5; stage += 1) {
-    const expectedStage = finalRoom.currentStage;
-    const expectedVersion = finalRoom.stageVersion;
-    const first = await markReady(playerA, expectedStage, expectedVersion);
-    expectStatus(first, 200, `final path stage ${stage} first ready`);
-    const second = await markReady(playerB, expectedStage, expectedVersion);
-    expectStatus(second, 200, `final path stage ${stage} second ready`);
-    finalRoom = parseReady(second.payload);
-    if (finalRoom.status === 'finished') break;
-  }
-  assert.equal(finalRoom.status, 'finished');
-  assert.equal(finalRoom.currentStage, 5);
+  // Reproduce a company that completed before the coach ends the room. The
+  // end RPC must preserve both its persisted status and runtime version.
+  const completedRuntimeRead = await admin.from('game_runtime_states')
+    .select('version,simulation_state')
+    .eq('session_id', playerBSessionId)
+    .single();
+  assert.equal(completedRuntimeRead.error, null);
+  assert(completedRuntimeRead.data);
+  const completedRuntime = completedRuntimeRead.data as unknown as { version: number; simulation_state: JsonObject };
+  const completedState = {
+    ...(isRecord(completedRuntime.simulation_state) ? completedRuntime.simulation_state : {}),
+    status: 'won',
+  };
+  const completedRuntimeWrite = await admin.from('game_runtime_states')
+    .update({ simulation_state: completedState })
+    .eq('session_id', playerBSessionId);
+  assert.equal(completedRuntimeWrite.error, null);
+  const completedSessionWrite = await admin.from('game_sessions')
+    .update({ status: 'won', won: true, finished_at: new Date().toISOString() })
+    .eq('id', playerBSessionId)
+    .eq('status', 'playing');
+  assert.equal(completedSessionWrite.error, null);
 
-  const finalPlayerAState = readState(await readGameSession(playerA, playerASessionId));
-  assert.equal(finalPlayerAState.submissionReady, true);
-  assert.equal(numberField(finalPlayerAState, 'roomStageVersion'), finalRoom.stageVersion);
-  const submitted = expectStatus(await request(`/api/game/sessions/${playerASessionId}/commands`, {
+  // Seed a paused, active visit on the still-playing company. Forced room end
+  // charges its four committed rounds, freezes the timer, and releases both
+  // persisted interaction locks in one transaction.
+  const playingRuntimeRead = await admin.from('game_runtime_states')
+    .select('version,action_points,simulation_state')
+    .eq('session_id', playerASessionId)
+    .single();
+  assert.equal(playingRuntimeRead.error, null);
+  assert(playingRuntimeRead.data);
+  const playingRuntime = playingRuntimeRead.data as unknown as { version: number; action_points: number; simulation_state: JsonObject };
+  const playingState = isRecord(playingRuntime.simulation_state) ? playingRuntime.simulation_state : {};
+  const priorTimer = isRecord(playingState.projectTimer) ? playingState.projectTimer : {};
+  const meetingFixture = { turnCount: 4, maxTurns: 20 };
+  const forcedEndTimerFixture = {
+    ...priorTimer,
+    durationMs: 1_200_000,
+    elapsedMs: 260_000,
+    recoveredIntervals: 0,
+    visitPaused: true,
+    lastResumedAt: null,
+  };
+  const forcedEndStateFixture = {
+    ...playingState,
+    actionPoints: 27,
+    activeMeeting: meetingFixture,
+    activePhoneCall: { npcId: 'P1-001', startedRound: 1, startedAt: new Date().toISOString() },
+    projectTimer: forcedEndTimerFixture,
+  };
+  const forcedEndRuntimeWrite = await admin.from('game_runtime_states')
+    .update({ action_points: 27, simulation_state: forcedEndStateFixture, active_meeting: meetingFixture })
+    .eq('session_id', playerASessionId);
+  assert.equal(forcedEndRuntimeWrite.error, null);
+
+  const ended = expectStatus(await request(`/api/coach/rooms/${roomId}/end`, {
     method: 'POST',
     body: JSON.stringify({
-      commandId: `multi-submit-${crypto.randomUUID()}`,
-      expectedVersion: numberField(finalPlayerAState, 'version'),
-      type: 'submit',
-      payload: {},
+      expectedVersion: roomAfterSoloReplace.stageVersion,
     }),
-  }, playerA.token), 200, 'finished multiplayer submit');
-  assert(['won', 'lost'].includes(String((extractObject(submitted, 'state')).status)));
+  }, coach.token), 200, 'room end');
+  const finalRoom = parseRoom(ended);
+  assert.equal(finalRoom.status, 'finished', 'coach can still end the room');
+
+  const endedSessionRows = await admin.from('game_sessions')
+    .select('id,status,won')
+    .in('id', [playerASessionId, playerBSessionId]);
+  assert.equal(endedSessionRows.error, null);
+  const endedSessions = (endedSessionRows.data ?? []) as unknown as Array<{ id: string; status: string; won: boolean | null }>;
+  const endedSessionById = new Map(endedSessions.map((row) => [row.id, row]));
+  assert.equal(endedSessionById.get(playerASessionId)?.status, 'lost', 'coach end settles only the playing company');
+  assert.equal(endedSessionById.get(playerASessionId)?.won, false);
+  assert.equal(endedSessionById.get(playerBSessionId)?.status, 'won', 'completed company status survives room end');
+  assert.equal(endedSessionById.get(playerBSessionId)?.won, true);
+
+  const endedRuntimeRows = await admin.from('game_runtime_states')
+    .select('session_id,version,action_points,simulation_state,active_meeting,phase_started_at,phase_ends_at,paused_at,paused_remaining_ms')
+    .in('session_id', [playerASessionId, playerBSessionId]);
+  assert.equal(endedRuntimeRows.error, null);
+  const endedRuntimes = (endedRuntimeRows.data ?? []) as unknown as Array<{
+    session_id: string;
+    version: number;
+    action_points: number;
+    simulation_state: JsonObject;
+    active_meeting: JsonObject | null;
+    phase_started_at: string | null;
+    phase_ends_at: string | null;
+    paused_at: string | null;
+    paused_remaining_ms: number | null;
+  }>;
+  const endedRuntimeBySession = new Map(endedRuntimes.map((row) => [row.session_id, row]));
+  const endedPlayingRuntime = endedRuntimeBySession.get(playerASessionId);
+  assert(endedPlayingRuntime);
+  assert.equal(endedPlayingRuntime.version, playingRuntime.version + 1);
+  assert.equal(endedPlayingRuntime.simulation_state.status, 'lost');
+  assert.equal(endedPlayingRuntime.simulation_state.activeMeeting, null);
+  assert.equal(endedPlayingRuntime.simulation_state.activePhoneCall, null);
+  assert.equal(endedPlayingRuntime.active_meeting, null);
+  assert.equal(endedPlayingRuntime.phase_started_at, null);
+  assert.equal(endedPlayingRuntime.phase_ends_at, null);
+  assert.equal(endedPlayingRuntime.paused_at, null);
+  assert.equal(endedPlayingRuntime.paused_remaining_ms, null);
+  assert.equal(endedPlayingRuntime.action_points, 28, 'crossed recovery interval grants five AP up to the cap');
+  assert.equal(endedPlayingRuntime.simulation_state.actionPoints, 28, 'JSON and relational action points stay aligned');
+  const frozenTimer = extractObject(endedPlayingRuntime.simulation_state, 'projectTimer');
+  assert.equal(frozenTimer.elapsedMs, 320_000, 'forced end charges committed visit turns');
+  assert.equal(frozenTimer.recoveredIntervals, 1, 'forced end records the crossed five-minute interval');
+  assert.equal(frozenTimer.visitPaused, false, 'forced end clears the visit pause lock');
+  assert.equal(frozenTimer.lastResumedAt, null, 'forced end freezes the project timer');
+
+  const preservedCompletedRuntime = endedRuntimeBySession.get(playerBSessionId);
+  assert(preservedCompletedRuntime);
+  assert.equal(preservedCompletedRuntime.version, completedRuntime.version, 'completed company runtime version is untouched');
+  assert.equal(preservedCompletedRuntime.simulation_state.status, 'won', 'completed company runtime status is untouched');
+
+  const visibleEndedState = readState(await readGameSession(playerA, playerASessionId));
+  assert.equal(visibleEndedState.status, 'lost');
+  assert.equal(visibleEndedState.activeMeeting, null);
+  assert.equal(visibleEndedState.activePhoneCall, null);
 
   console.log(`multiplayer dual-account e2e passed: room=${roomId}, sessions=${playerASessionId},${playerBSessionId}`);
 }

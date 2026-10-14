@@ -1,5 +1,63 @@
 # 工作交接
 
+## 2026-10-12 高层/低接受度短回复（本地完成，外部抽样待授权）
+
+- 修改npc-role-prompts.ts五人low例句与长度参考、customer.ts允许更短/遵循角色档位；张low10-30最多40，其他low20-45最多60，中高上限张60/80其他80/100。张普通忙碌收束与条件会议示例分开，敏感明确拒绝、告辞不追加；评估/需完整邮件不受日常限制。base/阈值/评分/会面结束未改。
+- scripts/fixtures/npc-role-prompts-2026-10-12-before-short-replies.json及prompt-config全四字段指纹精确升级，任意自定义保留。主线程五专项、锁定pnpm ts-check/lint:build、Next/tsup build通过；v4稿已导出。核实旧3000 Next进程56240后刷新为36764，HTTP200及prompt-config revision5五人新版规则加载，Provider deepseek revision5保持，runtime证据独立目录未覆盖旧45场。
+- 提示词抽样worker仅生成27条沙箱网络失败原始证据，无真实正文。联网升级被auto-review明确拒绝（新版内部提示词和上下文向三个外部目的地缺明确授权），不得换UI/接口绕过；待用户明确同意发送内容到配置的DeepSeek/豆包/Qwen服务后再测试。不得声称新稿已在真实模型达标；旧45场/PDF保持原时点，PROMPT-007/009/010、TEST-VISIT-001未关闭。新增PROMPT-011本地Resolved、TEST-SHORT-001 Open。
+
+## 2026-10-12 三模型真实拜访复验（矩阵、截图与PDF完成）
+
+- 已完成deepseek/doubao/qwen各15场真实预览UI；135轮尝试133条NPC成功正文，2次中档李明辉告辞SSE503，43场服务端结束。135轮截图+3配置截图，原Provider恢复deepseek revision5。运行时prompt-config revision5，五人三档示例均已加载。预约由测试调节accepted并跳过准备；正式对局/邀约全过程未测。
+- outputs/2026-10-12-NPC多模型拜访截图索引.html与对照报告.md，原始summary/responses及截图在harness/evidence/npc-model-visits-2026-10-12/。runner的43场dialogue-completed-not-ended是200ms采样早于UI650ms退场，不是产品失败；两告辞错误已据原始SSE单列。未保存认证令牌/密码/cookie。
+- PROMPT-007口头语/承诺复现，新增009未核验具体事实、010生成投入梯度不稳定；TEST-VISIT-001仍待定位。只测试登记，未修产品。用户新增全量对话PDF，目标output/pdf/2026-10-12-NPC三模型全量拜访对话记录.pdf；需完成全部135输入/正文或系统失败完整性校验与视觉QA后收口。
+- 上述PDF已完成46页，主线程对45场各自对应页的135输入+135输出共270项独立文本验证通过；全46页渲染及封面/最长/失败详情视觉QA通过，联系方式来源警示保留。138张索引图浏览器显示正常、坏链0。最终scripts/harness-check.ps1与git diff --check通过。无需重跑本批未变动的产品build/lint；原先未修问题不因PDF交付关闭。未执行Git提交。
+
+## 2026-10-08 常见销售场景三档分化（本地实现与验证完成）
+
+- 用户指出常见销售场景近似；v2 完整快照及源码证实五人各 10 条引用回复原本在 low/medium/high 完全复用。此前首段和人物化追加例句虽有差异，但共同场景并未分档，已纠正这一缺口。
+- npc-role-prompts.ts 每人保留同 10 类标签，低/中/高分别 30 条独立回复，共 150 条；低礼貌简短必要回应，中平和务实核对一项，高更亲切主动、授权内有条件协助。敏感/礼品拒绝边界不变而表达不同。独立逐条比较确认 50 个场景每组三句不同；人物 base、原档位首段和 TIERED_SCENARIO_DEPTH 完整保留。
+- prompt-config.ts 加入分化前完整稿四字段精确指纹，旧默认读取升级，自定义任一字段保留；test-npc-role-prompts.ts 增加对应场景逐条比較及插值完整性。新增回归已在旧稿检出完全重复，再在新稿通过。
+- 主线程复跑人物、Excel、配置编辑、正式五人、预览专项及 TypeScript、全量 ESLint、Next/tsup 生产构建通过。后台只读 revision 5 五人历史 string 均归一化匹配新版默认；未物理写数据库或部署。本地 3000 已重启到最终构建，预览 HTTP 200。
+- 完整稿 outputs/五人NPC提示词-常见销售场景三档分化-2026-10-08-v3.md；逐项对照 outputs/五人NPC常见销售场景-低中高逐项对照-2026-10-08.md。本批静态文本与契约验收，不宣称新稿真实模型语气稳定；PROMPT-007 和 TEST-VISIT-001 保持未解决。最终 scripts/harness-check.ps1 与 git diff --check 均通过。未执行 Git 提交。
+
+## 2026-10-08 真实拜访验收完成（存在未修复问题）
+
+- 最新本地生产构建真实预览：五人三档 API 15 场，75 个 preview 动作均 HTTP 200，45 个 visit_turn 中 44 条正文、1 次 NPC 告辞后的玩家收尾；浏览器另完成张中档准备/实际模拟和王低支持愉悦 0 连续施压共 2 场。只用独立设计师预览数据，未改正式对局。
+- 样本中礼貌、敏感信息边界和结束流程正常；9/44 条正文口头语堆叠，7 个场次相邻轮复用。王拒绝末尾“您说是不是”违反基础稿；张“后续他们按职责跟您联系”承诺偏满。浏览器一次 preview 502 重试恢复，根因未确定。不能宣称话术质量全部通过或 502 已修复。
+- 报告：outputs/五人NPC真实拜访测试报告-2026-10-08.md；原始 API、UI 原句与截图：harness/evidence/npc-visits-2026-10-08/。未保存令牌、cookie 或密码；provider/model 型号未从 DTO 核实。预约由测试调节设置，未覆盖邀约申请全过程；正式模式未测。
+- 本批只测试、证据和台账；下一步在批准修复范围后处理 PROMPT-007 和 TEST-VISIT-001，复跑针对性真实样本。原有本地技术验证记录保留，不代表当前真实话术全部达标。
+
+## 2026-10-08 人物口语与情境示例二次修订（本地实现与验证完成）
+
+- 用户纠正了口头语定义，并否定首版四人的办事用语；已保留张建国三句，重写四人习惯短语，并为五人三档增加有个人差异的场景示例。实际文本与旧内置精确升级、自定义保护复核后已导出 `outputs/五人NPC提示词-人物口语与情境示例-2026-10-08-v2.md`。下方首版仅为历史实现记录。
+- 最终全量 ESLint、`scripts/harness-check.ps1` 与 `git diff --check` 均通过；未 Git 提交。下一步部署后需看真实对话中口头语自然程度与复读情况。
+- 本批文本复核完成：四人换为随口承接/停顿/转折语，五人三档新增 45 条性格化情境示例；王德福、刘思琪语气按权威人物主档修正。`scripts/fixtures/npc-role-prompts-2026-10-08-before-tone-refresh.json` 保留首版，`prompt-config.ts` 仅全四字段指纹一致才读取升级。
+- 主线程人物/Excel/配置编辑/正式五人/预览 AI 专项、类型、Next build 及 tsup 服务端构建通过。完整 Markdown 已导出。后台只读实查 revision 5 五人历史 string 全部归一为当前默认；未物理写数据库、未部署、未在线模型对话验收。
+
+## 2026-10-08 NPC 客气表达与个人口头语
+
+- 最终收口：完整稿导出成功；最终 TypeScript 及后台只读归一化复核通过，`scripts/harness-check.ps1` 和 `git diff --check` 通过。未执行 Git 提交。
+
+- 实现入口：`projects/src/lib/designer/npc-role-prompts.ts` 的五人基础稿/十五档例句；`prompt-config.ts` 的低愉悦礼貌底线及 9/30 全字段指纹；`customer.ts` 的通用礼貌追问/拒绝规则。旧 profile fixture 位于 `projects/scripts/fixtures/npc-role-prompts-2026-09-30.json`，测试覆盖所有字段自定义保护。已有其他未提交工作保留。
+- 主线程已复核实际例句、读取归一化与 diff；人物、Excel、配置编辑、正式五人、预览 AI、Provider mock、TypeScript、全量 ESLint、Next build 及 tsup 服务端构建通过。沙箱初次依赖/本机网络错误在完整权限环境同命令复跑通过。
+- 后台只读实查 revision 5：五人均为历史 string，当前读取归一化全部匹配新内置 profile；未写远程物理 JSON、未部署、未调用真实模型。本地默认完整稿已导出到 `outputs/五人NPC提示词-礼貌与口头语版-2026-10-08.md`。下一步部署后抽查五人三档、拒绝/支持/催问/不悦和邮件场景的实际语气及口头语频率。
+
+## 2026-09-30 五人三档情境话术扩充（本地实现与验证完成）
+
+- 五人基础稿及十五份档位正文在 `projects/src/lib/designer/npc-role-prompts.ts`。基础稿恢复适度人物动机、生活、渠道、职责和固定边界；每档覆盖代表性销售话术并给自然例句，新增跨情境的档位处理差异。参考中的金主任个人事实、#MT 占位、预算和结果承诺均未移入五人提示词；自我介绍只按人物性格提醒。
+- `prompt-config.ts` 的旧内置精确读取升级、自定义保护及代码选档仍有效。主线程复跑人物、Excel、配置编辑、正式五人、预览专项、TypeScript、全量 ESLint、Next/服务端构建通过。远程保存 JSON 未实查或改写；部署后需做五人低/中/高、四渠道的真实模型对话抽查，特别看示例复读和虚构承诺。
+
+## 2026-09-30 五人三档提示词内容重整（本地实现与验证完成）
+
+- 五份新版 profile 位于 `projects/src/lib/designer/npc-role-prompts.ts`；每份基础稿简短，三档各有行为规则及三条可改写示例。`prompt-config.ts` 只对精确旧内置 string 或完整旧 profile 作读取升级，设计师自定义稿不替换；所有正式/预览/设计师读取均走该归一化。远程物理配置未改写，设计师下一次保存后才持久化新格式；上线需检查真实保存值及模型对话。
+- 主线程复跑五项专项、TypeScript、全量 ESLint、Next/服务端构建、`scripts/harness-check.ps1` 与 `git diff --check` 均通过。
+
+## 2026-09-30 五人 NPC 支持度分档提示词（本地实现与专项验证完成）
+
+- 本批入口和目标见 `plans/CURRENT_ITERATION.md` 顶部及 D-090。用户补充明确门槛数值应在设计师界面可调、选档由代码完成，写话模型只接收选中档位正文。正式 `/api/chat/stream`、五人预览、设计师提示词库与 Excel 都需要按统一三档契约核对；旧已保存配置可能覆盖默认稿，远程实际值本批尚未实查。
+- 代码现以 `prompt-config.ts` 的共享门槛选择五人各自档位；设计师提示词页可维护门槛和基础/低/中/高四项，Excel 可导出新四行并导入旧单行。正式和预览生成模型不接收门槛或完整支持度分档条件。主线程复跑相关五项专项、TypeScript、全量 ESLint、Next/服务端构建、harness 和 diff 检查通过。上线前需核对远程 `designer_prompt_configs/project-one` 的当前保存值，并做跨档真实对话观察；本批未实查或改写远程配置。
+
 ## 2026-09-29 五人提示词视角与发言身份
 
 - 五人 `npc-role-prompts.ts` 的直接职责/行动/输出规则已按 D-089 统一 NPC 第二人称；正式 `/api/chat/stream` 在事务提交前进行发言身份校验、一次纠偏或安全兜底。预览 `visit_turn`、`wechat_request` 补 `speakAsNpc` 和质量门；原有消息/电话质量门继续有效。
@@ -240,3 +298,120 @@ Windows 人工验收可直接双击仓库根目录 `start-project.bat`；服务�
 - 聊天正文、评分、记忆、资源、事件与命令幂等已由 `commit_game_command` 原子提交；不要恢复旧的多次写入路径。
 - 会话 token 已改 HMAC-SHA256 签名；不要恢复无签名 base64 兜底或 select_role 无凭证签发。
 - C0 公式只能由业务负责人确认后修改。
+
+## 2026-10-08 sellsmart 公开首页
+
+- 首页 src/app/page.tsx 与 landing.module.css；原登录 src/app/login/page.tsx。品牌 public/brand，插画 public/images/landing/sales-training-hero.png；生成提示词与使用方式见 public/brand/README.md。根 layout 标题/图标同步 sellsmart。
+- 本地开发服务 http://127.0.0.1:3000。主机默认 pnpm 11 不符合项目要求，使用缓存 pnpm 9：node C:/Users/17628/AppData/Local/node/corepack/v1/pnpm/9.0.0/bin/pnpm.cjs。沙箱下 Next/SWC 无法 canonicalize 项目目录，本地正常权限可运行。最终验收结果待补记。
+
+
+### 2026-10-08 sellsmart 首页最终验收
+
+- 本地实现与验收完成：`/` 为无需身份的首页，`/login` 为原登录，`/home` 保持玩家工作台。首页 SVG 品牌、模型生成插画和独立 CSS 已落盘；全局页面标题/图标同步 sellsmart。
+- 主线程复核实际 diff；原登录 sendCode / handleLogin / enterWorkbench 的处理代码与 HEAD 原根路由逐字比较一致。
+- 主线程验证：pnpm 9 TypeScript、全量 ESLint、最终 Next.js 静态页及 tsup 服务端构建通过。桌面 1440 与手机 390 视觉检查，图片加载、手机菜单、流程锚点、首页 → 登录 → 玩家身份 → /home → 退出回首页均通过。手机五阶段改为完整两列展示，页面无横向溢出。
+- 证据：`harness/evidence/sellsmart-home-2026-10-08/desktop.jpg`、`mobile.jpg`、`hero.jpg`。FRONT-SELLSMART-001 状态为 Resolved（仅本地实现）；未发布到线上。本批未改数据库或实际训练规则，远程数据未实查，不声称对局/复盘新增完成。
+
+## 2026-10-08 游戏入口简化（实施中）
+
+用户要求原产品介绍保留备用，根路由改简洁游戏入口。当前已核查根首页为长营销页、/login保留认证、/start为项目选择；只调整前端展示/导航，原介绍完整迁至/about，复用游戏城市图片与sellsmart品牌，不涉及数据库或AI游戏状态。最终验证待补记。
+
+### 2026-10-08 简洁游戏入口最终验收（本地完成）
+
+- FRONT-SELLSMART-002：Resolved。`projects/src/app/page.tsx` 改为单屏游戏标题界面，`entry.module.css` 独立样式；`about/page.tsx` 保留原产品介绍，仅改导入路径及标题，主线程归一化逐字比较通过。原 CSS、品牌、生成插画均保留。
+- 服务端验证 `weixun_session` 后选择入口；访客 `/login`，有效玩家 `/start`，其他有效角色对应原工作台。认证 API、游戏状态与数据库未改。
+- 主线程最终验证：目标 ESLint、Next.js 生产构建（包含 TypeScript）和 tsup 构建通过；1440×900 与 390×844 实测均单屏无横向溢出。产品介绍链接与返回、访客开始游戏→登录、真实预置玩家登录后开始游戏→项目选择、退出回公开入口通过。
+- 浏览器证据：`harness/evidence/sellsmart-entry-2026-10-08/desktop.jpg`、`mobile.jpg`。本地 3000 改用已构建生产版 `next start`，清除开发热更新缓存的暂态 CSS 缺失错误；最终导航正常。未发布线上，也未验证/调整远程数据库。
+
+## 2026-10-08 首页背景与 LOGO 重设计（用户已批准，实施中）
+
+- 用户明确拒绝现 LOGO，并要求首页背景不得复用游戏场景，需重新制作适合首页的素材。
+- 已检查：`page.tsx` 原引用 `/game-park.webp`，`public/brand` 原图标为两条相交 S 曲线；本批仅替换品牌资产、独立首页背景和必要美术样式，不改变路由/登录或游戏规则。
+- 目标：图像模型生成独立商务沟通/客户关系策略背景，中心留白承载标题和按钮；LOGO 重绘为清晰简洁 SVG，同步现品牌引用。桌面手机可读且单屏，原介绍页保留。
+- 验收：新背景资源实际加载、不引用游戏地图，LOGO 小尺寸清楚；类型/lint/构建、浏览器视觉和 harness/diff 检查通过。
+
+### 2026-10-08 首页专用美术 v2 验收（本地完成）
+
+- FRONT-SELLSMART-003：Resolved。首页不再引用 `game-park.webp`，分别使用 `public/images/landing/sellsmart-entry-background-v2.png` 与 `sellsmart-entry-mobile-v2.png`。两张图用内置 image_gen 生成/编辑，提示词见同目录 `ENTRY-ART.md`；原游戏资源和 /about 内容保留。
+- SVG LOGO 改为深墨蓝底、清晰居中的单条象牙白 S 路径与微小琥珀端点。主线程审查两个 SVG 实际内容，修正初稿垂直偏移；首页、介绍、登录及 favicon 使用原品牌路径，统一更新。品牌说明见 public/brand/README.md。
+- 最终主线程验证：目标 ESLint、Next.js TypeScript/生产构建和 tsup 通过；桌面1440×900与手机390×844均单屏无横向溢出，新背景与标志实际加载成功，手机显示专用竖版图。路由/认证逻辑未修改。本地3000已重启为最终生产版；未发布线上。
+- 证据：`harness/evidence/sellsmart-art-v2-2026-10-08/desktop.jpg`、`mobile.jpg`。本批只涉及美术与首页CSS/图片展示，远程数据未实查，无数据库或AI规则调整。
+
+## 2026-10-12 工业竞标棋局首页美术（用户已批准，实施中）
+
+- 当前证据：`projects/src/app/page.tsx` 引用 v2 商务会谈背景；用户认可整体风格，但要求地面棋局感、右侧招标文件示意、左侧工厂剪影。
+- 目标与范围：只替换首页横版/竖版背景引用；保留深蓝暖金、标题按钮布局、LOGO、登录路由及备用产品介绍。用内置 image_gen 编辑并版本化保存 v3，游戏规则/API/数据库不变。
+- 验收：棋盘地面、工厂与招标文件清楚，中心文案可读；桌面和手机图片正常加载且单屏；目标 lint、TypeScript/构建及 harness 检查通过。
+### 2026-10-12 工业竞标棋局美术 v4 验收（本地完成）
+
+- FRONT-SELLSMART-004：Resolved。首页横版与手机版引用 sellsmart-entry-background-v4.png / sellsmart-entry-mobile-v4.png；左侧工厂剪影、棋盘地面和右侧文件已接入，封面统一为 Invitation for Bids。
+- 使用内置 image_gen 生成并编辑，v2/v3 素材保留；最终提示词与素材路径见 projects/public/images/landing/ENTRY-ART-V4.md。本批仅替换首页两个图片引用，无认证、API、数据库或游戏规则修改。
+- 主线程确认最终素材拼写与实际页面；目标 ESLint、Next.js TypeScript/生产构建及 tsup 通过。1440×900、390×844 均单屏无溢出，当前可见背景加载成功，手机版专用竖图正常。
+- 证据：harness/evidence/sellsmart-art-v4-2026-10-12/desktop.jpg 与 mobile.jpg。本地3000已启动最终生产预览；未发布线上。
+
+### 2026-10-12 玩家身份与模式入口验收（本地完成）
+
+- FRONT-PLAYER-MODE-001：Resolved。start/page.tsx 保留登录 subRole；企业员工显示原单机/联机选择，paid_individual 隐藏整块模式/房间输入；开始导航与按钮统一使用 effectivePlayMode，个人及身份未加载时固定 solo。非玩家其他角色保留原选项；未带子身份的旧玩家默认单机。
+- 已完成部分：登录已写入完整身份；确认缺口：原项目入口丢弃 subRole。实际修改仅 projects/src/app/start/page.tsx；认证、游戏/API/数据库没有修改，远程数据未实查。
+- 主线程实际 diff 复核；缓存 pnpm 9 ts-check、全量 lint:build、Next.js 生产构建及 tsup 均 exit 0。默认 pnpm 包装器沙箱 realpath EPERM，正常本地权限使用缓存 pnpm 9 完成检查。
+- 浏览器验收：临时开发及最终 3000 生产预览通过；企业员工单机导航、联机选项/房间码/公司选择与联机导航，个人无模式选项/房间码且 solo 导航通过。使用模拟客户端身份、项目列表与联机加入响应，导航落点拦截，不创建真实对局；不宣称联机数据库或认证端到端另做实测。
+- 证据：harness/evidence/player-mode-2026-10-12/check.cjs、enterprise.png、individual.png。本地 3000 已重启为最终构建，临时 3012 服务已关闭；未发布线上。
+## 2026-10-12 正式游戏同步交接
+
+- 本批完成 FRONT-FORMAL-SYNC-001，以 STATE.md 同日结果为当前结论。正式 /game 与后台实际测试页的玩家布局/流程/费用已同步，保留正式数据库与命令权威；隐藏测试调节没有进入玩家页。
+- 代码主入口：projects/src/app/game/page.tsx、game-board.module.css；正式workflow独立准备/计划判断及输出有界化；chat/state负责已读不回、告辞、电话会话和附件扣费。无新数据库迁移。
+- 最终3000生产预览正常（next start，本次pid20124）；开发3012已关闭。当前真实数据库读写与AI计划/准备验收已通过，临时用户存档清理验证完成。最终mock脚本设 E2E_BASE_URL=http://127.0.0.1:3000；真实脚本用 projects 本地tsx执行 check-live.ts，自动清理独有临时存档。
+- 测试/截图报告位于 harness/evidence/formal-sync-2026-10-12。早期live失败分别为定位器重复、AI空正文、建议超量及计划充分性拒绝；前3项已修复，第4项保留正常门槛，具体多步骤计划成功保存。不得把mock聊天当真实模型多轮验收。未发布，保留全部原有未提交修改。
+
+## 2026-10-12 两栏与限时流程收口
+
+- 正式游戏和后台实际测试页已同步为两栏；阶段展示、阶段设置及旧推进接口停用。共享 public/project-one-notice.json 提供顶部简卡和采购通知弹窗。20min、每5min恢复5AP/上限28、实际拜访暂停且结束按最终轮数每轮15sec扣时、超时当前进度结算，测试页可调整剩余秒数和AP。
+- 服务端计时使用runtime JSON、原子命令提交与版本重试；刷新不重置，普通轮询不增长版本，恢复和超时仅一次，拜访结束跨恢复边界同样处理。旧历史round仅存储兼容。多人等待不计时，同事务开局锚点，结束保护已结算公司并清理活动锁。
+- 主线程最终复跑项目计时、竞争者检查点、11个RPC权限静态校验、reducer验收、桌面1440x900/手机390x844浏览器、真实隔离单人存档和双账号多人E2E均通过。已检查正式/测试桌面、手机和通知截图；完整TypeScript、ESLint、Next/tsup构建通过。证据 harness/evidence/game-timer-2026-10-12/。
+- 迁移20261012000100已通过管理API事务应用至与本地配置匹配的关联开发库并登记迁移历史；实际查询确认11个变更RPC的anon/authenticated执行权限均关闭、service_role可执行。没有部署生产站点或重置数据库。本地3000运行最终构建。
+- 真实AI超时请求验收被自动审批拒绝（外部模型项目上下文出站授权未确认）；未执行这些请求，另以本地模拟模型调用真实handler补充截止时间回归。此限制不代表既有模型服务质量已验证。原有NPC话术质量/偶发服务问题保持原状态，本批未扩大修复范围。
+
+最终补充验收：主线程运行 `node -r tsx/cjs scripts/test-timer-late-ai.ts` 通过；脚本加载真实commands/chat handler，仅stub模型、身份和内存repository，证明过期epoch先结算、晚返回计划/自然邀约/普通邮件不提交业务效果、暂停拜访末轮可同事务扣时结算。新增脚本后完整TypeScript再跑通过。harness-check与按CRLF兼容设置的diff --check通过。
+
+## 2026-10-12 张建国限定抽样审批状态
+
+用户已批准张建国三模型测试范围；15条独立单轮计划检查通过，只含P1-001，无其他NPC档案。自动审批仍在执行前拒绝外发新版内部提示词，认为缺少对具体目的地和提示词内容披露的明确授权；本批实际发出0请求、产生0正文，未换通道绕过，TEST-SHORT-001仍Open。
+只读核对配置目的地：DeepSeek deepseek-v4-flash -> https://api.deepseek.com；豆包 doubao-seed-2-0-lite-260428 -> https://ark.cn-beijing.volces.com；Qwen qwen-plus -> https://dashscope.aliyuncs.com。需要向用户明确列出上述目的地和新版张建国提示词/虚构输入的外发范围。记录：harness/evidence/npc-zhang-short-replies-2026-10-12/execution-status.json；报告：outputs/2026-10-12-张建国三模型短回复测试报告.md。
+
+## 2026-10-13 张建国三模型短回复实测（授权后完成）
+
+用户明确授权将新版张建国提示词和虚构测试输入发送至 api.deepseek.com、ark.cn-beijing.volces.com、dashscope.aliyuncs.com。按准备好的15个独立单轮提示词样本执行，无其他NPC档案、不改全局Provider或产品代码；本次自动审批允许执行。历史审批拒绝记录保留，不覆盖。
+15请求完成：14有效JSON正文，1条DeepSeek敏感拒绝仅返回空白、记invalid_json；10条正文在参考上限内，4条超限都为Qwen。DeepSeek开场低/中/高35/46/56字、低长推销27字；豆包24/43/56字、敏感32字、长推销35字；Qwen62/51/84字、敏感47字、长推销87字。计数含标点，无截断、无maxTokens。
+Qwen高档复述销售方输入，存在角色混淆；低开场误称“张建国您好”。豆包“你抓紧”仍不够客气，中档主动安排对接边界需加强。低长推销仍有追问/承接，尚不能判定自然结束达标。软字数规则跨模型不稳定；先建议加强角色、礼貌和单动作/收束约束，暂不据单轮样本做程序硬截断。TEST-SHORT-001的缺少新稿真实样本已解决，后续质量风险仍按PROMPT-007/009/010追踪并登记本次角色混淆。来源：harness/evidence/npc-zhang-short-replies-2026-10-12/approved-2026-10-13/summary.json及responses.ndjson。本批是直接提示词抽样，非完整UI拜访、非严格A/B，不能推断达标率或其他NPC表现。
+
+张建国本次全量PDF已完成：output/pdf/2026-10-13-张建国三模型短回复测试记录.pdf（最终4页）。主线程独立核对15输入/14完整正文/空白错误全部保留，最终渲染视觉复核完成。报告outputs/2026-10-13-张建国三模型短回复测试报告.md已检查并修正Qwen低档新旧字数比较错误。产品代码本轮未修改。
+
+## 2026-10-14 顶部竞争对手资料（实现与本地验收完成，真实REST联调受阻）
+
+- 正式/game与后台实际测试加入顶部竞争对手简卡/详情弹窗；设计师“数据→竞品数据”可新增、修改和删除，公司名/简介/核心优势及行业/方案特点/代表经验/服务支持共七字段。后两端共享独立登录只读API，30秒/焦点/可见刷新，编辑同步详情、删除关闭弹窗，空配置和读取错误/重试可见。旧记录和旧更新兼容，不清空已有新字段。
+- 主线程实际diff审查，修复正式旧token迟到响应保护；根复跑新契约/授权投影、预览VM资料/HTML转义/账户隔离、原账户隔离、倒计时、测试调节和项目计时均通过。全量类型、全量lint与最后补丁目标lint、Next/tsup生产build通过；最终本地3000 PID31864。浏览器根复跑设计师七字段PUT→共享mock store→两端读取，桌面1440/手机390详情、编辑/删除/空/重试等通过；API全mock无外部模型/DB调用，不能称真实保存联调。
+- 关联开发库实际SQL确认原count1/revision0/ABC；仅默认未编辑资料条件的迁移20261014000100已事务执行登记，随后权威查询count3/revision1、原ABC保留。新增北辰数科和云桥协同明确是模拟企业，不覆盖设计师自定义/清空列表。未发布生产站点，原游戏AI、评分与计时未变。
+- 当前REST TLS连接ECONNRESET，真实页面后台编辑→数据库→游戏读取的最终验收未完成；管理API SQL正常，写入预设并不代表REST链路健康。FRONT-COMPETITOR-PROFILES-001保持In Progress仅等待此真实联调；不假称线上可用。证据 harness/evidence/competitor-profiles-2026-10-14/（含mock边界）。下一步网络恢复后读取当前revision，测试可控资料编辑并验证两端刷新，避免覆盖用户后续自定义；无需再造CRUD。
+
+## 2026-10-14 竞争对手单入口纠正完成
+
+- 用户纠正已落实：正式与实际测试顶部只有一张“竞争对手”入口，与“项目背景”同排；逐公司第二排已删除。一个总弹窗包含所有已配置公司资料，动态编辑/删除/空配置/错误重试和身份响应保护保留。桌面及手机同Y由最终浏览器boundingBox断言通过。
+- ABC为占位：纯contract helper、默认配置和公开API过滤legacy UUID101+ABC占位名称（已改名自定义记录保留）；迁移20261014000200已事务执行登记，开发库权威查询count2/revision2/abc_placeholder_removed=true。其他企业资料/顺序保留，隐藏竞争引擎历史占位不作为公开企业展示。
+- 根线程实际diff/默认稳定ID与公开投影回归、预览总弹窗VM与身份/XSS回归、原账户隔离/倒计时/测试调节/项目计时验证通过；完整TypeScript、ESLint、Next/tsup build通过。最终生产3000已重启PID40216，根亲自复跑两端桌面1440/手机390总modal联动mock验收exit0，并查看两端桌面卡片和手机详情截图。harness/evidence/competitor-profiles-2026-10-14/已更新为本修正版证据（mock3真实fixture+ABC过滤；实际DB为2公司）。
+- 本次布局和占位纠正已完成；原FRONT-COMPETITOR-PROFILES-001的真实REST联调仍受ECONNRESET限制，未把mock称真实保存或线上部署。旧“3家公司/逐公司卡条”是修正前历史记录，不能引用为当前布局或DB状态。
+
+## 2026-10-14 竞争对手列表到单公司详情完成
+
+- 正式游戏与实际测试同步为：顶部“竞争对手”单入口→公司列表（名称、行业、简述）→所选公司详情→返回列表。关闭/Esc/背景关闭后重开默认列表；后台更新会保留当前公司并刷新资料，删除当前公司退回列表；身份变化清选择。ABC过滤和顶卡同排不变。
+- 根实际diff复核并运行新竞品VM、原账号隔离、倒计时、测试调节、后台契约回归通过；完整TypeScript、ESLint、Next/tsup build通过。最终本地3000重启为PID14388，根复跑最新桌面1440与手机390浏览器mock验收exit0，包括只显示所选公司详情、返回/再选、重开列表、编辑/删除/空/错误重试、同排、ABC排除、五联系人与AP/time不变。根已查看两端列表桌面、正式手机详情截图。
+- 证据harness/evidence/competitor-profiles-2026-10-14/已更新为列表→详情版。所有浏览器API仍使用隔离mock；本次未改数据层/远程数据库。先前真实DB两公司/revision2、REST TLS联调限制保留，不能把浏览器mock写成真实保存成功。旧总弹窗全文展开记录仅为历史。
+
+## 2026-10-14 竞争对手弹窗闪屏修复完成
+
+- 预览竞品弹窗改为稳定shell；初开禁用其backdrop/modal入场动画，列表/详情导航和后台更新不替换窗口/遮罩，相同markup不替换body，保留焦点/滚动；导航重置滚动。其它通用modal默认样式与动画不变。正式React弹窗无同类重建路径，本批未无依据改正式实现，已纳入稳定性验收。
+- 根实际diff检查，复跑竞品VM的shell/body写入计数、相同刷新与滚动、新旧身份/倒计时/测试调节通过；完整TypeScript、lint、Next/tsup build通过。根在最终生产3000 PID60284复跑桌面/手机浏览器mock：CSS animation-name均none，活动动画0，原modal/backdrop引用跨导航/刷新保持，相同资料不换body并保留焦点及真实非零scroll，正式计时poll稳定；原编辑/删除/列表详情/ABC过滤等回归通过。已查看最终预览列表截图。
+- 证据competitor-profiles-2026-10-14/check-browser.cjs及report.md。旧版运行时baseline未取得，根因来自旧代码静态机制，不虚构旧版前后量化；最终浏览器为全API mock，无AI/外部请求。本批没有数据库变更或线上部署，旧REST联调限制保留。
+
+## 2026-10-14 工作区归档提交（用户已授权）
+
+用户要求将工作区未提交内容提交到本地Git。本批汇总现有源码、测试、迁移、版本化public素材、台账和验收报告/截图/PDF；未加入环境凭据、缓存或构建产物。根配置凭据逐字匹配及key/JWT/private-key扫描无命中，独立未跟踪文件审计未发现原始token/cookie。测试记录的临时UUID仅作证据保留。PDF按Git binary管理；仅纠正无行为变化的login空白与计时报告断行。源码暂存diff检查与harness检查通过，产品类型/lint/build与浏览器验收沿用本批已完成最终检查。本次仅本地commit，不push或部署。

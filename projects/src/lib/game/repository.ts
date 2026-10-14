@@ -1,7 +1,7 @@
 import { createServerClient } from '@/storage/database/supabase-client';
 import { getProgressionMultiplier } from '@/lib/game/acceptance-mode';
 import { assertMultiplayerRoomRunning } from '@/lib/game/multiplayer';
-import { createProjectOneState, getGameOutcome, normalizeProjectOneState, toPlayerVisibleGameOutcome, type GameOutcome, type GameRuntimeState } from '@/lib/game/state';
+import { createProjectOneState, getGameOutcome, normalizeProjectOneState, synchronizeProjectTimer, toPlayerVisibleGameOutcome, type GameOutcome, type GameRuntimeState } from '@/lib/game/state';
 import type { GameReview } from '@/lib/contracts/game';
 
 export interface StoredChatMessage {
@@ -49,6 +49,7 @@ const REVIEW_EVENT_TYPES = [
   'npc.message.unanswered',
   'npc.call.unanswered',
   'npc.call.connected',
+  'npc.call.ended',
   'npc.handoff.promised',
   'npc.handoff.sent',
   'npc.handoff.received',
@@ -297,7 +298,11 @@ export async function deleteOwnedActiveGameSave(sessionId: string, userId: strin
   if (!data) throw new Error('SAVE_NOT_DELETABLE');
 }
 
-export async function getOwnedGameSession(sessionId: string, userId: string): Promise<OwnedGameSession> {
+export async function getOwnedGameSession(
+  sessionId: string,
+  userId: string,
+  options: { materializeTimer?: boolean } = {},
+): Promise<OwnedGameSession> {
   const supabase = createServerClient();
   const { data: session, error: sessionError } = await supabase
     .from('game_sessions')
@@ -334,16 +339,74 @@ export async function getOwnedGameSession(sessionId: string, userId: string): Pr
       ])),
     };
   }
-  // Reading a session is deliberately side-effect free. Simulated time advances
-  // only through an explicit command, never because a browser refreshed later.
-  // The formal five-person roster is fixed at state creation; old four-person
-  // saves are removed by the cutover migration, so no transcript discovery
-  // compatibility query is needed here.
+  // The low-level loader is side-effect free. Callers that expose a live game
+  // use synchronizeOwnedGameTimer to persist recovery/expiry checkpoints.
   return {
     id: session.id as string,
     userId: session.user_id as string,
-    state,
+    // Mutating commands/chat must checkpoint elapsed time before they freeze a
+    // visit or spend points. Read-only timer polls keep the persisted anchor
+    // untouched unless a five-minute recovery or expiry is reached.
+    state: options.materializeTimer === false ? state : synchronizeProjectTimer(state, Date.now(), true),
   };
+}
+
+/**
+ * Persist only timer recovery/expiry/migration edges. Consecutive polls in a
+ * sub-five-minute interval return the same version, while a CAS retry safely
+ * reloads a simultaneous player command.
+ */
+export async function synchronizeOwnedGameTimer(sessionId: string, userId: string): Promise<OwnedGameSession> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const loaded = await getOwnedGameSession(sessionId, userId, { materializeTimer: false });
+    // A completed multiplayer runtime keeps its frozen timer snapshot. Do not
+    // install a fresh room-start anchor on every result-page poll.
+    if (loaded.state.status !== 'playing') return loaded;
+    let timerBase = loaded.state;
+    if (loaded.state.gameMode === 'multiplayer') {
+      const supabase = createServerClient();
+      const { data: slot } = await supabase
+        .from('multiplayer_company_slots')
+        .select('room_id')
+        .eq('game_session_id', sessionId)
+        .maybeSingle();
+      const { data: room } = slot?.room_id
+        ? await supabase.from('multiplayer_rooms').select('status').eq('id', slot.room_id).maybeSingle()
+        : { data: null };
+      // Companies can be prepared while a room waits, but their twenty minute
+      // budget starts only when the room runs. New room-start SQL stamps the
+      // same anchor into each runtime atomically; an older running save with
+      // no timer anchor begins at this migration boundary.
+      if (room?.status !== 'running') return loaded;
+      if (!timerBase.projectTimer.lastResumedAt && !timerBase.projectTimer.visitPaused) {
+        timerBase = { ...timerBase, projectTimer: { ...timerBase.projectTimer, lastResumedAt: new Date().toISOString() } };
+      }
+    }
+    const next = synchronizeProjectTimer(timerBase);
+    if (next === loaded.state) return loaded;
+    try {
+      const expired = next.status !== 'playing';
+      const committed = await commitGameCommand({
+        sessionId,
+        commandId: `timer:${loaded.state.version}:${next.projectTimer.recoveredIntervals}:${expired ? 'expired' : 'checkpoint'}`,
+        commandType: 'timer.sync',
+        expectedVersion: loaded.state.version,
+        state: next,
+        eventType: expired ? 'project_timer.expired' : 'project_timer.recovered',
+        eventPayload: {
+          elapsedMs: next.projectTimer.elapsedMs,
+          recoveredIntervals: next.projectTimer.recoveredIntervals,
+          actionPoints: next.actionPoints,
+          expired,
+        },
+        result: { expired },
+      });
+      return { ...loaded, state: committed.state };
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== 'STATE_VERSION_CONFLICT' || attempt === 2) throw error;
+    }
+  }
+  throw new Error('STATE_VERSION_CONFLICT');
 }
 
 export async function saveGameState(sessionId: string, state: GameRuntimeState): Promise<GameRuntimeState> {
@@ -453,13 +516,17 @@ export async function commitGameCommand(args: {
   }>;
 }): Promise<GameCommandCommitResult> {
   const supabase = createServerClient();
+  // Every successful game command already creates one new version, so it is a
+  // safe place to checkpoint sub-interval wall time and install a post-visit
+  // resume anchor without creating a separate poll write.
+  const committedState = synchronizeProjectTimer(args.state, Date.now(), true);
   const { data, error } = await supabase.rpc('commit_game_command', {
     p_session_id: args.sessionId,
     p_command_id: args.commandId,
     p_command_type: args.commandType,
     p_expected_version: args.expectedVersion,
-    p_state: args.state,
-    p_total_score: Math.round(getGameOutcome(args.state).finalScore),
+    p_state: committedState,
+    p_total_score: Math.round(getGameOutcome(committedState).finalScore),
     p_event_type: args.eventType,
     p_event_payload: args.eventPayload ?? {},
     p_result: args.result ?? {},
@@ -545,8 +612,7 @@ export async function deliverPendingNpcHandoffs(sessionId: string, currentRound:
     .from('game_events')
     .select('id, npc_key, round, payload')
     .eq('session_id', sessionId)
-    .eq('event_type', 'npc.handoff.promised')
-    .lt('round', currentRound);
+    .eq('event_type', 'npc.handoff.promised');
   if (error) throw new Error('HANDOFF_LOAD_FAILED');
   // npc.turn.completed is the durable recovery source. The explicit promised
   // event is written after the atomic command commit; if that best-effort write
@@ -555,8 +621,7 @@ export async function deliverPendingNpcHandoffs(sessionId: string, currentRound:
     .from('game_events')
     .select('id, npc_key, round, payload')
     .eq('session_id', sessionId)
-    .eq('event_type', 'npc.turn.completed')
-    .lt('round', currentRound);
+    .eq('event_type', 'npc.turn.completed');
   if (completedError) throw new Error('HANDOFF_SOURCE_LOAD_FAILED');
   const { data: sent, error: sentError } = await supabase
     .from('game_events')
@@ -611,7 +676,7 @@ export async function deliverPendingNpcHandoffs(sessionId: string, currentRound:
   if (receivedError) throw new Error('HANDOFF_RECEIVED_LOAD_FAILED');
   const receivedSentIds = new Set((received ?? []).map((event) => String((event.payload as Record<string, unknown>)?.sourceEventId ?? '')));
   for (const event of sent ?? []) {
-    if (event.round >= currentRound || receivedSentIds.has(String(event.id))) continue;
+    if (receivedSentIds.has(String(event.id))) continue;
     const payload = event.payload as Record<string, unknown>;
     await appendGameEvent(sessionId, currentRound, 'npc.handoff.received', {
       sourceEventId: event.id,
@@ -698,6 +763,7 @@ export function toPlayerVisibleChatMessages(messages: StoredChatMessage[]): Play
     const publicMetadata: Record<string, unknown> = {};
     if (typeof metadata.channel === 'string' && metadata.channel.length <= 32) publicMetadata.channel = metadata.channel;
     if (typeof metadata.deliveryStatus === 'string' && metadata.deliveryStatus.length <= 32) publicMetadata.deliveryStatus = metadata.deliveryStatus;
+    if (metadata.readStatus === 'read') publicMetadata.readStatus = 'read';
     if (Array.isArray(metadata.emailAttachments)) {
       const attachments = metadata.emailAttachments.flatMap((attachment) => {
         if (!attachment || typeof attachment !== 'object' || Array.isArray(attachment)) return [];
@@ -797,6 +863,7 @@ const REVIEW_EVENT_FIELDS: Record<string, readonly string[]> = {
   'npc.message.unanswered': ['npcId', 'channel', 'intent', 'responseChance', 'emailAttachmentCount'],
   'npc.call.unanswered': ['npcId', 'channel', 'outcome'],
   'npc.call.connected': ['npcId', 'channel', 'outcome'],
+  'npc.call.ended': ['npcId'],
   'npc.handoff.promised': ['sourceCommandId', 'sourceNpcId', 'targetNpcId', 'summary'],
   'npc.handoff.sent': ['sourceEventId', 'promiseKey', 'sourceNpcId', 'targetNpcId', 'summary'],
   'npc.handoff.received': ['sourceEventId', 'sourceNpcId', 'targetNpcId', 'summary'],
