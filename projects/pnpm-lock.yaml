@@ -131,6 +131,9 @@ importers:
       input-otp:
         specifier: ^1.4.2
         version: 1.4.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      jszip:
+        specifier: 3.10.2
+        version: 3.10.2
       lucide-react:
         specifier: ^0.468.0
         version: 0.468.0(react@19.2.3)
@@ -161,6 +164,9 @@ importers:
       recharts:
         specifier: 2.15.4
         version: 2.15.4(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      saxes:
+        specifier: 5.0.1
+        version: 5.0.1
       sonner:
         specifier: ^2.0.7
         version: 2.0.8(@types/react@19.2.10)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)

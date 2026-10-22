@@ -17,6 +17,8 @@ export const previewEndReasonSchema = z.enum([
 ]);
 export const previewNodeSchema = z.enum(['N1', 'N2', 'N3', 'N4', 'BLOCKED']);
 export const previewMessageResponseActionSchema = z.enum(['reply', 'read_no_reply']);
+export const previewCustomerActivityTypeSchema = z.enum(['technical_meeting', 'case_site_visit', 'company_visit']);
+export const previewCustomerActivityStatusSchema = z.enum(['pending', 'planning', 'submitted']);
 export const previewReadNoReplyReasonCodeSchema = z.enum([
   'natural_closure', 'no_new_value', 'repeated_follow_up', 'not_responsible', 'current_priority_low', 'unwilling_to_advance',
 ]);
@@ -80,6 +82,11 @@ export const previewAiRequestSchema = z.discriminatedUnion('action', [
     if (!value.adjustments && !value.appointments) context.addIssue({ code: z.ZodIssueCode.custom, message: '测试调节至少需要 NPC 或预约调节' });
   }),
   commonRequestSchema.extend({ action: z.literal('test_adjust_appointments'), appointments: previewAppointmentAdjustmentsSchema }),
+  commonRequestSchema.extend({ action: z.literal('customer_activity_start'), taskId: z.string().min(1).max(512) }),
+  commonRequestSchema.extend({ action: z.literal('customer_activity_save'), taskId: z.string().min(1).max(512), draft: z.string().max(12_000) }),
+  commonRequestSchema.extend({ action: z.literal('customer_activity_submit'), taskId: z.string().min(1).max(512), draft: z.string().max(12_000) }),
+  commonRequestSchema.extend({ action: z.literal('customer_activity_end_conversation'), npcId: previewNpcIdSchema, channel: previewChannelSchema }),
+  commonRequestSchema.extend({ action: z.literal('customer_activity_sync') }),
   commonRequestSchema.extend({ action: z.literal('reset') }),
 ]);
 export type PreviewAiRequest = z.infer<typeof previewAiRequestSchema>;
@@ -107,7 +114,30 @@ const meetingStatusSchema = z.object({
   awaitingFinalReplyFrom: z.literal('player').optional(),
   turn: z.number().int().min(0),
   completedTasks: z.array(previewVisitTaskSchema),
+  historyMessageIds: z.array(z.string().min(1).max(200)).max(100).optional(),
 });
+const previewCustomerActivityTaskSchema = z.object({
+  id: z.string().min(1).max(512),
+  conversationId: z.string().min(1).max(200),
+  npcId: previewNpcIdSchema,
+  type: previewCustomerActivityTypeSchema,
+  summary: z.string().min(1).max(300),
+  basis: z.array(z.string().min(1).max(400)).max(2),
+  status: previewCustomerActivityStatusSchema,
+  createdAt: z.number().int().nonnegative(),
+  startedAt: z.number().int().nonnegative().optional(),
+  deadlineAt: z.number().int().nonnegative().optional(),
+  draft: z.string().max(12_000),
+  submittedAt: z.number().int().nonnegative().optional(),
+  submitReason: z.enum(['manual', 'timeout']).optional(),
+  evaluation: z.object({ overallEvaluation: z.string().min(1).max(600) }).strict().optional(),
+  evaluatedAt: z.number().int().nonnegative().optional(),
+}).strict();
+const previewCustomerActivitiesSchema = z.object({
+  version: z.literal(1),
+  serverNow: z.number().int().nonnegative(),
+  tasks: z.array(previewCustomerActivityTaskSchema).max(100),
+}).strict();
 /** Public display cue only. The underlying relationship scores remain server-only. */
 export const previewNpcExpressionSchema = z.enum(['angry', 'serious', 'calm', 'pleasant', 'very_happy']);
 /**
@@ -127,7 +157,7 @@ export type PreviewNpcTestState = z.infer<typeof previewNpcTestStateSchema>;
 export const previewAiResponseSchema = z.object({
   previewSessionId: z.string().regex(/^[A-Za-z0-9_-]{20,128}$/),
   version: z.number().int().min(0),
-  action: z.enum(['plan', 'message', 'wechat_request', 'phone_connect', 'visit_preparation', 'brief_visit', 'start_visit', 'visit_turn', 'end_visit', 'test_adjust_npcs', 'test_adjust_appointments', 'reset']),
+  action: z.enum(['plan', 'message', 'wechat_request', 'phone_connect', 'visit_preparation', 'brief_visit', 'start_visit', 'visit_turn', 'end_visit', 'test_adjust_npcs', 'test_adjust_appointments', 'customer_activity_start', 'customer_activity_save', 'customer_activity_submit', 'customer_activity_end_conversation', 'customer_activity_sync', 'reset']),
   content: z.string().max(2_000).nullable().optional(),
   /** Message delivery state. The internal reason for a read-without-reply is never returned here. */
   responseAction: previewMessageResponseActionSchema.optional(),
@@ -149,6 +179,7 @@ export const previewAiResponseSchema = z.object({
   meeting: meetingStatusSchema.optional(),
   npcExpression: previewNpcExpressionSchema.optional(),
   npcTestStates: z.array(previewNpcTestStateSchema).max(5).optional(),
+  customerActivities: previewCustomerActivitiesSchema.optional(),
 }).superRefine((value, context) => {
   if (value.action !== 'message') return;
   if (!value.responseAction) {

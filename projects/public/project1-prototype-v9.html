@@ -392,7 +392,7 @@ body:before{background:radial-gradient(900px 420px at 12% 0%,#dcecff 0,transpare
 @media(max-width:780px){.network-canvas{height:490px;min-height:490px}.network-lines{display:block}.network-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(3,140px);gap:18px 12px;height:100%;min-height:0}.network-grid .person-node,.network-grid .person-node:first-child{flex:none;min-height:120px}.network-grid .person-node:first-child{width:min(76%,250px);justify-self:center}.person-node .person-head{grid-template-columns:42px 1fr}.person-node .person-avatar{width:42px;height:42px}}
 @media(max-width:480px){.network-canvas{height:540px;min-height:540px}.network-grid{grid-template-rows:repeat(3,160px)}.network-grid .person-node{width:100%;min-height:145px}.network-grid .person-node:first-child{min-height:126px}.person-node .person-head{grid-template-columns:42px 1fr}}
 /* The live visit intentionally leaves the workbench behind: scene, person, dialogue and free input only. */
-.visit-app,.visit-app .shell{min-height:100svh;max-width:none}.visit-immersive{position:relative;isolation:isolate;min-height:100svh;overflow:hidden;display:flex;align-items:stretch;color:#f7f9ff;background:linear-gradient(135deg,#33465c,#1b2836 55%,#0d141d);background-size:cover;background-position:center}.visit-immersive:before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,rgba(3,10,20,.34),rgba(3,10,20,.06) 55%,rgba(3,10,20,.35)),linear-gradient(0deg,rgba(3,9,18,.68),transparent 48%)}.visit-immersive-body{width:min(1500px,100%);min-height:100svh;margin:auto;padding:24px clamp(18px,4vw,64px);display:grid;grid-template-rows:auto 1fr auto;gap:18px}.visit-hud{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;pointer-events:none}.visit-place,.visit-status{background:rgba(7,16,30,.7);border:1px solid rgba(196,218,255,.23);box-shadow:0 10px 30px rgba(0,0,0,.2),inset 0 1px 0 rgba(255,255,255,.09);backdrop-filter:blur(10px);border-radius:12px;padding:10px 13px}.visit-place{max-width:300px}.visit-place span,.visit-status span{display:block;font-size:11px;color:#b5c8e5}.visit-place strong{display:block;margin-top:2px;font-size:16px}.visit-status{display:flex;gap:12px;align-items:center}.visit-status b{font-size:12px;color:#f1d494}.visit-stage{position:relative;min-height:0;display:flex;align-items:flex-end}.visit-person{width:clamp(190px,32vw,470px);align-self:flex-end;margin-left:clamp(0px,4vw,80px);filter:drop-shadow(0 18px 18px rgba(0,0,0,.34));animation:visitPersonIn .65s var(--ease) both}.visit-portrait{width:100%;aspect-ratio:3/4;overflow:hidden;display:flex;align-items:flex-end;justify-content:center;background:linear-gradient(180deg,rgba(39,69,101,.15),rgba(4,12,23,.55));border-radius:48% 48% 8px 8px}.visit-portrait img{position:static;width:100%;height:100%;object-fit:cover;object-position:center top;border-radius:inherit}.visit-portrait .avatar-fallback{position:static;width:100%;height:100%;font-size:70px;background:linear-gradient(150deg,#536e91,#1b2c42)}.visit-dialogue{width:min(720px,58vw);margin:0 0 clamp(6px,5vh,54px) clamp(-35px,-2vw,0px);background:rgba(249,252,255,.96);color:#17243a;border:1px solid rgba(222,235,255,.92);border-radius:20px;box-shadow:0 18px 46px rgba(0,0,0,.3);overflow:hidden;animation:visitDialogueIn .52s .18s var(--ease) both}.visit-dialogue-head{padding:10px 16px 0;font-size:12px;font-weight:900;color:#2c5baf}.visit-dialogue-copy{min-height:102px;padding:8px 16px 14px;font-size:clamp(16px,1.55vw,22px);line-height:1.6;white-space:pre-wrap}.visit-dialogue-copy.empty{display:flex;align-items:center;color:#506684;font-size:16px}.visit-last-player{padding:9px 16px;background:#edf4ff;color:#34577f;font-size:12px;line-height:1.5;border-top:1px solid #dfeafb}.visit-final-notice{margin:0 16px 12px;color:#875d15;font-size:12px}.visit-composer{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:9px;padding:12px 14px;border-top:1px solid #dfe9f6;background:#fff}.visit-composer textarea{min-width:0;min-height:52px;resize:vertical;border:1px solid #c7d8ef;border-radius:11px;padding:10px 12px;color:#17243a;outline:none;line-height:1.5}.visit-composer textarea:focus{border-color:#6593e8;box-shadow:0 0 0 3px rgba(47,107,255,.14)}.visit-composer-actions{display:flex;align-items:flex-end;gap:7px}.visit-entry{position:absolute;inset:0;z-index:4;display:grid;place-items:center;background:rgba(5,13,24,.42);backdrop-filter:blur(3px);pointer-events:none;animation:visitEntryOut .95s var(--ease) both}.visit-entry span{padding:11px 16px;border-radius:999px;background:rgba(8,18,33,.75);border:1px solid rgba(211,228,255,.3);font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.24)}@keyframes visitPersonIn{from{opacity:0;transform:translateX(-42px)}to{opacity:1;transform:none}}@keyframes visitDialogueIn{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}@keyframes visitEntryOut{0%,55%{opacity:1}100%{opacity:0}}@media(max-width:780px){.visit-immersive,.visit-immersive-body{min-height:100dvh}.visit-immersive-body{padding:14px;gap:10px}.visit-place{padding:8px 10px}.visit-place strong{font-size:14px}.visit-status{padding:8px 10px;gap:7px}.visit-status span{font-size:10px}.visit-stage{align-items:flex-end}.visit-person{width:42vw;min-width:140px;margin-left:-16px}.visit-dialogue{width:min(100%,67vw);margin:0 0 8px -30px;border-radius:15px}.visit-dialogue-copy{min-height:90px;padding:7px 12px 11px;font-size:15px}.visit-composer{grid-template-columns:1fr;padding:10px}.visit-composer-actions{justify-content:space-between}.visit-composer-actions .btn{flex:1;padding:10px 8px}.visit-last-player{padding:8px 12px;font-size:11px}}@media(max-width:480px){.visit-hud{gap:7px}.visit-place{max-width:58vw}.visit-status b{font-size:11px}.visit-stage{min-height:280px}.visit-person{width:52vw;margin-left:-26px}.visit-dialogue{width:68vw;margin-left:-42px}.visit-dialogue-copy.empty{font-size:13px}.visit-composer textarea{min-height:62px}}
+.visit-app,.visit-app .shell{min-height:100svh;max-width:none}.visit-immersive{position:relative;isolation:isolate;min-height:100svh;overflow:hidden;display:flex;align-items:stretch;color:#f7f9ff;background:linear-gradient(135deg,#33465c,#1b2836 55%,#0d141d);background-size:cover;background-position:center}.visit-immersive:before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,rgba(3,10,20,.34),rgba(3,10,20,.06) 55%,rgba(3,10,20,.35)),linear-gradient(0deg,rgba(3,9,18,.68),transparent 48%)}.visit-immersive-body{width:min(1500px,100%);min-height:100svh;margin:auto;padding:24px clamp(18px,4vw,64px);display:grid;grid-template-rows:auto auto 1fr;gap:18px}.visit-hud{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;pointer-events:none}.visit-place,.visit-status{background:rgba(7,16,30,.7);border:1px solid rgba(196,218,255,.23);box-shadow:0 10px 30px rgba(0,0,0,.2),inset 0 1px 0 rgba(255,255,255,.09);backdrop-filter:blur(10px);border-radius:12px;padding:10px 13px}.visit-place{max-width:300px}.visit-place span,.visit-status span{display:block;font-size:11px;color:#b5c8e5}.visit-place strong{display:block;margin-top:2px;font-size:16px}.visit-status{display:flex;gap:12px;align-items:center}.visit-status b{font-size:12px;color:#f1d494}.visit-stage{position:relative;min-height:0;display:flex;align-items:flex-end}.visit-person{width:clamp(190px,32vw,470px);align-self:flex-end;margin-left:clamp(0px,4vw,80px);filter:drop-shadow(0 18px 18px rgba(0,0,0,.34));animation:visitPersonIn .65s var(--ease) both}.visit-portrait{width:100%;aspect-ratio:3/4;overflow:hidden;display:flex;align-items:flex-end;justify-content:center;background:linear-gradient(180deg,rgba(39,69,101,.15),rgba(4,12,23,.55));border-radius:48% 48% 8px 8px}.visit-portrait img{position:static;width:100%;height:100%;object-fit:cover;object-position:center top;border-radius:inherit}.visit-portrait .avatar-fallback{position:static;width:100%;height:100%;font-size:70px;background:linear-gradient(150deg,#536e91,#1b2c42)}.visit-dialogue{width:min(720px,58vw);margin:0 0 clamp(6px,5vh,54px) clamp(-35px,-2vw,0px);background:rgba(249,252,255,.96);color:#17243a;border:1px solid rgba(222,235,255,.92);border-radius:20px;box-shadow:0 18px 46px rgba(0,0,0,.3);overflow:hidden;animation:visitDialogueIn .52s .18s var(--ease) both}.visit-dialogue-head{padding:10px 16px 0;font-size:12px;font-weight:900;color:#2c5baf}.visit-dialogue-copy{min-height:102px;padding:8px 16px 14px;font-size:clamp(16px,1.55vw,22px);line-height:1.6;white-space:pre-wrap}.visit-dialogue-copy.empty{display:flex;align-items:center;color:#506684;font-size:16px}.visit-last-player{padding:9px 16px;background:#edf4ff;color:#34577f;font-size:12px;line-height:1.5;border-top:1px solid #dfeafb}.visit-final-notice{margin:0 16px 12px;color:#875d15;font-size:12px}.visit-composer{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:9px;padding:12px 14px;border-top:1px solid #dfe9f6;background:#fff}.visit-composer textarea{min-width:0;min-height:52px;resize:vertical;border:1px solid #c7d8ef;border-radius:11px;padding:10px 12px;color:#17243a;outline:none;line-height:1.5}.visit-composer textarea:focus{border-color:#6593e8;box-shadow:0 0 0 3px rgba(47,107,255,.14)}.visit-composer-actions{display:flex;align-items:flex-end;gap:7px}.visit-entry{position:absolute;inset:0;z-index:4;display:grid;place-items:center;background:rgba(5,13,24,.42);backdrop-filter:blur(3px);pointer-events:none;animation:visitEntryOut .95s var(--ease) both}.visit-entry span{padding:11px 16px;border-radius:999px;background:rgba(8,18,33,.75);border:1px solid rgba(211,228,255,.3);font-size:13px;box-shadow:0 10px 30px rgba(0,0,0,.24)}@keyframes visitPersonIn{from{opacity:0;transform:translateX(-42px)}to{opacity:1;transform:none}}@keyframes visitDialogueIn{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}@keyframes visitEntryOut{0%,55%{opacity:1}100%{opacity:0}}@media(max-width:780px){.visit-immersive,.visit-immersive-body{min-height:100dvh}.visit-immersive-body{padding:14px;gap:10px}.visit-place{padding:8px 10px}.visit-place strong{font-size:14px}.visit-status{padding:8px 10px;gap:7px}.visit-status span{font-size:10px}.visit-stage{align-items:flex-end}.visit-person{width:42vw;min-width:140px;margin-left:-16px}.visit-dialogue{width:min(100%,67vw);margin:0 0 8px -30px;border-radius:15px}.visit-dialogue-copy{min-height:90px;padding:7px 12px 11px;font-size:15px}.visit-composer{grid-template-columns:1fr;padding:10px}.visit-composer-actions{justify-content:space-between}.visit-composer-actions .btn{flex:1;padding:10px 8px}.visit-last-player{padding:8px 12px;font-size:11px}}@media(max-width:480px){.visit-hud{gap:7px}.visit-place{max-width:58vw}.visit-status b{font-size:11px}.visit-stage{min-height:280px}.visit-person{width:52vw;margin-left:-26px}.visit-dialogue{width:68vw;margin-left:-42px}.visit-dialogue-copy.empty{font-size:13px}.visit-composer textarea{min-height:62px}}
 /* The training board has two working areas: relationship map and active workspace. */
 .workspace{grid-template-columns:minmax(410px,43fr) minmax(450px,57fr)}
 .project-notice-card{display:grid;min-width:210px;max-width:300px;gap:2px;padding:9px 13px;text-align:left;color:#17355f;background:linear-gradient(145deg,#fffdf6,#fff5df);border:1px solid #edd9ab;border-radius:11px;box-shadow:0 6px 16px rgba(129,91,24,.1);cursor:pointer}.project-notice-card span,.project-notice-card small{font-size:10px;color:#80683f}.project-notice-card strong{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.countdown-card{display:flex;align-items:center;gap:7px;padding:8px 12px;border:1px solid #d2e4ff;border-radius:11px;background:#f5f9ff;color:#22589d}.countdown-card>span{font-size:22px}.countdown-card small{display:block;font-size:10px;color:#6680a2}.countdown-card strong{display:block;font-size:18px;letter-spacing:.05em}.countdown-card.paused{color:#9b6815;background:#fff8e8;border-color:#eed7a4}.tender-notice{color:#314968;line-height:1.7}.tender-notice-kicker{font-size:11px;color:#9c6b19;letter-spacing:.12em}.tender-notice-budget{margin:12px 0;padding:10px 12px;border-radius:8px;background:#fff6df;color:#86601f}.notice-section{margin-top:14px;border-top:1px solid #e2e9f3;padding-top:11px}.notice-section h4{margin:0;color:#193b6d}.notice-section ul{margin:7px 0 0;padding-left:20px}.notice-section li{margin:3px 0}
@@ -474,7 +474,7 @@ const DemoOnlyApi = {
  let activeUserId=readIdentityUserId(),boundSessionToken=getSessionToken(),identityGeneration=0;
  let competitorProfiles=[],competitorProfilesLoadStatus='idle',competitorProfilesLoadError='',competitorProfilesRevision=null,competitorProfilesRequestGeneration=0,competitorModalOpen=false,competitorSelectedCompanyId=null,competitorModalBodyMarkup=null;
  let authTransitionPending=false,authTransitionOldToken='';
- let activeRequestSerial=0,activeRequestController=null;
+  let activeRequestSerial=0,activeRequestController=null,activeRequestAction='';
  const app=document.getElementById('app'),modalRoot=document.getElementById('modal-root'),toastRoot=document.getElementById('toast-root');
  const npcIds=new Set(MockData.npcs.map(n=>n.id));
  const COMMON_WECHAT_EMOJIS=Object.freeze(['😀','🙂','😊','👍','👏','🙏','🎉','💡','✅','🙌','🤝','⏳','✨','💪','😄','📌']);
@@ -489,14 +489,14 @@ const DemoOnlyApi = {
   {id:'handshake',name:'握手',symbol:'🤝',hint:'合作愉快'}
  ]);
  const TIMER_DURATION_MS=20*60*1000,TIMER_REFILL_INTERVAL_MS=5*60*1000,TIMER_REFILL_POINTS=5,TIMER_ACTION_POINT_CAP=28;
- const freshTimer=()=>({elapsedMs:0,lastResumedAt:null,paused:false,refillsApplied:0,expired:false,settled:false,started:false});
+ const freshTimer=()=>({elapsedMs:0,lastResumedAt:null,paused:false,refillsApplied:0,expired:false,settled:false,started:false,customerActivityTaskId:null,customerActivityPhase:null,customerActivityUiTaskId:null});
  let expressionCaret={start:0,end:0};
  const blankConversations=()=>Object.fromEntries(MockData.npcs.map(n=>[n.id,{email:[],work_phone:[],wechat:[],meeting:[],postal:[]}]))
 const normalizeNpcMap=(value,fallback={})=>Object.fromEntries(MockData.npcs.map(n=>[n.id,value&&Object.prototype.hasOwnProperty.call(value,n.id)?value[n.id]:fallback[n.id]]));
 const blankNpcTestStates=()=>Object.fromEntries(MockData.npcs.map(n=>[n.id,{support:0,pleasantness:50,effectiveContactCount:0,node:'N1'}]));
 const normalizeNpcTestStates=value=>Object.fromEntries(MockData.npcs.map(n=>{const item=value?.[n.id]||{},node=['N1','N2','N3','N4','BLOCKED'].includes(item.node)?item.node:'N1';return [n.id,{support:clampTestInteger(item.support,0,100,0),pleasantness:clampTestInteger(item.pleasantness,0,100,50),effectiveContactCount:clampTestInteger(item.effectiveContactCount,0,100,0),node}]}));
  const TEST_APPOINTMENT_STATUSES=['none','pending','accepted','rejected','later','completed','cancelled'];
- const PREVIEW_RETRY_ACTIONS=new Set(['plan','message','wechat_request','phone_connect','visit_preparation','brief_visit','start_visit','visit_turn','end_visit','test_adjust_npcs','test_adjust_appointments','reset']);
+ const PREVIEW_RETRY_ACTIONS=new Set(['plan','message','wechat_request','phone_connect','visit_preparation','brief_visit','start_visit','visit_turn','end_visit','customer_activity_start','customer_activity_save','customer_activity_submit','customer_activity_sync','customer_activity_end_conversation','test_adjust_npcs','test_adjust_appointments','reset']);
  function normalizeRetryRequest(value){
   if(!value||typeof value!=='object'||!PREVIEW_RETRY_ACTIONS.has(value.action)||typeof value.commandId!=='string'||!value.payload||typeof value.payload!=='object')return null;
   return {action:value.action,commandId:value.commandId,payload:value.payload,kind:typeof value.kind==='string'?value.kind:value.action,meta:value.meta&&typeof value.meta==='object'?value.meta:null};
@@ -509,10 +509,11 @@ const initialState=()=>({
   screen:'projects',playMode:'solo',actionPoints:28,totalSpent:0,timer:freshTimer(),
   selectedNpcId:null,workspaceMode:'overview',channel:null,phoneActive:false,phoneAttempts:{},phoneHistory:{},
   wechat:{},conversations:blankConversations(),
-  appointments:[],meeting:null,npcExpressions:{},visitPreparations:{},visitPreparationFeedback:{},directVisitIntent:{},completedVisits:[],postal:[],
+  appointments:[],meeting:null,meetingDraft:'',npcExpressions:{},visitPreparations:{},visitPreparationFeedback:{},directVisitIntent:{},completedVisits:[],postal:[],
   workPlans:{global:'',byNpc:{}},planAnalysis:{global:null,byNpc:{}},submittedPlans:{global:null,byNpc:{}},publicIntel:{},
   infoUpdates:[{created:'项目开始',body:'项目已开始倒计时。联系人网络与整体工作计划现已开放。'}],
   notifications:[],competitorEventsSeen:[],result:null,
+  customerActivities:{version:1,tasks:[]},
   coachForceSimulation:false,lastBriefResult:null,npcTestStates:blankNpcTestStates(),previewSessionId:null,previewVersion:0,aiStatus:'',aiError:'',aiErrorCanRefresh:false,aiRetry:null
 });
 let stateOwnerUserId=activeUserId;
@@ -589,6 +590,7 @@ function normalizeState(saved){
   next.wechat=normalizeNpcMap(raw.wechat,base.wechat);
   next.appointments=normalizeAppointments(raw.appointments);
  next.npcTestStates=normalizeNpcTestStates(raw.npcTestStates);
+ next.customerActivities=raw.customerActivities&&Array.isArray(raw.customerActivities.tasks)?{version:Number.isInteger(raw.customerActivities.version)?raw.customerActivities.version:1,tasks:raw.customerActivities.tasks.filter(item=>item&&typeof item.id==='string'&&typeof item.status==='string')}:base.customerActivities;
  next.phoneAttempts=Object.fromEntries(MockData.npcs.map(n=>[n.id,Math.max(0,Math.floor(Number(raw.phoneAttempts?.[n.id])||0))]));
  next.phoneHistory=normalizePhoneHistory(raw.phoneHistory,next.phoneAttempts);
  if(next.aiRetry?.kind==='phone_message'){
@@ -604,6 +606,7 @@ function normalizeState(saved){
  next.planAnalysis={...base.planAnalysis,...(raw.planAnalysis||{}),byNpc:normalizeNpcMap(raw.planAnalysis?.byNpc,base.planAnalysis.byNpc)};
  next.submittedPlans={...base.submittedPlans,...(raw.submittedPlans||{}),byNpc:normalizeNpcMap(raw.submittedPlans?.byNpc,base.submittedPlans.byNpc)};
  next.meeting=raw.meeting&&npcIds.has(raw.meeting.npcId)?{...raw.meeting,completedTasks:Array.isArray(raw.meeting.completedTasks)?raw.meeting.completedTasks:[]}:null;
+  next.meetingDraft=typeof raw.meetingDraft==='string'?raw.meetingDraft.slice(0,2000):'';
  next.timer=normalizeTimer(raw.timer,next.meeting);
  if(next.result&&!Array.isArray(next.result.attitudes)||next.result?.attitudes?.some(a=>!npcIds.has(a.id)))next.result=null;
  return next;
@@ -612,11 +615,12 @@ function normalizeTimer(value,meeting){
  const raw=value&&typeof value==='object'?value:{},now=Date.now();
  const started=Boolean(raw.started),elapsedMs=started?Math.max(0,Math.min(TIMER_DURATION_MS,Math.floor(Number(raw.elapsedMs)||0))):0;
  const paused=Boolean(meeting)||Boolean(raw.paused);
- return {elapsedMs,lastResumedAt:started&&!paused&&(Number.isFinite(Number(raw.lastResumedAt))?Number(raw.lastResumedAt):now),paused,refillsApplied:Math.max(0,Math.min(4,Math.floor(Number(raw.refillsApplied)||0))),expired:started&&(Boolean(raw.expired)||elapsedMs>=TIMER_DURATION_MS),settled:Boolean(raw.settled),started};
+ return {elapsedMs,lastResumedAt:started&&!paused&&(Number.isFinite(Number(raw.lastResumedAt))?Number(raw.lastResumedAt):now),paused,refillsApplied:Math.max(0,Math.min(4,Math.floor(Number(raw.refillsApplied)||0))),expired:started&&(Boolean(raw.expired)||elapsedMs>=TIMER_DURATION_MS),settled:Boolean(raw.settled),started,customerActivityTaskId:typeof raw.customerActivityTaskId==='string'?raw.customerActivityTaskId:null,customerActivityPhase:['planning','resumed','ui_paused'].includes(raw.customerActivityPhase)?raw.customerActivityPhase:null,customerActivityUiTaskId:typeof raw.customerActivityUiTaskId==='string'?raw.customerActivityUiTaskId:null};
 }
 function startCountdown(now=Date.now()){state.timer={...freshTimer(),started:true,lastResumedAt:now};save()}
-function syncCountdown(now=Date.now()){
+function syncCountdown(now=Date.now(),allowRecoveryAnchor=false){
  const timer=state.timer||freshTimer(now);state.timer=timer;
+ if(state.previewSessionId&&typeof previewRecoveryIsBlocking==='function'&&previewRecoveryIsBlocking()&&!allowRecoveryAnchor)return false;
  if(!timer.started||timer.paused||timer.expired)return false;
  const elapsedSinceResume=Math.max(0,now-Number(timer.lastResumedAt||now));
  if(!elapsedSinceResume)return false;
@@ -627,7 +631,7 @@ function syncCountdown(now=Date.now()){
  return true;
 }
 function pauseCountdown(){syncCountdown();state.timer.started=true;state.timer.paused=true;state.timer.lastResumedAt=null;save()}
-function resumeCountdown(turns=0){const timer=state.timer||freshTimer();timer.started=true;timer.elapsedMs=Math.min(TIMER_DURATION_MS,Math.max(0,timer.elapsedMs+Math.max(0,Math.floor(turns))*15*1000));const refillTarget=Math.min(4,Math.floor(timer.elapsedMs/TIMER_REFILL_INTERVAL_MS));if(refillTarget>timer.refillsApplied){state.actionPoints=Math.min(TIMER_ACTION_POINT_CAP,state.actionPoints+(refillTarget-timer.refillsApplied)*TIMER_REFILL_POINTS);timer.refillsApplied=refillTarget}timer.paused=false;timer.lastResumedAt=Date.now();if(timer.elapsedMs>=TIMER_DURATION_MS)timer.expired=true;save();return timer.expired}
+function resumeCountdown(turns=0){const timer=state.timer||freshTimer(),activityUiPaused=Boolean(timer.customerActivityUiTaskId);timer.started=true;timer.elapsedMs=Math.min(TIMER_DURATION_MS,Math.max(0,timer.elapsedMs+Math.max(0,Math.floor(turns))*15*1000));const refillTarget=Math.min(4,Math.floor(timer.elapsedMs/TIMER_REFILL_INTERVAL_MS));if(refillTarget>timer.refillsApplied){state.actionPoints=Math.min(TIMER_ACTION_POINT_CAP,state.actionPoints+(refillTarget-timer.refillsApplied)*TIMER_REFILL_POINTS);timer.refillsApplied=refillTarget}timer.paused=activityUiPaused;timer.lastResumedAt=activityUiPaused?null:Date.now();if(timer.elapsedMs>=TIMER_DURATION_MS)timer.expired=true;save();return timer.expired}
 function remainingCountdownMs(){syncCountdown();return Math.max(0,TIMER_DURATION_MS-(state.timer?.elapsedMs||0))}
 function formatCountdown(ms=remainingCountdownMs()){const seconds=Math.ceil(Math.max(0,ms)/1000);return `${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`}
 function loadState(userId){
@@ -664,7 +668,7 @@ function persistStateForUser(userId){
 function invalidateActiveRequest(){
  identityGeneration++;activeRequestSerial++;
  if(activeRequestController){try{activeRequestController.abort()}catch{}activeRequestController=null}
- requestBusy=false;
+  requestBusy=false;activeRequestAction='';
 }
 function invalidateCompetitorProfiles(){
  competitorProfilesRequestGeneration++;
@@ -684,12 +688,13 @@ function syncIdentitySnapshot(){
   invalidateCompetitorProfiles();
   activeUserId=nextUserId;stateOwnerUserId=nextUserId;boundSessionToken=nextToken;
   authTransitionOldToken=oldToken;authTransitionPending=Boolean(nextUserId&&(!nextToken||nextToken===oldToken));
-  state=loadState(nextUserId);restorePreviewSession(nextUserId);pendingConversation=null;
+   state=loadState(nextUserId);restorePreviewSession(nextUserId);invalidatePreviewRecovery();pendingConversation=null;
+  resetCustomerActivityComposerForContext();
   if(toastRoot)toastRoot.innerHTML='';
   changed=true;
  }else if(nextToken!==boundSessionToken){
   const oldToken=boundSessionToken;
-  invalidateActiveRequest();invalidateCompetitorProfiles();boundSessionToken=nextToken;
+   invalidateActiveRequest();invalidatePreviewRecovery();invalidateCompetitorProfiles();boundSessionToken=nextToken;
   if(authTransitionPending&&nextToken&&nextToken!==authTransitionOldToken)authTransitionPending=false;
   else if(!nextToken)authTransitionPending=true;
   else if(!oldToken&&nextToken&&authTransitionPending&&nextToken!==authTransitionOldToken)authTransitionPending=false;
@@ -715,12 +720,14 @@ async function accountScopedApiCall(action,payload={},options={}){
  return result===INVALIDATED_REQUEST||!userContextIsCurrent(context)?INVALIDATED_REQUEST:result;
 }
 function clearPreviewSession(){
+ const hadPreviewSession=Boolean(state.previewSessionId);
  state.previewSessionId=null;state.previewVersion=0;
  const key=scopedStorageKey(PREVIEW_SESSION_STORAGE_KEY,stateOwnerUserId);
  if(key)try{sessionStorage.removeItem(key)}catch{}
+ if(hadPreviewSession)resetCustomerActivityComposerForContext();
 }
 function clearAiRuntimeState(){
- state=initialState();stateOwnerUserId=activeUserId;pendingConversation=null;activePhoneCallId=null;clearPreviewSession();save();
+ state=initialState();stateOwnerUserId=activeUserId;pendingConversation=null;activePhoneCallId=null;resetCustomerActivityComposerForContext();clearPreviewSession();save();
 }
 restorePreviewSession(activeUserId);
 function save(){
@@ -730,12 +737,39 @@ function save(){
 function patch(x,renderNow=true){state={...state,...x};save();if(renderNow)render()}
 let requestBusy=false;
 let pendingConversation=null;
+ let previewRecoveryAttempt=0,previewRecoveryPromise=null,previewRecoveryError='',previewRecoveryPending=false,previewRecoveredKey=null;
+ function invalidatePreviewRecovery(){previewRecoveryAttempt++;previewRecoveryPromise=null;previewRecoveryError='';previewRecoveryPending=false;previewRecoveredKey=null}
+ function previewRecoveryKey(userId=stateOwnerUserId,sessionId=state.previewSessionId,generation=identityGeneration){return userId&&sessionId?`${userId}:${generation}:${sessionId}`:null}
+ function previewRecoveryIsReady(){return !state.previewSessionId||previewRecoveredKey===previewRecoveryKey()}
+ function previewRecoveryIsBlocking(){return Boolean(state.previewSessionId&&!previewRecoveryIsReady())}
+let customerActivityServerOffset=0;
+let customerActivityModalLocked=false;
+let customerActivityRenderedTaskKey='';
+let customerActivitySyncBusy=false;
+let customerActivitySaveBusy=false;
+let customerActivitySaveRequested=false;
+let customerActivityDraft='';
+let customerActivityDirty=false;
+let customerActivityError='';
+let customerActivitySaved=true;
+let customerActivityAction='';
+let customerActivitySeenIds=new Set();
+let customerActivityEndQueue=[];
+let customerActivityEndTimer=null;
+let customerActivitySaveTimer=null;
+let customerActivityAutosaveInterval=null;
+let customerActivityFinalFlushTimer=null;
+let customerActivityClockTimer=null;
+let customerActivityLastTimeoutSubmitId=null;
+let customerActivityLastSyncAt=0;
+let customerActivityGeneration=0;
 function apiErrorMessage(status,message){
  if(status===401)return '登录会话已失效，请重新登录后再试。';
  if(status===400)return message||'本次操作参数不完整，请检查后重试。';
  if(status===409)return '预览会话已在其他操作中更新，请刷新预览会话后重试。';
- if(status===404||status===410)return '预览会话已失效，本地进度已重置，请重试。';
- if(status===502||status===503)return 'AI 服务暂时不可用，请稍后重试。';
+  if(status===404||status===410)return '服务端未找到此预览会话；本地会话编号和进度已保留，请同步或稍后重试。';
+ if(status===502)return message||'AI 返回结果不符合预览协议，请重试。';
+ if(status===503)return 'AI 服务暂时不可用，请稍后重试。';
  return message||'网络请求失败，请检查网络后重试。';
 }
 function newPreviewCommandId(){return globalThis.crypto?.randomUUID?.()||`preview-${Date.now()}-${Math.random().toString(36).slice(2)}`}
@@ -784,13 +818,21 @@ async function readPreviewStream(response,onDelta){
 async function apiCall(action,payload={},options={}){
  const initiatingUserId=stateOwnerUserId,changed=syncIdentitySnapshot();
  if(changed||initiatingUserId!==activeUserId||stateOwnerUserId!==activeUserId){closeModal();render();return INVALIDATED_REQUEST}
- if(requestBusy){toast('AI 正在处理中，请稍候。','warn');return null}
  if(!initiatingUserId){state.aiError=apiErrorMessage(401);state.aiErrorCanRefresh=false;toast(state.aiError,'error');save();render();return null}
- const token=boundSessionToken;
- if(!token||authTransitionPending){state.aiError=apiErrorMessage(401);state.aiErrorCanRefresh=false;toast(state.aiError,'error');save();render();return authTransitionPending?INVALIDATED_REQUEST:null}
+  if(!boundSessionToken||authTransitionPending){state.aiError=apiErrorMessage(401);state.aiErrorCanRefresh=false;toast(state.aiError,'error');save();render();return authTransitionPending?INVALIDATED_REQUEST:null}
+  if(state.previewSessionId){
+   const recovered=await ensurePreviewSessionRecovered();
+   if(recovered===INVALIDATED_REQUEST)return INVALIDATED_REQUEST;
+   if(!recovered){state.aiError=previewRecoveryError||'预览会话尚未同步，暂不能提交操作。';state.aiErrorCanRefresh=false;save();render();return null}
+   const contextChanged=syncIdentitySnapshot();
+   if(contextChanged||initiatingUserId!==activeUserId||stateOwnerUserId!==activeUserId){closeModal();render();return INVALIDATED_REQUEST}
+  }
+  if(requestBusy){toast('AI 正在处理中，请稍候。','warn');return null}
+  const token=boundSessionToken;
+  if(!token||authTransitionPending){state.aiError=apiErrorMessage(401);state.aiErrorCanRefresh=false;toast(state.aiError,'error');save();render();return authTransitionPending?INVALIDATED_REQUEST:null}
  const commandId=options.commandId||newPreviewCommandId();
  const context={userId:activeUserId,token,generation:identityGeneration,serial:++activeRequestSerial};
- const controller=new AbortController();activeRequestController=controller;
+  const controller=new AbortController();activeRequestController=controller;activeRequestAction=action;
  state.aiRetry={action,commandId,payload,kind:options.retryKind||action,meta:options.retryMeta||null};
  requestBusy=true;
  state.aiStatus='AI 思考中…';state.aiError='';state.aiErrorCanRefresh=false;save();
@@ -810,14 +852,15 @@ async function apiCall(action,payload={},options={}){
    if(options.stream){const data=await readPreviewStream(response,content=>{if(requestContextIsCurrent(context))options.onDelta?.(content)});body={success:true,previewSessionId:data?.previewSessionId,version:data?.version,data}}
    else{body={};try{body=await response.json()}catch{}}
   if(!requestContextIsCurrent(context))return INVALIDATED_REQUEST;
-  if(body?.previewSessionId)state.previewSessionId=body.previewSessionId;
+   if(body?.previewSessionId&&body.previewSessionId!==state.previewSessionId){state.previewSessionId=body.previewSessionId;state.customerActivities={version:1,tasks:[]};invalidatePreviewRecovery();resetCustomerActivityComposerForContext()}
   if(Number.isFinite(body?.version))state.previewVersion=body.version;
   if(Number.isFinite(body?.data?.version))state.previewVersion=body.data.version;
-   if(body?.success===false)throw {status:response.status,message:body?.error||body?.message};
-  if(body?.previewSessionId)state.previewSessionId=body.previewSessionId;
+    if(body?.success===false)throw {status:response.status,message:body?.error||body?.message};
   const data=body?.data||{};
+   if(body?.previewSessionId)previewRecoveredKey=previewRecoveryKey();
+  if(data.customerActivities!==undefined)applyPreviewCustomerActivities(data.customerActivities,data.serverNow);
   if(data.npcTestStates!==undefined)applyPreviewNpcTestStates(data.npcTestStates);
-  else markTestNpcStateUnavailable('服务端未返回 NPC 当前值；已隐藏本地缓存值。请确认设计师权限后刷新。');
+  else if(!action.startsWith('customer_activity_'))markTestNpcStateUnavailable('服务端未返回 NPC 当前值；已隐藏本地缓存值。请确认设计师权限后刷新。');
   if(action==='message'){
    const normalized=normalizeMessageResponse(data,payload.channel);
    if(!normalized)throw {status:502,message:'服务端返回的消息结果不符合预览协议，请重试。'};
@@ -829,12 +872,334 @@ async function apiCall(action,payload={},options={}){
  }catch(error){
   if(!requestContextIsCurrent(context))return INVALIDATED_REQUEST;
   const message=apiErrorMessage(error?.status,error?.message);
-  if([404,410].includes(error?.status))clearAiRuntimeState();
+  if([404,409,410].includes(error?.status)){previewRecoveredKey=null;previewRecoveryError=error?.status===409?'预览会话版本已变化，请同步后继续。':previewRecoveryErrorMessage(error?.status,error?.message)}
   state.aiError=message;state.aiErrorCanRefresh=error?.status===409;toast(message,'error');return null;
  }finally{
-  if(requestContextIsCurrent(context)){requestBusy=false;activeRequestController=null;state.aiStatus='';save()}
+   if(requestContextIsCurrent(context)){requestBusy=false;activeRequestController=null;activeRequestAction='';state.aiStatus='';save()}
  }
 }
+
+function parsePreviewRecoverySnapshot(data,sessionId){
+ if(!data||typeof data!=='object'||data.previewSessionId!==sessionId||!Number.isInteger(data.version)||data.version<0||!data.conversations||typeof data.conversations!=='object'||!Array.isArray(data.appointments)||!data.wechat||typeof data.wechat!=='object')return null;
+ const channelMap={email:['email','邮件'],wechat:['wechat','微信'],wechat_request:['wechat','微信'],work_phone:['work_phone','电话'],visit:['meeting','拜访']},conversations=blankConversations();
+ for(const person of MockData.npcs){
+  const messages=data.conversations[person.id];if(!Array.isArray(messages))return null;
+  for(const message of messages){
+   const mapped=channelMap[message?.channel];if(!mapped||!['player','npc'].includes(message?.role)||typeof message?.text!=='string'||typeof message?.messageId!=='string')return null;
+   const [key,label]=mapped,local={role:message.role,channel:label,text:message.text,messageId:message.messageId};
+   if(message.attachment&&typeof message.attachment==='object'&&typeof message.attachment.title==='string')local.attachment=`${message.attachment.title}${message.attachment.viewed===true?' · 对方已查看':''}${message.attachment.impact?`；影响：${message.attachment.impact}`:''}`;
+   if(message.delivery&&typeof message.delivery==='object'){
+    if(['reply','read_no_reply'].includes(message.delivery.responseAction))local.responseAction=message.delivery.responseAction;
+    if(message.delivery.readStatus==='read')local.readStatus='read';
+   }
+   conversations[person.id][key].push(local);
+  }
+  conversations[person.id].postal=Array.isArray(state.conversations?.[person.id]?.postal)?state.conversations[person.id].postal:[];
+ }
+ const appointments=normalizeAppointments(data.appointments);
+ const wechat=Object.fromEntries(MockData.npcs.map(person=>[person.id,['accepted','rejected'].includes(data.wechat[person.id])?data.wechat[person.id]:null]));
+ let activeMeeting=null;
+ if(data.activeMeeting!==null){
+  const meeting=data.activeMeeting;
+  if(!meeting||!npcIds.has(meeting.npcId)||!Number.isInteger(meeting.turn)||meeting.turn<0||typeof meeting.ended!=='boolean'||!Array.isArray(meeting.completedTasks)||meeting.completedTasks.some(task=>!['提问','质疑','挖坑'].includes(task))||(meeting.awaitingFinalReplyFrom!==undefined&&meeting.awaitingFinalReplyFrom!=='player'))return null;
+  if(meeting.historyMessageIds!==undefined&&(!Array.isArray(meeting.historyMessageIds)||meeting.historyMessageIds.length>100||meeting.historyMessageIds.some(id=>typeof id!=='string')))return null;
+  activeMeeting={npcId:meeting.npcId,turn:meeting.turn,completedTasks:[...meeting.completedTasks],ended:meeting.ended,historyMessageIds:Array.isArray(meeting.historyMessageIds)?[...meeting.historyMessageIds]:[],...(meeting.endReason?{endReason:meeting.endReason}:{}),...(meeting.awaitingFinalReplyFrom?{awaitingFinalReplyFrom:meeting.awaitingFinalReplyFrom}:{})};
+ }
+ if(data.customerActivities!==undefined&&(!data.customerActivities||data.customerActivities.version!==1||!Array.isArray(data.customerActivities.tasks)))return null;
+ const npcTestStates=parsePreviewNpcTestStates(data.npcTestStates);
+ if(data.npcTestStates!==undefined&&!npcTestStates)return null;
+ if(data.approvedVisitPreparationNpcIds!==undefined&&(!Array.isArray(data.approvedVisitPreparationNpcIds)||data.approvedVisitPreparationNpcIds.some(id=>!npcIds.has(id))))return null;
+ return {version:data.version,conversations,appointments,wechat,activeMeeting,customerActivities:data.customerActivities||null,npcTestStates,approvedVisitPreparationNpcIds:Array.isArray(data.approvedVisitPreparationNpcIds)?data.approvedVisitPreparationNpcIds:[]};
+}
+function pendingMeetingDraftForRecovery(){
+ if(typeof state.meetingDraft==='string'&&state.meetingDraft.trim())return state.meetingDraft;
+ const retry=state.aiRetry;
+ if(retry?.kind==='visit_turn'&&typeof retry.payload?.text==='string')return retry.payload.text;
+ const messages=state.meeting?state.conversations?.[state.meeting.npcId]?.meeting||[]:[];
+ const activeHistoryIds=Array.isArray(state.meeting?.historyMessageIds)?new Set(state.meeting.historyMessageIds):null;
+ return [...messages].reverse().find(message=>message.role==='player'&&message.failed&&typeof message.text==='string'&&(!activeHistoryIds||activeHistoryIds.has(message.messageId)))?.text||'';
+}
+function applyPreviewRecoverySnapshot(snapshot,recoveryDraft){
+ const previousMeeting=state.meeting?{...state.meeting}:null;
+ state.previewVersion=snapshot.version;state.conversations=snapshot.conversations;state.appointments=snapshot.appointments;state.wechat=snapshot.wechat;state.aiRetry=null;state.aiStatus='';
+ if(snapshot.approvedVisitPreparationNpcIds.length){
+  snapshot.approvedVisitPreparationNpcIds.forEach(id=>{if(!state.visitPreparations[id])state.visitPreparations[id]='已完成服务端拜访准备'});
+ }
+ if(snapshot.npcTestStates)applyPreviewNpcTestStates(snapshot.npcTestStates);
+ const active=snapshot.activeMeeting;
+ if(active&&!active.ended){
+  const appointment=snapshot.appointments.find(item=>item.npcId===active.npcId),previous=previousMeeting?.npcId===active.npcId?previousMeeting:null;
+  state.meeting={npcId:active.npcId,appointmentId:appointment?.id||previous?.appointmentId||null,location:appointment?.location||previous?.location||'客户单位',turn:active.turn,completedTasks:active.completedTasks,historyMessageIds:Array.isArray(active.historyMessageIds)?[...active.historyMessageIds]:[],awaitingFinalReplyFrom:active.awaitingFinalReplyFrom||null};
+  state.selectedNpcId=active.npcId;state.screen='game';state.timer.started=true;state.timer.paused=true;state.timer.lastResumedAt=null;
+  const activeHistoryIds=new Set(state.meeting.historyMessageIds),lastPlayer=[...state.conversations[active.npcId].meeting].reverse().find(message=>message.role==='player'&&activeHistoryIds.has(message.messageId));
+  state.meetingDraft=recoveryDraft&&recoveryDraft!==lastPlayer?.text?recoveryDraft:'';
+   if(snapshot.customerActivities)applyPreviewCustomerActivities(snapshot.customerActivities,snapshot.customerActivities.serverNow);
+ }else if(active?.ended&&previousMeeting?.npcId===active.npcId){
+  const appointment=snapshot.appointments.find(item=>item.npcId===active.npcId);
+  state.meeting={...previousMeeting,npcId:active.npcId,appointmentId:appointment?.id||previousMeeting.appointmentId||null,location:appointment?.location||previousMeeting.location||'客户单位',turn:active.turn,completedTasks:active.completedTasks,awaitingFinalReplyFrom:active.awaitingFinalReplyFrom||null};
+   state.selectedNpcId=active.npcId;state.screen='game';state.meetingDraft='';
+   if(snapshot.customerActivities)applyPreviewCustomerActivities(snapshot.customerActivities,snapshot.customerActivities.serverNow);
+  finishVisitFromServer({turn:active.turn,endReason:active.endReason,completedTasks:active.completedTasks});
+  if(snapshot.customerActivities)reconcileCustomerActivityTimer(snapshot.customerActivities.tasks);
+ }else if(previousMeeting){
+   if(snapshot.customerActivities)applyPreviewCustomerActivities(snapshot.customerActivities,snapshot.customerActivities.serverNow);
+  state.meeting=null;state.meetingDraft='';state.workspaceMode='overview';
+   if(state.timer?.paused&&!currentCustomerActivity())resumeCountdown(0);
+   if(snapshot.customerActivities)reconcileCustomerActivityTimer(snapshot.customerActivities.tasks);
+ }else if(active?.ended){
+   if(snapshot.customerActivities)applyPreviewCustomerActivities(snapshot.customerActivities,snapshot.customerActivities.serverNow);
+  state.meeting=null;
+  if(state.workspaceMode==='overview'&&npcIds.has(state.selectedNpcId))state.screen='game';
+  }else if(snapshot.customerActivities)applyPreviewCustomerActivities(snapshot.customerActivities,snapshot.customerActivities.serverNow);
+ state.aiError='';state.aiErrorCanRefresh=false;save();
+}
+function previewRecoveryErrorMessage(status,message){
+ if(status===401)return '登录会话已失效，请重新登录后再同步预览会话。';
+ if(status===404||status===410)return '服务端未找到此预览会话；本地会话编号和进度已保留，可重试同步。';
+ return message||'预览会话同步失败，本地进度已保留，可重试。';
+}
+function recoverPreviewSession({force=false}={}){
+ const changed=syncIdentitySnapshot();if(changed){closeModal();render();return Promise.resolve(INVALIDATED_REQUEST)}
+ const userId=activeUserId,token=boundSessionToken,sessionId=state.previewSessionId;
+ if(!userId||!token||authTransitionPending||!sessionId){previewRecoveryError='登录状态或预览会话尚未就绪。';return Promise.resolve(false)}
+ const key=previewRecoveryKey(userId,sessionId,identityGeneration);
+ if(previewRecoveryPromise)return previewRecoveryPromise;
+ if(!force&&previewRecoveredKey===key)return Promise.resolve(true);
+ if(requestBusy){
+  if(activeRequestAction?.startsWith('customer_activity_')||state.aiErrorCanRefresh){
+   activeRequestSerial++;try{activeRequestController?.abort()}catch{}activeRequestController=null;activeRequestAction='';requestBusy=false;
+   if(state.aiRetry?.action?.startsWith('customer_activity_'))state.aiRetry=null;
+   }else {previewRecoveryError='当前操作仍在处理中，完成后再同步。';return Promise.resolve(false)}
+ }
+ const recoveryDraft=pendingMeetingDraftForRecovery();if(recoveryDraft)state.meetingDraft=recoveryDraft;
+ state.aiRetry=null;save();
+ const attempt=++previewRecoveryAttempt,context={userId,token,generation:identityGeneration,serial:++activeRequestSerial},controller=new AbortController();
+ previewRecoveryPending=true;previewRecoveryError='';requestBusy=true;activeRequestController=controller;activeRequestAction='preview_recovery';
+ const promise=(async()=>{
+  try{
+   const response=await fetch(`/api/project-one-preview/ai?previewSessionId=${encodeURIComponent(sessionId)}`,{method:'GET',credentials:'same-origin',headers:{'x-session':token,'cache-control':'no-cache'},cache:'no-store',signal:controller.signal});
+   if(!requestContextIsCurrent(context)||attempt!==previewRecoveryAttempt||state.previewSessionId!==sessionId)return INVALIDATED_REQUEST;
+   let body={};try{body=await response.json()}catch{}
+   if(!response.ok)throw {status:response.status,message:body?.error||body?.message};
+   const snapshot=parsePreviewRecoverySnapshot(body?.data,sessionId);
+   if(!snapshot)throw {status:502,message:'恢复响应缺少有效的服务端会话状态。'};
+   if(!requestContextIsCurrent(context)||attempt!==previewRecoveryAttempt||state.previewSessionId!==sessionId)return INVALIDATED_REQUEST;
+   applyPreviewRecoverySnapshot(snapshot,recoveryDraft);
+   previewRecoveredKey=key;previewRecoveryError='';return true;
+  }catch(error){
+   if(!requestContextIsCurrent(context)||attempt!==previewRecoveryAttempt||state.previewSessionId!==sessionId)return INVALIDATED_REQUEST;
+   previewRecoveryError=previewRecoveryErrorMessage(error?.status,error?.message);state.aiStatus='';
+   if(state.meeting){state.meetingDraft=state.meetingDraft||recoveryDraft;state.conversations[state.meeting.npcId].meeting.forEach(message=>{if(message.role==='player'&&message.pending){message.pending=false;message.failed=true}})}
+   save();return false;
+  }finally{
+   if(attempt===previewRecoveryAttempt&&requestContextIsCurrent(context)){
+    previewRecoveryPending=false;requestBusy=false;activeRequestController=null;activeRequestAction='';
+    if(previewRecoveryPromise===promise)previewRecoveryPromise=null;
+    save();render();
+   }
+  }
+ })();
+ previewRecoveryPromise=promise;return promise;
+}
+function ensurePreviewSessionRecovered(){return recoverPreviewSession({force:false})}
+async function refreshPreview(){
+ const changed=syncIdentitySnapshot();if(changed){closeModal();render();return false}
+ if(!state.previewSessionId){previewRecoveryError='当前账号没有可恢复的预览会话；不会自动创建新会话。';render();return false}
+ const recovery=recoverPreviewSession({force:true});render();const result=await recovery;return result===true;
+}
+ const CUSTOMER_ACTIVITY_LABELS={technical_meeting:'技术交流会',case_site_visit:'案例现场参观',company_visit:'客户参观我们公司'};
+ const CUSTOMER_ACTIVITY_PLANNING_MS=300000;
+ function customerActivityEpoch(value){if(typeof value==='number'&&Number.isFinite(value))return value;if(typeof value==='string'){const parsed=Date.parse(value);return Number.isFinite(parsed)?parsed:null}return null}
+ function customerActivityServerNow(){return Date.now()+customerActivityServerOffset}
+ function customerActivityLocalTime(value){const timestamp=customerActivityEpoch(value);return timestamp===null?null:timestamp-customerActivityServerOffset}
+ function customerActivityTasks(){return Array.isArray(state.customerActivities?.tasks)?state.customerActivities.tasks:[]}
+ function customerActivitySeenKey(){return `preview-customer-activity-seen:${state.previewSessionId||'no-session'}`}
+ function loadCustomerActivitySeen(){try{const value=JSON.parse(sessionStorage.getItem(customerActivitySeenKey())||'[]');customerActivitySeenIds=new Set(Array.isArray(value)?value.filter(item=>typeof item==='string'):[])}catch{customerActivitySeenIds=new Set()}}
+ function saveCustomerActivitySeen(){try{sessionStorage.setItem(customerActivitySeenKey(),JSON.stringify([...customerActivitySeenIds]))}catch{}}
+ function resetCustomerActivityComposerForContext(){
+  customerActivityGeneration++;customerActivityDraft='';customerActivityDirty=false;customerActivitySaved=true;customerActivitySaveRequested=false;customerActivitySaveBusy=false;customerActivitySavePromise=null;customerActivitySyncBusy=false;customerActivityAction='';customerActivityError='';customerActivityLastTimeoutSubmitId=null;customerActivityLastSyncAt=0;customerActivityServerOffset=0;customerActivityEndQueue=[];customerActivityModalLocked=false;customerActivityRenderedTaskKey='';
+  if(customerActivitySaveTimer){clearTimeout(customerActivitySaveTimer);customerActivitySaveTimer=null}
+  if(customerActivityFinalFlushTimer){clearTimeout(customerActivityFinalFlushTimer);customerActivityFinalFlushTimer=null}
+  if(customerActivityEndTimer){clearTimeout(customerActivityEndTimer);customerActivityEndTimer=null}
+  if(modalRoot)modalRoot.innerHTML='';
+  loadCustomerActivitySeen();
+ }
+ function currentCustomerActivity(tasks=customerActivityTasks()){const ordered=[...tasks].sort((left,right)=>(customerActivityEpoch(left.createdAt)||0)-(customerActivityEpoch(right.createdAt)||0));return ordered.find(task=>task.status!=='submitted'||!customerActivitySeenIds.has(task.id))||null}
+function customerActivityPauseAnchor(task){
+ const createdAt=customerActivityLocalTime(task?.createdAt),checkpoint=state.timer?.lastResumedAt;
+ const anchor=typeof createdAt==='number'&&typeof checkpoint==='number'&&Number.isFinite(checkpoint)?Math.max(createdAt,checkpoint):typeof createdAt==='number'?createdAt:typeof checkpoint==='number'&&Number.isFinite(checkpoint)?checkpoint:Date.now();
+ return Math.min(Date.now(),anchor);
+}
+function pauseCountdownForCustomerActivity(task){
+ const timer=state.timer;
+ if(!timer?.started||timer.settled||timer.expired)return;
+ if(!timer.paused)syncCountdown(customerActivityPauseAnchor(task),true);
+ timer.paused=true;timer.lastResumedAt=null;timer.customerActivityTaskId=task.id;timer.customerActivityPhase='ui_paused';timer.customerActivityUiTaskId=task.id;
+}
+function resumeCountdownAfterCustomerActivity(){
+ const timer=state.timer;
+ if(!timer?.customerActivityUiTaskId)return;
+ timer.customerActivityUiTaskId=null;timer.customerActivityTaskId=null;timer.customerActivityPhase=null;
+ if(!timer.started||timer.settled||timer.expired||state.meeting)return;
+ timer.paused=false;timer.lastResumedAt=Date.now();
+}
+ function reconcileCustomerActivityTimer(tasks=customerActivityTasks()){
+ const task=currentCustomerActivity(tasks);
+ if(task)pauseCountdownForCustomerActivity(task);
+ else resumeCountdownAfterCustomerActivity();
+ save();
+ }
+ function applyPreviewCustomerActivities(envelope,serverNow){
+  if(!envelope||typeof envelope!=='object'||!Array.isArray(envelope.tasks))return false;
+  const timestamp=customerActivityEpoch(serverNow??envelope.serverNow);if(timestamp!==null)customerActivityServerOffset=timestamp-Date.now();
+  const version=Number.isInteger(envelope.version)?envelope.version:(state.customerActivities?.version||1);if(version<(state.customerActivities?.version||0))return false;
+  state.customerActivities={version,tasks:envelope.tasks};reconcileCustomerActivityTimer(envelope.tasks);save();presentCustomerActivityPlanner();return true;
+ }
+ async function customerActivityRequest(action,payload={}){
+  if(requestBusy)return null;
+  if(!state.previewSessionId){customerActivityError='尚未建立预览会话，活动状态将在下一次同步时恢复。';presentCustomerActivityPlanner();return null}
+  const requestGeneration=customerActivityGeneration;
+  const response=await accountScopedApiCall(action,payload,{renderPending:false,retryKind:'customer_activity'});
+  if(requestGeneration!==customerActivityGeneration)return INVALIDATED_REQUEST;
+  if(response===INVALIDATED_REQUEST||!response)return response;
+  if(!response.customerActivities||!Array.isArray(response.customerActivities.tasks))throw new Error('活动响应缺少任务队列，请重试同步。');
+  applyPreviewCustomerActivities(response.customerActivities,response.serverNow);return response;
+ }
+ async function refreshCustomerActivityQueue(){
+  if(customerActivitySyncBusy||requestBusy)return false;customerActivitySyncBusy=true;
+  const requestGeneration=customerActivityGeneration;
+  try{const response=await customerActivityRequest('customer_activity_sync');if(!response||response===INVALIDATED_REQUEST)throw new Error('活动状态同步失败。');customerActivityError='';return true}
+  catch(error){if(requestGeneration===customerActivityGeneration){customerActivityError=error instanceof Error?error.message:'活动状态同步失败。';presentCustomerActivityPlanner(true)}return false}
+  finally{if(requestGeneration===customerActivityGeneration){customerActivitySyncBusy=false;presentCustomerActivityPlanner()}}
+ }
+ function customerActivitySetStatus(text){const element=document.getElementById('customer-activity-save-status');if(element)element.textContent=text}
+ function customerActivityTaskKey(task){return task?`${task.id}:${task.status}:${task.evaluation?.overallEvaluation||''}`:''}
+ function customerActivityRemaining(task){const deadline=customerActivityEpoch(task?.deadlineAt);return deadline===null?CUSTOMER_ACTIVITY_PLANNING_MS:deadline-customerActivityServerNow()}
+ function customerActivityUpdateClock(){
+  const task=currentCustomerActivity();
+  if(task?.status==='planning'){
+   const remaining=customerActivityRemaining(task),seconds=Math.max(0,Math.ceil(remaining/1000)),timer=document.getElementById('customer-activity-countdown');
+   if(timer)timer.textContent=`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;
+   if(remaining<=0&&customerActivityLastTimeoutSubmitId!==task.id&&customerActivityAction===''&&!customerActivitySaveBusy&&!requestBusy)void customerActivitySubmit(task,false);
+  }else if(task?.status==='submitted'&&!task.evaluation&&!requestBusy&&Date.now()-customerActivityLastSyncAt>=2500){customerActivityLastSyncAt=Date.now();void refreshCustomerActivityQueue()}
+ }
+ async function customerActivityStart(task){
+  if(!task||task.status!=='pending'||requestBusy||customerActivityAction)return;
+  const requestGeneration=customerActivityGeneration;
+  customerActivityAction='start';customerActivityError='';presentCustomerActivityPlanner(true);
+  try{const response=await customerActivityRequest('customer_activity_start',{taskId:task.id});if(!response||response===INVALIDATED_REQUEST)throw new Error('暂时无法开始活动策划，请重试同步。')}
+  catch(error){if(requestGeneration===customerActivityGeneration){customerActivityError=error instanceof Error?error.message:'暂时无法开始活动策划，请重试。';presentCustomerActivityPlanner(true)}}
+  finally{if(requestGeneration===customerActivityGeneration){customerActivityAction='';presentCustomerActivityPlanner(true)}}
+ }
+ let customerActivitySavePromise=null;
+ function saveCustomerActivityDraft(taskId){
+  const requestGeneration=customerActivityGeneration;
+  customerActivitySaveRequested=true;
+  if(customerActivitySavePromise)return customerActivitySavePromise;
+  if(!customerActivityDirty){customerActivitySaveRequested=false;customerActivitySaved=true;customerActivitySetStatus('草稿已保存');return Promise.resolve(true)}
+  customerActivitySavePromise=(async()=>{
+   let success=true;customerActivitySaveBusy=true;customerActivityAction='save';customerActivitySaved=false;customerActivitySetStatus('草稿保存中…');
+   try{
+    while(requestGeneration===customerActivityGeneration&&customerActivitySaveRequested&&customerActivityDirty){
+     const task=customerActivityTasks().find(item=>item.id===taskId);if(!task||task.status!=='planning'||customerActivityRemaining(task)<=0)break;
+     if(requestBusy){await new Promise(resolve=>setTimeout(resolve,200));continue}
+     customerActivitySaveRequested=false;const snapshot=customerActivityDraft;
+     const response=await customerActivityRequest('customer_activity_save',{taskId,draft:snapshot});
+     if(!response||response===INVALIDATED_REQUEST)throw new Error('草稿未能保存，请检查网络后重试。');
+     if(customerActivityDraft===snapshot){customerActivityDirty=false;customerActivitySaved=true;customerActivitySetStatus('草稿已保存')}
+     else customerActivitySaveRequested=true;
+     customerActivityError='';
+    }
+    const currentTask=customerActivityTasks().find(item=>item.id===taskId);if(requestGeneration===customerActivityGeneration&&customerActivityDirty&&(!currentTask||customerActivityRemaining(currentTask)<=0))success=false;
+   }catch(error){success=false;if(requestGeneration===customerActivityGeneration){customerActivityError=error instanceof Error?error.message:'草稿保存失败。';customerActivitySetStatus('草稿保存失败，等待重试')}}
+   finally{if(requestGeneration===customerActivityGeneration){customerActivitySaveBusy=false;customerActivityAction='';customerActivitySavePromise=null;presentCustomerActivityPlanner(Boolean(customerActivityError))}}
+   return success;
+  })();
+  return customerActivitySavePromise;
+ }
+ async function customerActivitySubmit(task,includeLatestDraft){
+  if(!task||task.status!=='planning'||(customerActivityAction&&customerActivityAction!=='save')||(requestBusy&&!(includeLatestDraft&&customerActivitySavePromise)))return;
+  const requestGeneration=customerActivityGeneration;
+  const timedOut=!includeLatestDraft&&customerActivityRemaining(task)<=0;
+  if(timedOut){if(customerActivityLastTimeoutSubmitId===task.id)return;customerActivityLastTimeoutSubmitId=task.id}
+  if(includeLatestDraft){const saved=await saveCustomerActivityDraft(task.id);if(requestGeneration!==customerActivityGeneration)return;if(!saved){customerActivityError=customerActivityError||'草稿未保存成功，请重试。';presentCustomerActivityPlanner(true);return}}
+  customerActivityAction='submit';customerActivityError='';presentCustomerActivityPlanner(true);
+  const beforeDeadline=customerActivityRemaining(task)>0;
+  try{
+   const response=await customerActivityRequest('customer_activity_submit',{taskId:task.id,...(includeLatestDraft&&beforeDeadline?{draft:customerActivityDraft}:{})});
+   if(!response||response===INVALIDATED_REQUEST)throw new Error('提交尚未确认，请重试同步；方案草稿仍保留。');
+   const updated=customerActivityTasks().find(item=>item.id===task.id);if(updated?.status!=='submitted')throw new Error('服务端尚未确认提交，请重试同步。');
+   customerActivityDirty=false;customerActivitySaved=true;customerActivityError='';customerActivityLastTimeoutSubmitId=null;
+  }catch(error){if(requestGeneration===customerActivityGeneration){customerActivityError=error instanceof Error?error.message:'提交失败，方案仍保留，请重试。';if(timedOut){customerActivityLastTimeoutSubmitId=task.id;setTimeout(()=>{if(requestGeneration===customerActivityGeneration){customerActivityLastTimeoutSubmitId=null;void refreshCustomerActivityQueue()}},1000)}}}
+  finally{if(requestGeneration===customerActivityGeneration){customerActivityAction='';presentCustomerActivityPlanner(true)}}
+ }
+ async function retryCustomerActivity(task){
+  if(!task||customerActivityAction||requestBusy)return;customerActivityError='';
+  if(task.status==='planning'&&customerActivityRemaining(task)<=0)return customerActivitySubmit(task,false);
+  await refreshCustomerActivityQueue();
+ }
+ function continueCustomerActivity(task){
+  customerActivitySeenIds.add(task.id);saveCustomerActivitySeen();reconcileCustomerActivityTimer();customerActivityModalLocked=false;customerActivityRenderedTaskKey='';modalRoot.innerHTML='';customerActivityDraft='';customerActivityDirty=false;customerActivityError='';setTimeout(()=>presentCustomerActivityPlanner(true),0)
+ }
+ function presentCustomerActivityPlanner(force=false){
+  if(!modalRoot)return;
+  const task=currentCustomerActivity();
+  if(!task){if(customerActivityModalLocked){customerActivityModalLocked=false;customerActivityRenderedTaskKey='';modalRoot.innerHTML=''}return}
+  if(!customerActivityModalLocked&&modalRoot.innerHTML.trim())return;
+  const key=customerActivityTaskKey(task);
+  if(customerActivityModalLocked&&!force&&customerActivityRenderedTaskKey===key){customerActivityUpdateClock();customerActivitySetStatus(customerActivityAction==='save'?'草稿保存中…':customerActivitySaved?'草稿已保存':'草稿保存中…');const start=document.getElementById('customer-activity-start'),submit=document.getElementById('customer-activity-submit');if(start){start.disabled=Boolean(customerActivityAction||requestBusy);start.textContent=customerActivityAction==='start'?'正在开始…':'开始策划 · 5:00'}if(submit){submit.disabled=customerActivityAction==='start'||customerActivityAction==='submit'||requestBusy;submit.textContent=customerActivityAction==='submit'?'正在提交…':'提前提交方案'}return}
+  customerActivityModalLocked=true;customerActivityRenderedTaskKey=key;
+  const label=CUSTOMER_ACTIVITY_LABELS[task.type]||'客户活动',waiting=task.status==='submitted'&&!task.evaluation;
+  if(task.status==='planning'&&!customerActivityDraft)customerActivityDraft=task.draft||'';
+  const seconds=Math.max(0,Math.ceil(customerActivityRemaining(task)/1000));
+  const stageTitle=task.status==='pending'?'活动提议已匹配':task.status==='planning'?'活动策划':waiting?'正在处理方案':'活动结果';
+  let body='';
+  if(task.status==='pending'){
+   body=`<div class="info-block"><strong>活动提议</strong><div class="small muted" style="margin-top:6px;line-height:1.7">${esc(task.summary||'客户提出了这项活动。')}</div></div><div class="tiny muted" style="margin-top:9px">开始后有 5 分钟整理方案；活动策划不扣游戏时间和行动点。</div>${customerActivityError?`<div class="notice amber" role="alert" style="margin-top:10px">${esc(customerActivityError)}</div>`:''}<div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="customer-activity-start" class="btn btn-primary" ${customerActivityAction||requestBusy?'disabled':''}>${customerActivityAction==='start'?'正在开始…':'开始策划 · 5:00'}</button></div>`;
+  }else if(task.status==='planning'){
+   body=`<div class="notice amber" style="display:flex;justify-content:space-between;align-items:center"><span>剩余时间 · 刷新或关闭页面不会暂停</span><strong id="customer-activity-countdown" style="font:700 24px ui-monospace,monospace">${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}</strong></div><label class="tiny" for="customer-activity-draft" style="display:block;margin-top:14px;font-weight:800">活动方案</label><textarea id="customer-activity-draft" maxlength="12000" rows="8" style="display:block;box-sizing:border-box;width:100%;margin-top:6px;padding:12px;border:1px solid #cbd5e1;border-radius:10px;resize:vertical;font:14px/1.6 inherit" placeholder="结合客户表达的需求，描述活动目标、参与人员、议程或参观安排、准备材料以及活动后的跟进。">${esc(customerActivityDraft||task.draft||'')}</textarea><div class="tiny muted" style="display:flex;justify-content:space-between;margin-top:5px"><span id="customer-activity-save-status">${customerActivitySaved?'草稿已保存':'草稿保存中…'}</span><span id="customer-activity-char-count">${(customerActivityDraft||task.draft||'').length}/12,000</span></div>${customerActivityError?`<div class="notice red" role="alert" style="margin-top:10px">${esc(customerActivityError)}</div>`:''}<div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="customer-activity-submit" class="btn btn-primary" ${customerActivityAction==='submit'||customerActivityAction==='start'||requestBusy?'disabled':''}>${customerActivityAction==='submit'?'正在提交…':'提前提交方案'}</button></div>`;
+  }else if(waiting){
+   body=`<div class="notice amber">正在处理方案</div>${customerActivityError?`<div class="notice red" role="alert" style="margin-top:10px">${esc(customerActivityError)}</div>`:''}<div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="customer-activity-retry" class="btn">重试获取结果</button></div>`;
+  }else{
+   const hasNext=customerActivityTasks().some(item=>item.id!==task.id&&(item.status!=='submitted'||!customerActivitySeenIds.has(item.id)));
+   body=`<div class="notice ${task.draft?.trim()?'green':'amber'}">${esc(task.evaluation?.overallEvaluation||'')}</div><div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="customer-activity-continue" class="btn btn-primary">${hasNext?'继续下一项活动':'完成活动策划'}</button></div>`;
+  }
+  modalRoot.innerHTML=`<div class="modal-backdrop" style="z-index:2000;position:fixed;inset:0;background:rgba(15,23,42,.68);display:flex;align-items:center;justify-content:center;padding:16px"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="customer-activity-title" style="width:min(640px,100%);max-height:92vh;overflow:auto;background:white;border-radius:18px;padding:22px;box-shadow:0 24px 60px rgba(0,0,0,.3)"><div class="eyebrow" style="color:#2563eb;font-size:10px;font-weight:800;letter-spacing:.16em">客户活动策划 · ${customerActivityTasks().filter(item=>(customerActivityEpoch(item.createdAt)||0)<=(customerActivityEpoch(task.createdAt)||0)).length} / ${customerActivityTasks().length}</div><h2 id="customer-activity-title" style="margin:8px 0;font-size:21px;color:#0f172a">${stageTitle}：「${esc(label)}」</h2><div style="margin-top:12px">${body}</div></section></div>`;
+  const backdrop=modalRoot.querySelector('.modal-backdrop');backdrop?.addEventListener('click',event=>{if(event.target===backdrop)event.preventDefault()});
+  const textarea=document.getElementById('customer-activity-draft');
+  if(textarea){textarea.value=customerActivityDraft;textarea.addEventListener('input',()=>{customerActivityDraft=textarea.value;customerActivityDirty=true;customerActivitySaved=false;customerActivitySetStatus('草稿保存中…');const count=document.getElementById('customer-activity-char-count');if(count)count.textContent=`${customerActivityDraft.length}/12,000`;const active=currentCustomerActivity();if(active&&customerActivityRemaining(active)<=2000){customerActivitySaveRequested=true;if(!customerActivitySaveTimer)customerActivitySaveTimer=setTimeout(()=>{customerActivitySaveTimer=null;void saveCustomerActivityDraft(active.id)},150)}});textarea.addEventListener('blur',()=>{if(customerActivityDirty)void saveCustomerActivityDraft(task.id)})}
+  if(customerActivityFinalFlushTimer){clearTimeout(customerActivityFinalFlushTimer);customerActivityFinalFlushTimer=null}
+  if(task.status==='planning'){const delay=Math.max(0,customerActivityRemaining(task)-1800);customerActivityFinalFlushTimer=setTimeout(()=>{customerActivityFinalFlushTimer=null;const active=currentCustomerActivity();if(active?.id===task.id&&customerActivityDirty&&customerActivityRemaining(active)>0)void saveCustomerActivityDraft(task.id)},delay)}
+  document.getElementById('customer-activity-start')?.addEventListener('click',()=>void customerActivityStart(task));
+  document.getElementById('customer-activity-submit')?.addEventListener('click',()=>void customerActivitySubmit(task,true));
+  document.getElementById('customer-activity-retry')?.addEventListener('click',()=>void retryCustomerActivity(task));
+  document.getElementById('customer-activity-continue')?.addEventListener('click',()=>continueCustomerActivity(task));
+ }
+ function processCustomerActivityEndQueue(delay=0){
+  if(customerActivityEndTimer||!customerActivityEndQueue.length)return;
+  const generation=customerActivityGeneration;
+  customerActivityEndTimer=setTimeout(async()=>{
+   customerActivityEndTimer=null;if(generation!==customerActivityGeneration)return;
+   if(requestBusy){processCustomerActivityEndQueue(400);return}
+   const item=customerActivityEndQueue[0];if(!item)return;
+   if(!state.previewSessionId){customerActivityEndQueue.shift();processCustomerActivityEndQueue();return}
+   const response=await customerActivityRequest('customer_activity_end_conversation',{npcId:item.npcId,channel:item.channel});
+   if(generation!==customerActivityGeneration)return;
+   if(response&&response!==INVALIDATED_REQUEST){customerActivityEndQueue.shift();processCustomerActivityEndQueue();return}
+   item.attempts=(item.attempts||0)+1;if(item.attempts>=3)customerActivityEndQueue.shift();processCustomerActivityEndQueue(item.attempts>=3?0:2500);
+  },Math.max(0,delay));
+ }
+ function scheduleCustomerActivityEndConversation(npcId,channel,delay=0){
+  if(!npcId||!['email','wechat','work_phone'].includes(channel))return;
+  if(customerActivityEndQueue.some(item=>item.npcId===npcId&&item.channel===channel))return;
+  customerActivityEndQueue.push({npcId,channel,attempts:0});
+  if(customerActivityEndTimer){clearTimeout(customerActivityEndTimer);customerActivityEndTimer=null}
+  processCustomerActivityEndQueue(delay);
+ }
+ function startCustomerActivityAutosave(){
+  if(customerActivityAutosaveInterval)return;
+  customerActivityAutosaveInterval=setInterval(()=>{const task=currentCustomerActivity();if(task?.status==='planning'&&customerActivityDirty&&!customerActivitySaveBusy&&!requestBusy)void saveCustomerActivityDraft(task.id)},1800);
+ }
  function npc(id=state.selectedNpcId){return MockData.npcs.find(n=>n.id===id)}
  function esc(v=''){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
  function stickerById(id){return WECHAT_STICKERS.find(sticker=>sticker.id===id)||null}
@@ -946,6 +1311,12 @@ function renderAiFeedback(){
   return `<div class="notice red" style="margin:8px 18px 0">${esc(state.aiError)} ${retry}${refresh}${!retry&&!refresh?'请稍后重试，未生成已读标记或 NPC 回复。':''}</div>`;
  }
  return '';
+}
+function renderPreviewRecoveryControls(){
+ if(!state.previewSessionId)return '';
+ const blocking=previewRecoveryIsBlocking(),message=previewRecoveryPending?'正在读取服务端预览会话…':previewRecoveryError||state.aiErrorCanRefresh?`同步未完成：${previewRecoveryError||state.aiError||'会话版本已变化，请同步后继续。'}`:blocking?'请先同步服务端预览会话，再继续操作。':'预览会话已同步；你可以随时重新同步。';
+ const tone=previewRecoveryPending?'notice amber':previewRecoveryError||state.aiErrorCanRefresh?'notice red':'notice';
+ return `<div class="${tone}" role="status" aria-live="polite" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 12px;padding:9px 11px"><span>${esc(message)}</span><button class="btn btn-sm" data-action="refresh-preview" type="button" ${previewRecoveryPending?'disabled':''}>${previewRecoveryPending?'同步中…':'同步预览会话'}</button></div>`;
 }
 function contactStatus(id){
   if(state.completedVisits.some(v=>v.npcId===id))return '已完成拜访';
@@ -1078,7 +1449,7 @@ function competitorDetailField(label,value){return value?`<section class="compet
 function topbar(){
  if(state.screen==='projects')return '';
  const remaining=remainingCountdownMs(),paused=Boolean(state.timer?.paused);
- return `<header class="topbar"><div class="brand"><div class="brand-icon">▦</div><div><h1>项目一 · 单单位内部竞标</h1><p>销售作战台 · AI 预览会话</p></div></div><button class="project-notice-card" data-action="project-notice" aria-label="查看项目招标通知"><span>项目背景</span><strong>${esc(projectNotice.title||fallbackProjectNotice.title)}</strong><small>${esc(projectNotice.budget||fallbackProjectNotice.budget)} · 点击查看详情</small></button><button class="competitor-summary-card" id="competitor-summary-card" type="button" data-action="competitor-summary" aria-label="查看竞争对手资料" data-revision="${esc(competitorProfilesRevision??'')}"><span>竞争对手</span><strong id="competitor-summary-copy">${esc(competitorSummaryCopy())}</strong><small>点击查看公司列表</small></button><div class="countdown-card ${paused?'paused':''}" aria-label="项目倒计时"><span>◷</span><div><small>${paused?'拜访中已暂停':'项目倒计时'}</small><strong id="countdown-value">${formatCountdown(remaining)}</strong></div></div><div class="top-ap" id="ap-badge"><span class="ap-symbol">✦</span><span>行动点</span><strong>${state.actionPoints}</strong><em>/ 28</em></div><div class="top-actions"><button class="btn" data-action="test-controls">测试调节</button><button class="btn" data-action="reset">重置预览</button><button class="btn btn-primary" data-action="submit">提交项目</button></div></header><div id="ai-feedback">${renderAiFeedback()}</div>`
+  return `<header class="topbar"><div class="brand"><div class="brand-icon">▦</div><div><h1>项目一 · 单单位内部竞标</h1><p>销售作战台 · AI 预览会话</p></div></div><button class="project-notice-card" data-action="project-notice" aria-label="查看项目招标通知"><span>项目背景</span><strong>${esc(projectNotice.title||fallbackProjectNotice.title)}</strong><small>${esc(projectNotice.budget||fallbackProjectNotice.budget)} · 点击查看详情</small></button><button class="competitor-summary-card" id="competitor-summary-card" type="button" data-action="competitor-summary" aria-label="查看竞争对手资料" data-revision="${esc(competitorProfilesRevision??'')}"><span>竞争对手</span><strong id="competitor-summary-copy">${esc(competitorSummaryCopy())}</strong><small>点击查看公司列表</small></button><div class="countdown-card ${paused?'paused':''}" aria-label="项目倒计时"><span>◷</span><div><small>${paused?'任务进行中已暂停':'项目倒计时'}</small><strong id="countdown-value">${formatCountdown(remaining)}</strong></div></div><div class="top-ap" id="ap-badge"><span class="ap-symbol">✦</span><span>行动点</span><strong>${state.actionPoints}</strong><em>/ 28</em></div><div class="top-actions">${state.previewSessionId?`<button class="btn" data-action="refresh-preview" ${previewRecoveryPending?'disabled':''}>${previewRecoveryPending?'同步中…':'同步预览会话'}</button>`:''}<button class="btn" data-action="test-controls">测试调节</button><button class="btn" data-action="reset">重置预览</button><button class="btn btn-primary" data-action="submit">提交项目</button></div></header><div id="ai-feedback">${renderAiFeedback()}</div>`
 }
 function render(){
  if(syncIdentitySnapshot())closeModal();
@@ -1086,6 +1457,7 @@ function render(){
  app.innerHTML=immersive?`<div class="app visit-app"><div class="shell visit-shell">${renderMeeting()}</div></div>`:`<div class="app"><div class="shell">${topbar()}${state.screen==='projects'?renderProjects():state.screen==='result'?renderResult():renderGame()}</div></div>`;
  updateCompetitorSummary();
  bind();
+ presentCustomerActivityPlanner();
 }
 function renderProjects(){
  return `<main class="view project-select"><div class="hero"><div><div class="eyebrow">Interactive Frontend Prototype</div><h2>销售攻关实训 · 项目入口</h2><p>项目一预览：工作计划、联系人沟通、拜访准备与实战模拟使用真实 AI。公开信息搜索、邮寄和最终结算仍为前端结果样例；预览会话暂不写入正式存档。</p></div><div class="prototype-badge"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#3ecf8e;margin-right:6px;animation:pulseDot 2s ease-in-out infinite;box-shadow:0 0 8px rgba(62,207,142,.7)"></span>v10 · Real AI Preview</div></div><section class="project-grid">${MockData.projects.map(p=>`<article class="card project-card ${p.id===1?'':'disabled'}"><span class="tiny muted">PROJECT 0${p.id}</span><span class="tag ${p.id===1?'green':''}">${p.status}</span><h3>${p.name}</h3><div class="small muted">${p.difficulty}</div><div class="budget">${p.budget}<span class="small muted"> 万预算</span></div>${p.id===1?'<button class="btn btn-primary" data-action="select-project" style="margin-top:15px;width:100%">查看项目一</button>':'<button class="btn" disabled style="margin-top:15px;width:100%">暂未开放</button>'}</article>`).join('')}</section><section class="project-detail"><article class="card project-main"><div class="eyebrow">PROJECT 01</div><h3>${MockData.project.name}</h3><p class="small muted" style="line-height:1.8">${MockData.project.description}</p><div class="split-list"><div class="info-block"><strong>客户需求</strong><div class="chips">${MockData.project.needs.map(x=>`<span class="chip">${x}</span>`).join('')}</div></div><div class="info-block"><strong>项目特点</strong><div class="chips">${MockData.project.challenges.map(x=>`<span class="chip">${x}</span>`).join('')}</div></div></div><div class="notice" style="margin-top:11px">页面会随着你的选择逐步记录信息，具体结果以当前预览会话为准。</div></article><article class="card project-side"><div class="eyebrow">START MODE</div><h3 style="font-size:15px;margin:7px 0">选择演示模式</h3><div class="mode-tabs"><button class="mode ${state.playMode==='solo'?'active':''}" data-action="mode" data-mode="solo"><strong>单机演示</strong><span>完整验证项目一玩家流程</span></button><button class="mode ${state.playMode==='multiplayer'?'active':''}" data-action="mode" data-mode="multiplayer"><strong>多人占位</strong><span>暂不接实时同步</span></button></div><div class="info-block"><strong>本轮内容</strong><div class="small muted" style="line-height:1.7">联系人网络、工作计划与邮件、电话、微信、邮寄、拜访等工作区会在项目中持续可用。</div></div><button class="btn btn-primary" data-action="start" style="width:100%;margin-top:13px;padding:11px">开始项目一</button></article></section></main>`
@@ -1152,9 +1524,11 @@ function startPhoneCallRecord(npcId,commandId){
  return record;
 }
 function finishActivePhoneCall(status='ended'){
+ let completedNpcId=null;
  if(activePhoneCallId){
   const record=MockData.npcs.map(person=>phoneHistoryFor(person.id).find(item=>item.id===activePhoneCallId)).find(Boolean);
   if(record){
+   if(record.status==='connected')completedNpcId=MockData.npcs.find(person=>phoneHistoryFor(person.id).includes(record))?.id||null;
    record.status=record.status==='connecting'?'interrupted':status;
    record.endedAt=new Date().toISOString();
   }
@@ -1162,6 +1536,7 @@ function finishActivePhoneCall(status='ended'){
  state.phoneActive=false;
  if(state.aiRetry?.kind==='phone_message')state.aiRetry=null;
  activePhoneCallId=null;
+ if(completedNpcId)scheduleCustomerActivityEndConversation(completedNpcId,'work_phone',150);
 }
 function phoneCallStatusLabel(status){return ({connecting:'正在拨打',connected:'已接通',ended:'已挂断',not_answered:'未接通',failed:'连接失败',interrupted:'通话中断',legacy:'历史通话'})[status]||'历史通话'}
 function phoneCallTimeLabel(value){
@@ -1215,15 +1590,18 @@ function renderBriefResult(){
  return `<div class="workspace-card"><div class="brief-result"><div class="eyebrow" style="color:#7b4bea">AI VISIT REVIEW</div><h3>${n.name} · 拜访方案模拟结果</h3><p>${esc(r.summary)}</p><div class="analysis-box"><strong>做得较好的部分</strong><ul>${r.strengths.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div><div class="analysis-box"><strong>需要补强</strong><ul>${r.risks.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div><button class="btn" data-action="overview" style="margin-top:12px">返回联系人概览</button></div></div>`
 }
 function renderMeeting(){
- const m=state.meeting,n=npc(m.npcId),arr=state.conversations[n.id].meeting,lastNpc=[...arr].reverse().find(x=>x.role==='npc'),lastPlayer=[...arr].reverse().find(x=>x.role==='player');
+ const m=state.meeting,n=npc(m.npcId),arr=state.conversations[n.id].meeting;
  const completed=(m.completedTasks||[]).map(task=>typeof task==='string'?task:task.type||task.name).filter(Boolean);
  const finalReply=m.awaitingFinalReplyFrom==='player';
  const location=m.location||'客户单位',genericSceneKey=/电梯/.test(location)?'elevator':/酒馆|酒吧|酒/.test(location)?'bar':/饭店|餐厅|餐馆|餐/.test(location)?'restaurant':'office';
  const sceneUrl=n.id==='P1-001'?(uploadedImageUrls['visit_scene:leader_office']||uploadedImageUrls['visit_scene:office']):(uploadedImageUrls[`visit_scene:${genericSceneKey}`]||uploadedImageUrls['visit_scene:office']);
  const sceneStyle=sceneUrl?` style="background-image:url(${esc(JSON.stringify(sceneUrl))})"`:'';
  const expression=state.npcExpressions[n.id]||'calm',showEntry=Number(m.entryTransitionUntil)>Date.now();
- const dialogue=lastNpc?`<span data-stream-id="${esc(lastNpc.messageId||'')}"><span data-stream-text>${esc(lastNpc.text||'')}</span></span>${lastNpc.pending&&!lastNpc.text?streamDots('正在思考'):''}`:`${esc(n.name)} 正在等你开场。请用自己的话说明这次拜访的来意。`;
- return `<main class="visit-immersive"${sceneStyle} aria-label="与 ${esc(n.name)} 的沉浸式拜访"><div class="visit-immersive-body"><div class="visit-hud"><div class="visit-place"><span>正在拜访</span><strong>${esc(location)}</strong></div><div class="visit-status"><span>倒计时已暂停</span><b>结束后按对话轮次扣时</b></div><div class="visit-status"><span>第 ${Number(m.turn||0)+1} 轮</span><b>完成 ${completed.length} 项</b></div></div><div class="visit-stage"><div class="visit-person">${renderAvatar(n,'visit-portrait',expression)}</div><section class="visit-dialogue"><div class="visit-dialogue-head">${esc(n.name)}</div><div class="visit-dialogue-copy${lastNpc?'':' empty'}">${dialogue}</div>${lastPlayer?`<div class="visit-last-player"><strong>你：</strong>${esc(lastPlayer.text)}</div>`:''}${finalReply?'<div class="visit-final-notice">对方已表示告辞，你还可以最后回应一次。</div>':''}<div class="visit-composer"><textarea id="meeting-input" placeholder="${finalReply?'输入最后一句回应…':'输入你想说的话；也可以直接表达告辞…'}" ${requestBusy?'disabled':''}></textarea><div class="visit-composer-actions"><button class="btn btn-primary" data-action="meeting-send" ${requestBusy?'disabled aria-busy="true"':''}>${requestBusy?'等待回应…':finalReply?'回应并结束':'发送'}</button>${finalReply?'':`<button class="btn" data-action="end-visit" ${requestBusy?'disabled':''}>主动告辞</button>`}</div></div></section></div></div>${showEntry?`<div class="visit-entry" data-visit-entry-until="${Number(m.entryTransitionUntil)}"><span>正在进入 ${esc(location)}</span></div>`:''}</main>`
+ const visitMessages=Array.isArray(m.historyMessageIds)?arr.filter(message=>m.historyMessageIds.includes(message.messageId)):arr;
+ const lastVisitNpc=[...visitMessages].reverse().find(message=>message.role==='npc'),lastVisitPlayer=[...visitMessages].reverse().find(message=>message.role==='player');
+ const dialogue=lastVisitNpc?`<span data-stream-id="${esc(lastVisitNpc.messageId||'')}"><span data-stream-text>${esc(lastVisitNpc.text||'')}</span></span>${lastVisitNpc.pending&&!lastVisitNpc.text?streamDots('正在思考'):''}`:`${esc(n.name)} 正在等你开场。请用自己的话说明这次拜访的来意。`;
+  const recoveryBlocking=previewRecoveryIsBlocking();
+  return `<main class="visit-immersive"${sceneStyle} aria-label="与 ${esc(n.name)} 的沉浸式拜访"><div class="visit-immersive-body">${renderPreviewRecoveryControls()}<div class="visit-hud"><div class="visit-place"><span>正在拜访</span><strong>${esc(location)}</strong></div><div class="visit-status"><span>倒计时已暂停</span><b>结束后按对话轮次扣时</b></div><div class="visit-status"><span>第 ${Number(m.turn||0)+1} 轮</span><b>完成 ${completed.length} 项</b></div></div><div class="visit-stage"><div class="visit-person">${renderAvatar(n,'visit-portrait',expression)}</div><section class="visit-dialogue"><div class="visit-dialogue-head">${esc(n.name)}</div><div class="visit-dialogue-copy${lastVisitNpc?'':' empty'}">${dialogue}</div>${lastVisitPlayer?`<div class="visit-last-player"><strong>你：</strong>${esc(lastVisitPlayer.text)}</div>`:''}${finalReply?'<div class="visit-final-notice">对方已表示告辞，你还可以最后回应一次。</div>':''}<div class="visit-composer"><textarea id="meeting-input" placeholder="${finalReply?'输入最后一句回应…':'输入你想说的话；也可以直接表达告辞…'}" ${requestBusy||recoveryBlocking?'disabled':''}>${esc(state.meetingDraft||'')}</textarea><div class="visit-composer-actions"><button class="btn btn-primary" data-action="meeting-send" ${requestBusy||recoveryBlocking?'disabled aria-busy="true"':''}>${requestBusy?'等待回应…':recoveryBlocking?'同步后继续':finalReply?'回应并结束':'发送'}</button>${finalReply?'':`<button class="btn" data-action="end-visit" ${requestBusy||recoveryBlocking?'disabled':''}>主动告辞</button>`}</div></div></section></div></div>${showEntry?`<div class="visit-entry" data-visit-entry-until="${Number(m.entryTransitionUntil)}"><span>正在进入 ${esc(location)}</span></div>`:''}</main>`
 }
 function renderResult(){
  const r=state.result||MockData.result;
@@ -1251,6 +1629,8 @@ function bind(){
  if(gp)gp.addEventListener('input',()=>{state.workPlans.global=gp.value;save()});
  const np=document.getElementById('npc-plan');
  if(np)np.addEventListener('input',()=>{if(state.selectedNpcId){state.workPlans.byNpc[state.selectedNpcId]=np.value;save()}});
+  const meetingInput=document.getElementById('meeting-input');
+  if(meetingInput)meetingInput.addEventListener('input',()=>{state.meetingDraft=meetingInput.value;save()});
  const at=document.getElementById('attachment-text');
  if(at)at.addEventListener('input',updateMessageCost);
  const messageText=document.getElementById('message-text');
@@ -1427,6 +1807,7 @@ function applyInvitationResult(n,data){
   applyInvitationResult(n,committed.outcome);recordMessageUpdate(n,ch,committed.outcome);state.aiRetry=null;pendingConversation=null;save();refreshMessageThread(ch,n);setMessageComposerBusy(false,ch);refreshActionPoints();
   const feedback=document.getElementById('ai-feedback');if(feedback)feedback.innerHTML='';
   toast(`${channelLabel(ch)}已发送，${committed.outcome.responseAction==='read_no_reply'?(ch==='email'?'已阅读':'已读'):'NPC 已回复'}，消耗 ${committed.shouldCharge?cost:0} 行动点`,'success');
+  if(committed.outcome.responseAction==='reply')scheduleCustomerActivityEndConversation(n.id,ch,700);
  }
  async function sendSticker(stickerId,options={}){
   const retryPayload=options.payload&&typeof options.payload==='object'?options.payload:null;
@@ -1513,9 +1894,9 @@ async function startVisitSimulation({skipPreparation=false}={}){
  if(remote.meetingEnded){return finishVisitFromServer({...res,...remote})}
  spend(3,'实际拜访');
  const entryDuration=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches?0:950;
- state.meeting={npcId:n.id,appointmentId:appt?.id||null,location:appt?.location||'客户单位',turn:Number(remote.turn||0),completedTasks:Array.isArray(remote.completedTasks)?remote.completedTasks:[],awaitingFinalReplyFrom:remote.awaitingFinalReplyFrom||null,...(entryDuration?{entryTransitionUntil:Date.now()+entryDuration}:{})};pauseCountdown();
+ state.meeting={npcId:n.id,appointmentId:appt?.id||null,location:appt?.location||'客户单位',turn:Number(remote.turn||0),completedTasks:Array.isArray(remote.completedTasks)?remote.completedTasks:[],historyMessageIds:Array.isArray(remote.historyMessageIds)?[...remote.historyMessageIds]:[],awaitingFinalReplyFrom:remote.awaitingFinalReplyFrom||null,...(entryDuration?{entryTransitionUntil:Date.now()+entryDuration}:{})};state.meetingDraft='';pauseCountdown();
  if(['angry','serious','calm','pleasant','very_happy'].includes(res.npcExpression))state.npcExpressions[n.id]=res.npcExpression;
- if(res.content)state.conversations[n.id].meeting.push({role:'npc',channel:'拜访',text:res.content,taskType:res.taskType||null});
+ if(res.content){const opening={role:'npc',channel:'拜访',text:res.content,taskType:res.taskType||null,messageId:`visit-opening-${newPreviewCommandId()}`};state.conversations[n.id].meeting.push(opening);if(!state.meeting.historyMessageIds.includes(opening.messageId))state.meeting.historyMessageIds.push(opening.messageId)}
  save();refreshWorkspaceBody();toast('已进入真实AI拜访模拟','success')
 }
 async function submitBriefVisit(){
@@ -1570,21 +1951,24 @@ async function meetingSend(options={}){
  if(requestBusy){toast('AI 正在处理中，请稍候。','warn');return}
  const retryPayload=options.payload&&typeof options.payload==='object'?options.payload:null;
  const m=state.meeting,n=npc(retryPayload?.npcId||m?.npcId),text=retryPayload?.text||document.getElementById('meeting-input')?.value.trim()||'';if(!m||!n||!text)return;
+  state.meetingDraft=text;save();
  const payload=retryPayload||{npcId:n.id,text},commandId=options.commandId||newPreviewCommandId(),arr=state.conversations[n.id].meeting;
  let player=arr.find(message=>message.role==='player'&&message.commandId===commandId),reply=arr.find(message=>message.role==='npc'&&message.commandId===commandId);
  if(player){player.pending=true;player.failed=false}else{player={role:'player',channel:'拜访',text,messageId:`visit-player-${commandId}`,commandId,pending:true};arr.push(player)}
  if(reply){reply.pending=true;reply.failed=false;reply.text=''}else{reply={role:'npc',channel:'拜访',text:'',messageId:`visit-reply-${commandId}`,commandId,pending:true};arr.push(reply)}
+ m.historyMessageIds=Array.isArray(m.historyMessageIds)?m.historyMessageIds:[];
+ for(const message of [player,reply])if(!m.historyMessageIds.includes(message.messageId))m.historyMessageIds.push(message.messageId);
  const pending=accountScopedApiCall('visit_turn',payload,{commandId,retryKind:'visit_turn',retainRetryUntilCommit:true,renderPending:false,stream:true,onDelta:content=>appendStreamDelta(reply,content)});
  clearAiFeedback();refreshWorkspaceBody();
  const res=await pending;
  if(res===INVALIDATED_REQUEST)return;
  if(!res){player.pending=false;player.failed=true;reply.pending=false;reply.failed=true;reply.text=reply.text||'本轮回应失败，请重试。';save();refreshWorkspaceBody();refreshAiFeedback();return}
- player.pending=false;player.failed=false;reply.pending=false;reply.failed=false;reply.text=res.content||reply.text;reply.taskType=res.taskType||null;state.aiRetry=null;
+  player.pending=false;player.failed=false;reply.pending=false;reply.failed=false;reply.text=res.content||reply.text;reply.taskType=res.taskType||null;state.aiRetry=null;state.meetingDraft='';
   const remote=res.meeting;
  if(!remote){state.aiError='服务端未返回会面状态，请重试。';reply.failed=true;save();refreshWorkspaceBody();return}
   m.turn=Number(remote.turn??m.turn??0);m.completedTasks=Array.isArray(remote.completedTasks)?remote.completedTasks:(m.completedTasks||[]);m.awaitingFinalReplyFrom=remote.awaitingFinalReplyFrom||null;
   if(['angry','serious','calm','pleasant','very_happy'].includes(res.npcExpression))state.npcExpressions[n.id]=res.npcExpression;
- if(!res.content){const index=arr.indexOf(reply);if(index>=0)arr.splice(index,1)}
+ if(!res.content){const index=arr.indexOf(reply);if(index>=0)arr.splice(index,1);m.historyMessageIds=m.historyMessageIds.filter(messageId=>messageId!==reply.messageId)}
   if(remote.meetingEnded){const context={userId:stateOwnerUserId,generation:identityGeneration};save();refreshWorkspaceBody();await new Promise(resolve=>setTimeout(resolve,650));if(!userContextIsCurrent(context))return;return finishVisitFromServer({...res,...remote})}
  save();refreshWorkspaceBody();
 }
@@ -1598,7 +1982,7 @@ function finishVisitFromServer(result){
  const n=npc(m.npcId),appt=state.appointments.find(a=>a.id===m.appointmentId);if(result.appointment)upsertAppointment(result.appointment,n.id);else if(appt)appt.status='completed';
  state.completedVisits.push({npcId:n.id,type:'simulated',endReason,turns:turn,completedTasks:[...completedTasks]});
  state.meeting=null;state.workspaceMode='overview';const expired=resumeCountdown(turn);addUpdate(`已完成与 ${n.name} 的实际拜访模拟：${endReasonLabel(endReason)}。`);save();render();
- openModal('拜访结束',`<div class="notice green">${esc(endReasonLabel(endReason))}</div><div class="small muted" style="margin-top:10px">本次共进行 ${turn} 轮对话，已扣除 ${turn*15} 秒项目时间。</div>`,`<button class="btn btn-primary" data-modal-close>确认</button>`);toast('拜访已结束','success');if(expired)setTimeout(()=>finishTimedPreview(),0)
+ openModal('拜访结束',`<div class="notice green">${esc(endReasonLabel(endReason))}</div><div class="small muted" style="margin-top:10px">本次共进行 ${turn} 轮对话，已扣除 ${turn*15} 秒项目时间。</div>`,`<button class="btn btn-primary" data-modal-close>确认</button>`);toast('拜访已结束','success');if(state.previewSessionId)setTimeout(()=>void refreshCustomerActivityQueue(),0);if(expired)setTimeout(()=>finishTimedPreview(),0)
 }
 async function endVisit(){
  const m=state.meeting;if(!m)return;
@@ -1627,9 +2011,8 @@ async function resetPreview(){
  if(!res){render();return}
  const next=initialState();
  next.previewSessionId=state.previewSessionId;next.previewVersion=state.previewVersion;
- state=next;save();closeModal();render();toast('预览会话与本地演示进度已重置','success')
+ state=next;resetCustomerActivityComposerForContext();save();closeModal();render();toast('预览会话与本地演示进度已重置','success')
 }
-function refreshPreview(){clearAiRuntimeState();window.location.reload()}
 function clampTestInteger(value,min,max,fallback){
  const parsed=Number.parseInt(value,10);
  return Number.isFinite(parsed)?Math.max(min,Math.min(max,parsed)):fallback;
@@ -1716,6 +2099,7 @@ async function refreshTestNpcStates(){
   if(!response.ok)throw {status:response.status,message:body?.error||body?.message};
   const data=body?.data;
   if(data?.previewSessionId!==sessionId||!Number.isInteger(data?.version)||data.version<0)throw {status:502,message:'恢复响应缺少有效的会话版本。'};
+  if(data.customerActivities!==undefined)applyPreviewCustomerActivities(data.customerActivities,data.serverNow);
   if(!applyPreviewNpcTestStates(data.npcTestStates))return false;
   state.previewVersion=data.version;
   save();
@@ -1775,7 +2159,8 @@ async function applyTestControls(){
  const response=adjustments.length||appointmentAdjustments.length?await accountScopedApiCall(action,{...(adjustments.length?{adjustments}:{}),...(appointmentAdjustments.length?{appointments:appointmentAdjustments}:{})}):{npcTestStates:[]};
  if(response===INVALIDATED_REQUEST)return;
  if(!response)return;
- state.actionPoints=actionPoints;state.totalSpent=totalSpent;state.timer={...freshTimer(),elapsedMs:TIMER_DURATION_MS-remainingSeconds*1000,refillsApplied:Math.min(4,Math.floor((TIMER_DURATION_MS-remainingSeconds*1000)/TIMER_REFILL_INTERVAL_MS)),paused:Boolean(state.meeting),lastResumedAt:state.meeting?null:Date.now(),expired:remainingSeconds===0,settled:false};
+ const previousCustomerActivityTaskId=state.timer?.customerActivityTaskId||null,previousCustomerActivityPhase=state.timer?.customerActivityPhase||null,previousCustomerActivityUiTaskId=state.timer?.customerActivityUiTaskId||null,activityUiPaused=Boolean(previousCustomerActivityUiTaskId);
+ state.actionPoints=actionPoints;state.totalSpent=totalSpent;state.timer={...freshTimer(),started:true,elapsedMs:TIMER_DURATION_MS-remainingSeconds*1000,refillsApplied:Math.min(4,Math.floor((TIMER_DURATION_MS-remainingSeconds*1000)/TIMER_REFILL_INTERVAL_MS)),paused:Boolean(state.meeting)||activityUiPaused,lastResumedAt:state.meeting||activityUiPaused?null:Date.now(),expired:remainingSeconds===0,settled:false,customerActivityTaskId:previousCustomerActivityTaskId,customerActivityPhase:previousCustomerActivityPhase,customerActivityUiTaskId:previousCustomerActivityUiTaskId};
  if(Array.isArray(response.appointments))state.appointments=normalizeAppointments(response.appointments);
  const allowedWechatStatuses=new Set(['','accepted','pending','rejected']);
  document.querySelectorAll('[data-test-wechat]').forEach(select=>{
@@ -1786,8 +2171,10 @@ async function applyTestControls(){
 }
 
 async function handleAction(e){
+ if(customerActivityModalLocked)return;
  if(syncIdentitySnapshot()){closeModal();render();return}
  const a=e.currentTarget.dataset.action;
+ if(previewRecoveryIsBlocking()&&a!=='refresh-preview'){toast('请先同步服务端预览会话后继续。','warn');return}
  if(a==='competitor-summary')return openCompetitorModal();
  if(a==='refresh-competitors')return refreshCompetitorProfiles();
  if(requestBusy&&a!=='refresh-preview'){toast('AI 正在处理中，请稍候。','warn');return}
@@ -1819,11 +2206,11 @@ async function handleAction(e){
  if(a==='end-visit')return endVisit();
  if(a==='overview'){finishActivePhoneCall();state.workspaceMode='overview';save();render()}
  if(a==='submit')return showSubmission();
- if(a==='restart'){finishActivePhoneCall();state=initialState();activePhoneCallId=null;state.screen='game';startCountdown();save();render()}
- if(a==='back-projects'){finishActivePhoneCall();state=initialState();activePhoneCallId=null;save();render()}
+ if(a==='restart'){finishActivePhoneCall();resetCustomerActivityComposerForContext();state=initialState();activePhoneCallId=null;state.screen='game';startCountdown();save();render()}
+ if(a==='back-projects'){finishActivePhoneCall();resetCustomerActivityComposerForContext();state=initialState();activePhoneCallId=null;save();render()}
 }
-function openModal(title,body,footer='<button class="btn btn-primary" data-modal-close>知道了</button>',modalClass='',bodyId=''){competitorModalOpen=false;competitorModalBodyMarkup=null;const backdropClass=modalClass?`${modalClass}-backdrop`:'';modalRoot.innerHTML=`<div class="modal-backdrop ${backdropClass}"><div class="modal ${modalClass}"><div class="modal-head"><h3>${title}</h3><button class="modal-close" data-modal-close>×</button></div><div class="modal-body" ${bodyId?`id="${bodyId}"`:''}>${body}</div><div class="modal-footer">${footer}</div></div></div>`;modalRoot.querySelectorAll('[data-modal-close]').forEach(x=>x.onclick=closeModal);modalRoot.querySelector('.modal-backdrop')?.addEventListener('click',e=>{if(e.target.classList.contains('modal-backdrop'))closeModal()})}
-function closeModal(){competitorModalOpen=false;competitorSelectedCompanyId=null;competitorModalBodyMarkup=null;modalRoot.innerHTML=''}
+function openModal(title,body,footer='<button class="btn btn-primary" data-modal-close>知道了</button>',modalClass='',bodyId=''){if(customerActivityModalLocked)return;competitorModalOpen=false;competitorModalBodyMarkup=null;const backdropClass=modalClass?`${modalClass}-backdrop`:'';modalRoot.innerHTML=`<div class="modal-backdrop ${backdropClass}"><div class="modal ${modalClass}"><div class="modal-head"><h3>${title}</h3><button class="modal-close" data-modal-close>×</button></div><div class="modal-body" ${bodyId?`id="${bodyId}"`:''}>${body}</div><div class="modal-footer">${footer}</div></div></div>`;modalRoot.querySelectorAll('[data-modal-close]').forEach(x=>x.onclick=closeModal);modalRoot.querySelector('.modal-backdrop')?.addEventListener('click',e=>{if(e.target.classList.contains('modal-backdrop'))closeModal()})}
+function closeModal(){if(customerActivityModalLocked)return;competitorModalOpen=false;competitorSelectedCompanyId=null;competitorModalBodyMarkup=null;modalRoot.innerHTML='';setTimeout(()=>presentCustomerActivityPlanner(),0)}
 function openConfirm(title,text,fn){openModal(title,`<div class="notice red">${text}</div>`,`<button class="btn" data-modal-close>取消</button><button class="btn btn-danger" id="generic-confirm">确认</button>`);document.getElementById('generic-confirm').onclick=fn}
 function handleIdentityStorageChange(event){
  if(event&&event.key!==null&&!AUTH_STORAGE_KEYS.has(event.key))return;
@@ -1831,9 +2218,9 @@ function handleIdentityStorageChange(event){
  void refreshCompetitorProfiles();
 }
 window.addEventListener('storage',handleIdentityStorageChange);
-window.addEventListener('focus',()=>{if(syncIdentitySnapshot()){closeModal();render()}void refreshCompetitorProfiles()});
-window.addEventListener('pageshow',()=>{if(syncIdentitySnapshot()){closeModal();render()}void refreshCompetitorProfiles()});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(syncIdentitySnapshot()){closeModal();render()}void refreshCompetitorProfiles()}});
+window.addEventListener('focus',()=>{if(syncIdentitySnapshot()){closeModal();render()}void refreshCompetitorProfiles();if(state.previewSessionId&&!requestBusy)void refreshCustomerActivityQueue()});
+window.addEventListener('pageshow',()=>{if(syncIdentitySnapshot()){closeModal();render()}void refreshCompetitorProfiles();if(state.previewSessionId&&!requestBusy)void refreshCustomerActivityQueue()});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(syncIdentitySnapshot()){closeModal();render()}void refreshCompetitorProfiles();if(state.previewSessionId&&!requestBusy)void refreshCustomerActivityQueue()}});
 document.addEventListener('keydown',e=>{
  if(e.key==='Escape'&&competitorModalOpen){e.preventDefault();closeModal();return}
  if(e.key==='Escape' && closeExpressionPanels()){
@@ -1844,7 +2231,13 @@ document.addEventListener('keydown',e=>{
    backToGlobalPlan();
  }
 });
+loadCustomerActivitySeen();
+reconcileCustomerActivityTimer();
+if(state.previewSessionId)void recoverPreviewSession();
 render();
+startCustomerActivityAutosave();
+customerActivityClockTimer=setInterval(customerActivityUpdateClock,250);
+setTimeout(()=>{if(state.previewSessionId&&!document.hidden&&!requestBusy)void refreshCustomerActivityQueue()},1000);
 void loadImageAssets();
 void loadProjectNotice();
 void refreshCompetitorProfiles();

@@ -1,5 +1,55 @@
 # 动态问题台账
 
+- ACTIVITY-TIMER-011（P1，Resolved，当前五人预览本地，2026-10-22）：用户未调时间，实际pending时已有00:00；原仅planning五分钟暂停，阻塞弹窗仍消耗项目预算。HTML新增独立UI暂停marker覆盖匹配/策划/评价/未读结果，最后确认才恢复now；刷新离线、队列、锚点cap与拜访轮次扣时保护已回归。主线程五专项/tsc/lint/build、actual diff及独立Review通过，5001新静态HTML HTTP200确认。未重设当前0预算。调时旧marker回放为另一个确认缺陷同批保护，不倒推为本次原因。证据clock-popup-2026-10-22.md。
+
+- ACTIVITY-TIMER-012（P2，Open，2026-10-22）：正式/多人服务端活动计时目前按提交或deadline恢复（state.ts resumeProjectTimerAfterCustomerActivity），尚无结果确认暂停持久契约；当前预览全UI暂停修复不直接替代服务器权威计时。后续须独立设计确认事件/事务及多人一致性，不在此预览批次擅自扩展，未做真实正式UI复测。
+
+补充确认：用户未改时间，测试调时缺陷可复现但不能认定为其实际原因。实际另有当前预览活动pending/结果阻塞不暂停，历史页面在pending时就到0；用户“继续”后当前预览扩为全活动UI暂停，已归零时间不自动重设。正式多人服务端活动结果确认暂停未纳入此预览修复，后续一致性单独评估；不得声称全系统已覆盖。
+
+## 2026-10-22 空活动方案没有准备不足影响
+
+- ACTIVITY-010（P2，Resolved，本地）：shared evaluator空/纯空白固定负向指标，public outcome与两端空结果amber统一。根实际diff/四专项/tsc/定向lint/build通过，覆盖三类活动、空白字符、manual/timeout/room_ended、负向结算幂等及正式下限、AP/时间不变。5001更新exec30331，HTTP200新代码和health构建一致确认。旧已结算记录不回算。证据empty-plan-2026-10-22.md。
+
+## 2026-10-22 再次拜访沿用旧消息
+
+- PREVIEW-VISIT-003（P1，Resolved，本地）：meetingResponse/GET recovery从已有customerActivityStartIndex导出当前historyMessageIds，renderMeeting仅显示本次，start清旧draft，本地实时消息与失败草稿恢复同样隔离。历史保留，无冗余持久化数据。根实际diff审阅、七专项/tsc/四文件lint/production build通过，5001更新exec1642、HTTP200与health buildId确认。连续两场/截断恢复/首轮空白与旧失败draft为mock回归，未代操作用户拜访。证据repeat-visit-2026-10-22/VERIFICATION.md；只读时最新session862a9e9d...已endedtrue，不将截图当作当前turn0。
+
+## 2026-10-22 沉浸式拜访无恢复入口且浏览器刷新仍旧版本
+
+- PREVIEW-RECOVERY-002（P1，Resolved，本地）：权威GET恢复、boot/POST门控、沉浸式同步按钮、失败保留、身份隔离、恢复前计时保护及结束幂等已实现。根审查diff并运行七专项/tsc/定向lint通过；真实Chrome原拜访加载和重复同步/刷新成功，发送与主动告辞可用，原首轮对话及告别草稿保留。只读DB原session仍turn1/endedfalse，无reset/代发告辞。证据preview-recovery-2026-10-22/VERIFICATION.md与before/after.png。原告辞偶发AI故障VISIT-FAREWELL-001仍Open，不倒推为同一根因。
+
+## 2026-10-22 主动告辞显示AI服务不可用
+
+最终诊断状态（2026-10-22）：VISIT-FAREWELL-001 Open，原失败尚未复现/定位。已修确认的错误信息缺口（route普通/stream安全错误分类+前端502协议提示保留）；新helper及test-preview-error-diagnostics，主线程3专项/tsc/lint/build通过，5000更新并HTTP200确认。真实同state隔离重放成功，只读原会话仍v2，未替用户结束。下一步凭再发生时的固定code/action/npc/commandId及请求时间追查，不将展示改进记为原根因Resolved。证据visit-farewell-2026-10-22/VERIFICATION.md。
+
+- VISIT-FAREWELL-001（P1，In Progress）：张建国首轮回复后主动告辞报错。只读DB v2 endedfalse仅首轮，无失败详情；按钮实际visit_turn固定告别。经用户明确外传授权，隔离重放实际state成功player_farewell/turn2，不能认定原根因。确认前端把502协议异常归为AI不可用、route日志缺安全分类，正在补排障信息。证据visit-farewell-2026-10-22/before.json、isolated-replay.json。原对局未改；原偶发失败待后续失败错误码确认。
+
+## 2026-10-21 关键词规则直接裁决对话语义
+
+最终状态：ACTIVITY-009 Resolved（本地，2026-10-21）。实现位于ai/customer-activities.ts、ai/customer-activity-reply.ts、game/project-one-preview-ai.ts、game/invitation-intent.ts、正式chat route及state私有诊断白名单。关键词只作疑似信号，AI语义+原文证据校验处理撤回/回复；日期续问、真正撤回、复杂否定及模型失败有回归，普通邀约异常fallback不猜结果。七专项、最终类型、定向lint、production build及独立Review通过；真实18种明确样例均有最终通过记录，初轮失败/歧义例如实保留。独立IAB真实三轮电话与DB源ID/零候选断言PASS，证据semantic-review/VERIFICATION.md。未重构全部评分/记忆语义检查；模型仍有含糊表达判断差异，不能宣称自然语言零误判。无远程部署/新正式或多人UI验收。
+
+- ACTIVITY-009（P1，In Progress，用户已批准）：候选识别及撤回含直接正则过滤，AI识别出的候选也可被否定词覆盖；正式/预览活动回复正则直接触发重写、没有语义复核；普通邀约异常fallback按“不方便”等拒绝。用户批准改为规则提示+AI上下文复核，确定性仅校验结构/来源/业务流程，歧义与模型失败保留真实提议，回复无法确认则安全中性。原句修复ACTIVITY-008仍有效，本批不改数值门槛和评分。待专项/类型/lint/build及证据。
+
+## 2026-10-21 普通活动回复仍暗示拒绝
+
+最终状态：ACTIVITY-008 Resolved（本地，2026-10-21）。精确原句复现“能不能安排”被回复预筛误判为取消、专用guard调用0次；修正预览疑问归一化和正式活动专用helper，扩充间接拒绝/流程推脱检测，要求本人考虑/汇报再反馈，安全兜底无否定。主线程实际diff、六专项、类型、定向lint及production build通过；独立IAB真实电话原话返回“这个建议我先记下了，会先向上级汇报，再给您反馈。”，挂断后匹配弹窗；DB同通话/任务/全五20/60/numeric v3断言PASS。证据sales-proposal-phone-retest/REPLY_FIX.md、reply-fixed.png、reply-after-match.json。原用户策划自然提交后才更新服务；未操作其Chrome/重置对局，未远程部署或新正式浏览器E2E。
+
+- ACTIVITY-008（P1，In Progress，最后检查2026-10-21）：真实赵电话“这个我这边暂时还没法安排…先按正常流程来吧”被回复guard放行，用户感知已被拒绝，和对话后匹配allow冲突。权威session c2ff06bb...v6、原话、allow/planning已只读查证；现有guard缺省略活动名的没法/无法安排及流程推脱，fallback也有否定措辞。证据sales-proposal-phone-retest/refusal-before.json。仅修回复、不动匹配和门槛；需原句/同义句重写兜底回归及更新后真实回复复测，未完成前不记Resolved。
+
+## 2026-10-21 测试调节导致倒计时停止
+
+- PREVIEW-TIMER-001（P1，Resolved，本地静态页修复，最后检查2026-10-21）：用户报告应用测试值后倒计时停止。实际applyTestControls重建timer时继承freshTimer的started=false，syncCountdown直接返回；新增实际HTML VM回归在旧代码复现600000!==590000，补started:true后普通倒计时/刷新归一化/拜访暂停恢复通过。ts-check、修改测试文件ESLint、diff-check通过，5000实际HTML HTTP200且包含修复。全量ESLint长时间未返回已中止、不记通过；静态HTML无Next打包依赖，本次未重建/重启以免打断用户对局。旧页面需刷新并在测试调节确认剩余时间、重新应用；不自动重写用户存储。ACTIVITY-007仍Open，真实挂断/同步成功处理与本缺陷独立。证据organization-thresholds/TIMER_FIX.md。
+
+## 2026-10-21 赵晓晨电话活动漏识别
+
+最终状态（覆盖下方历史Open/In Progress）：ACTIVITY-007 Resolved（本地修复与一次同场景真实复测，2026-10-21）。销售明确提议有程序候选保障，LLM语义补充合并，不以客户回应/置信度拦截，保留玩家撤回/非提议排除；普通客户直接拒绝/取消回复guard已接正式/预览。内部持久诊断覆盖电话建立/入队/识别/实际模型请求返回或候选跳过/门槛/任务/错误，不进玩家DTO。根独立专项/类型/lint/build与Review通过，真实赵原话+挂断前全五20/60已弹窗；权威DB新任务/数值v3/allow/同conversation完整日志独立断言PASS。证据sales-proposal-phone-retest/VERIFICATION.md、matched.png、after-match.json。旧失败模型原始响应仍未保存，旧唯一根因未知；未宣称全部自然表达/正式/多人真实链路或远程部署均验收。
+
+2026-10-21后续实施状态：ACTIVITY-007转In Progress（用户明确批准），销售提议不再依赖NPC回应类别/置信度，新增确定性提议保障、NPC不拒绝guard、正式/预览持久诊断与真实电话复测。权威最新第二次电话session dec963d5... version7同样全五20/60且未匹配，原话“我想问问看能不能咱们下周召开一个技术交流会…提高效率”，客户“这类安排我需要先向上级汇报，确认后再答复。”；已保存sales-proposal-phone-retest/before.json，只读未改对局。尚未完成验证，不记Resolved。
+
+后续核查更正：ACTIVITY-007当前只证明挂断/同步成功且未生成decision/task；没有模型调用trace或挂断前activeCall快照，不能证明真实那次已调用AI，更不能断言AI返回了空候选。正常代码会排队调用，未找到restore/SQL丢电话字段的路径；仍需区分未入队、AI空结果和status/confidence/kind过滤。已向用户更正之前过强归因。此前240测试为数值计算，真实成功样例为旧版张建国邮件，不是本次电话全流程验收。
+
+- ACTIVITY-007（P1，Open，最后检查2026-10-21）：真实电话明确提议技术交流会、客户表示先向李经理汇报；命令记录确认先调全五20/60再挂断，配置numeric v3满足。结束及同步后activeCall=null、pending=[]、decisions/tasks=[]，定位到活动语义识别未产出候选，尚未进入数值门槛。原始检测响应未保存，不能断言模型具体输出或哪条过滤分支；“暂时定不了”与“暂缓”的提示歧义为待验证因素。证据organization-thresholds/PHONE_DETECTION_FINDING.md；本批只读诊断，未修复/未改对局。下一步消除暂未确认与拒绝/取消歧义并用原文回归，补真实完整链路验收。
+
 ## 2026-10-12 回复长度调整
 
 - PROMPT-011（P1，Resolved，本地文本与契约，最后检查2026-10-12）：真实拜访低档仍多解释流程/清单，高层回复偏长。五人low全部引用收短，张新增客气时间收束，15档明确角色长度软参考且优先通用建议，customer允许不足30字；不截断正文。证据npc-role-prompts.ts、customer.ts、v4稿、冻结fixture；精确升级/自定义保护及专项、主线程类型/lint/build通过。运行接口已加载；仅本地文本缺口已完成，不等于模型字数稳定达标。
@@ -273,3 +323,108 @@
 - FRONT-COMPETITOR-LIST-001 | Resolved | 2026-10-14 两端列表→单公司详情→返回/重开已完成，后台更新/删除回列表、顶卡同排和ABC过滤保留；根类型/lint/build/新旧回归与桌面手机mock浏览器、截图复核通过。证据competitor-profiles-2026-10-14/；原真实REST联调限制独立保留。
 
 - FRONT-COMPETITOR-FLASH-001 | Resolved | 2026-10-14 预览竞品modal稳定shell/专属无入场动画/相同body跳过更新修复完成；正式无需同类源码修改。根完整类型/lint/build/新旧回归、最终桌面手机mock节点身份/animation-name none/焦点与真实滚动保持验收通过。证据competitor-profiles-2026-10-14/；无旧版runtime baseline，不宣称真实REST或线上部署。
+
+- PROMPT-013（P2，Resolved，本地文本与契约，2026-10-14；下述保留原缺口）：共享对话自然度约束重复且与全局/渠道的主动追问、自动下一步及高档增字要求冲突。已查customer.ts、npc-role-prompts.ts、prompt-config.ts和渠道常量；按用户分享正文改为共用规则单份注入、人物化短推脱和非机械增字；待专项/构建及精确旧默认兼容验证。PROMPT-007/009/010/012生成质量仍需真实样本复验，不由静态验证关闭。
+
+
+- PROMPT-013验收：npc-dialogue-rules.ts共享规则经compose一次注入，customer/角色/渠道同步去冲突，90例同标签三档逐句不同；历史精确升级、自定义保留专项与主线程功能/类型/lint/build通过。本地API revision5确认最终规则已加载，证据npc-natural-dialogue-2026-10-14/runtime-config-check.json。仅文本/契约Resolved，真实生成改善未复测，PROMPT-007/009/010/012继续Open。
+
+- TEST-MODEL-001（P1，Open，2026-10-14）：v5张建国直接JSON单轮抽样DeepSeek5个中4个仅空白U+0020，解析invalid_json，未重试。中/高开场及低敏感/长推销均发生，raw长度21/17/16/17；不能据此判断供应商根因或生产同现。来源npc-zhang-natural-replies-2026-10-14/v5-live/responses.ndjson，下一步独立定位输出契约与请求/响应元数据。
+- PROMPT-007/009/010/012实测补充（2026-10-14）：v5全部11有效正文13-29字但不整体通过；Qwen三档错称NPC本人、敏感请托未明确拒绝，豆包低敏感未经确认承诺安排对接、低长介绍仍索要材料，语气及梯度不足。保持Open，待获准修复/回归，不静默改产品。
+
+- TEST-MODEL-001更新（P1，In Progress，2026-10-14）：client.ts已trim校验纯空格并保留trace原始元数据，customer.ts提供独立JSON协议，专项含21空格/空串/缺content/带空白有效JSON且不盲重试，根验证通过。v6共42回归无空白，但旧4各自模型侧内部原因未证，2×2仍复现1条HTTP200/stop/13空格；保留偶发供应商空输出风险，不宣称根治。诊断报告outputs/2026-10-14-张建国四空白原因诊断报告.md。
+- PROMPT-007/009/010/012更新（Open，2026-10-14）：修复身份冒号前缀、未知姓名、敏感双拒绝和无确认转介；张建国低档行为优先级最终9条10-30字、三家长篇收束/敏感双拒绝，较前33条改善。前三轮超字/虚构联系人等保留，高档与完整UI/多轮/其他四NPC未获本批覆盖，不以42条格式有效关闭全局质量问题。复验报告outputs/2026-10-14-张建国修复后复验报告.md，原始证据npc-zhang-diagnosis-2026-10-14/v6-regression/。
+
+- DESIGNER-EXCEL-IMPORT-001（P2，Open/按用户要求暂缓，2026-10-15）：用户Excel经设计师POST /api/designer/prompt-excel实测HTTP400 INVALID_XLSX；Zip/XML和独立openpyxl只读均可提取35条文本。仅记录事实，不确定根因、不修导入入口。本批已通过现有PUT配置CAS将35项原文同步revision7→8并GET逐项一致，非表内系统/门槛不变；证据npc-excel-sync-2026-10-15/。
+
+- PROMPT-007/009/010/012更新（Open，2026-10-15）：Excel版已原文同步revision8。豆包/Qwen10条有效正文，均符合本Excel参考上限，但豆包中高档使用你且引导感、Qwen口头语过密仍需观察；未改写用户版。DeepSeek未取得正文，已按用户最新指示暂缓，不能声称三模型全部通过。证据npc-excel-sync-2026-10-15/two-model-results.json。
+
+- DESIGNER-EXCEL-IMPORT-001更新（In Progress，2026-10-16）：用户已要求修复，原文件解析兼容调查中；代码实查另发现prompt-library预览仍把role_base/role_low/role_medium/role_high当渠道取空ID导致渲染失败。已有解析/草稿应用/保存功能保留，补精确兼容与新scope预览，验收原文件35项端到端。
+
+
+- DESIGNER-EXCEL-IMPORT-001更新（P2，Resolved/本地验收，2026-10-16）：prompt-excel.ts修复SpreadsheetML合法前缀兼容，人物行多余渠道20条以ROLE_CHANNEL_IGNORED明确告警忽略；prompt-library/page.tsx修复新role scope预览崩溃、表外渠道保留及导入保存互斥。原件35项逐字一致，根独立浏览器61项通过（解析真实、配置保存隔离内存）；另真实接口相同内容PUT/GET revision8→9/persisted=true，完整配置不变。最终原件/边界专项、配置编辑范围、类型/lint/build通过，本地PID10824已更新。证据designer-excel-import-2026-10-16/final-result.json、real-save-audit.json、root-validation.json；原件未改，未远程部署，模型问题不纳入。
+2026-10-16新版r10实测更新：张建国三家各5，15/15首轮有效/HTTP200/stop、0重试空白。TEST-MODEL-001仍In Progress：当前/models不列配置旧alias，本批临时deepseek-flash成功，未作严格同时间A/B，不认定旧超时内部原因根治。PROMPT-007/009/010/012继续Open：豆包/Qwen低档仍请讲重点、豆包高档你挑、DS低开场46字/豆包低敏感41字略超本版40参考、Qwen断言评审标准公开透明无事实依据。证据npc-zhang-latest-2026-10-16/与完整报告/PDF；仅测试，不改提示词或配置。
+
+- TEST-MODEL-001更新（P1，In Progress，2026-10-16步骤①②）：当前r10表格测试初批DeepSeek多轮T028连续3次HTTP200/stop仅16/18/21空格，T029未发送，保留initial-run原始body。统一三家多轮续接前次API原JSON消息复测9次均有效；最终39原单轮+9复测多轮共48正文，全程58attempt。仅格式一致性复测，不能证明唯一根因或供应商偶发空白已根治。根独立审计见npc-zhang-plan-steps12-2026-10-16/root-independent-audit.json。
+- PROMPT-007/009/010/012更新（Open，2026-10-16步骤①②）：低档多轮简短并明确拒绝保证入围，但低档部分单轮仍邀请推销，高档和敏感场景仍有未给事实、语气及输入点数偏移。只做当前提示词测试，不擅自修改用户导入版；其他NPC和游戏UI流程未覆盖。
+
+- 2026-10-16步骤①②交付验证：7页PDF48完整输入/正文逐provider/case映射通过，全部页面渲染检查通过；结束GET完整config仍revision10未变。TEST-MODEL-001保持In Progress、PROMPT-007/009/010/012保持Open，交付完成不等于质量问题已修复。证据npc-zhang-plan-steps12-2026-10-16/report/root-pdf-audit.json及latest-readback-audit.json。
+
+## 2026-10-16 全流程审查补充（诊断，不扩大实施范围）
+
+- AUDIT-HISTORY-001 | P1 | Open | “历史与复盘”导航去ranking，缺个人已完成报告列表与重开入口 | app-shell.tsx:39-43、ranking/page.tsx、repository.ts:261-270只查playing。结果页/打印已经实现，不重复建设。下一步补个人报告列表→已有result；最后检查2026-10-16。
+- AUDIT-DESIGNER-001 | P1 | Open | 部分设计师资料/指标/公式编辑未形成保存→正式生效闭环 | key-persons/page.tsx:100-122/310-313为本地草稿，client-info/page.tsx:44-109/281-287仅state，metrics/page.tsx:118和formulas/page.tsx:63保存按钮无handler。提示词专用Excel/配置、图像、竞品保存已有实现。关联ADMIN-002；下一步按数据领域接通或明确草稿标识；最后检查2026-10-16。
+- AUDIT-RANK-FILTER-001 | P2 | Open | 平台排行榜筛选参数未应用 | ranking/page.tsx发送range/track；api/ranking/route.ts:270-310只按best_score排序分页。下一步落实过滤语义或收起无效选项；最后检查2026-10-16。
+- AUDIT-ENTRY-ESTIMATE-001 | P2 | Open | 静态项目值显示为AI战前预估 | start/page.tsx:27-90/299-312固定利润率/胜率，未按当前用户/对局计算。下一步标场景示例或接入有依据计算；最后检查2026-10-16。
+- AUDIT-RECOVERY-001 | P1 | Open | 计时同步/复盘失败反馈不完整 | game/page.tsx:950-975同步失败沿用投影且静默重试，result/page.tsx:341-349/526-528复盘失败用规则文案无独立提示/重试。已有幂等/存档和其他错误处理保留；下一步统一状态与恢复反馈；最后检查2026-10-16。
+- AUDIT-KNOWLEDGE-001 | P2 | Open | 知识库孤立样例页 | knowledge/page.tsx:22-28/65-90/151-176为硬编码样例、上传alert、查看删除无handler，主导航无入口。非当前项目一阻断；下一步明确保留范围再接资料存储/检索；最后检查2026-10-16。
+- AUDIT-DOC-001 | P2 | Open | 当前架构资料仍含旧五阶段/四人事实 | context/PROJECT_CONTEXT.md、CURRENT_ARCHITECTURE.md与正式五人/20分钟代码不一致；STATE历史与最新记录并存。下一步更新当前摘要并保留历史日期，不据旧资料重建已完成能力；最后检查2026-10-16。
+
+认证沿用AUTH-001（签名会话已有，不表示真实身份已完成），企业沿用ADMIN-001/BASE-003，教练/联机沿用ADMIN-003/MULTI-002，自定义场景沿用AI-008；NPC质量沿用PROMPT和TEST问题，本批不关闭。新手指引与个人成长路径为待批准的产品建议。完整证据/边界见outputs/2026-10-16-项目结构与用户全流程完整性检查.md。外部当前状态本批未实查。
+
+2026-10-16结构审查最终验证：主线程复核两Worker实际源码证据，报告已保存；三组纯本地回归与TypeScript通过，harness-check和git diff --check通过。全量ESLint长时间未返回，主动中止，未记通过；本批只新增诊断报告/台账，无产品实现修改，不运行build。当前远程配置/数据库/对象存储/生产部署与完整登录态E2E未实查。新增问题与既有AUTH/ADMIN/MULTI/AI/OPS边界已双向核对，未将旧台账的四人五阶段当当前事实。
+
+
+## ACTIVITY-001 — 对话约定活动后的限时文字策划
+- 状态：In Progress
+- 最后检查：2026-10-20
+- 来源：本聊天用户明确批准，完整约束见CURRENT_ITERATION同日条目。
+- 当前证据：正式与五人预览已有权威会话和评价，但缺少客户约定活动检测、300秒持久化策划及幂等指标结算。
+- 下一步：按四模块分工完成实现，主线程独立复核并运行专项、类型、lint、build、harness；远程/生产未实查。
+
+ACTIVITY-001 2026-10-20范围更新：销售提议不要求客户明示同意，结束时冻结状态并按AI/设计师数值模式判定；新增后台模式切换/门槛设置与CAS持久化。仍为In Progress，最终验收以本日追加规则为准。
+
+## ACTIVITY-002 — 多活动可行性批次部分成功的重试一致性
+- 状态：In Progress
+- 最后检查：2026-10-20
+- 证据：独立高风险review确认repository.ts processPendingCustomerActivityDetections在A正常reject/need_more、B provider失败时丢弃内存resolutions；CAS冲突也可能重新调用已成功判断。
+- 下一步：已成功decision逐项原子checkpoint，失败保留queue，CAS重试复用本次已获判断；补A拒绝/B失败后二次A将允许的防复活测试。
+- 影响：可能重抽旧提议导致不一致；未部署本批代码。
+
+### ACTIVITY-001 — 2026-10-20 Resolved（本地实现）
+正式与预览、后台AI/数值切换及三类门槛、销售模糊回应、结束时快照、300秒文字策划、自动提交/现有指标幂等结算已完成。主线程专项/回归、类型、lint、build及mock API浏览器检查通过；SQL最小fixture执行验证通过。证据：harness/evidence/customer-activities-2026-10-20/VERIFICATION.md。远程迁移与真实AI对局仍为部署验证事项，不计作已上线。
+
+### ACTIVITY-002 — 2026-10-20 Resolved
+processPendingCustomerActivityDetections逐项保存成功判断，失败保留待处理队列；同轮CAS冲突复用候选/判断，队首切换不应用旧memo。直接调用实际处理函数的A拒绝/B失败后仅重试B、CAS不重复决策、队列切换回归通过；独立高风险Review复核未发现新增P1/P2，主线程再次通过正式专项与最终检查。
+
+## ACTIVITY-003 — 客户活动转介、重复展示与点评不符新规则
+- 状态：In Progress
+- 来源：2026-10-21用户四点反馈。
+- 证据：customer-activity-reply.ts允许高层建议找项目同事；两条planner同时显示summary与basis；公开投影直接返回存储overallEvaluation，真实快测显示长建议。
+- 下一步：按本日已批准条目修复并核查快测权威指标；内部结算不变。
+
+### ACTIVITY-003 — 2026-10-21 Resolved（本地实现）
+转介识别/重写覆盖正式与预览（customer-activity-reply.ts、project-one-preview-ai.ts）；公共toPublicCustomerActivityTask只投影简短结果，旧点评不下发；正式planner及预览HTML去重并按状态展示。内部指标及结算未变。主线程相关专项、类型、全量lint与生产build通过；快测权威数据已只读核查并记录脱敏证据。完整证据/本批边界见harness/evidence/customer-activities-2026-10-21/VERIFICATION.md，远程部署未执行。
+
+## SEC-TEST-001 — 测试子任务误将Jev密钥输出到工具日志
+- 状态：Open
+- 最后检查：2026-10-21
+- 来源：metric-matrix子任务自报初次rg配置搜索包含.env.local，JEV_API_KEY值进入该子任务工具结果。
+- 处理：已要求禁止打印环境文件，后续dotenv加载并只输出白名单provider名称/存在性；密钥不抄录到证据。用户已告知，凭证尚未轮换，待用户在供应商后台轮换；不得无授权自动修改凭证。
+- 边界：未发现写入Git/报告；工具日志披露不等于证明外部滥用。
+
+## ACTIVITY-004 — AI活动可行性对关系指标区分不足
+- 状态：Open
+- 最后检查：2026-10-21
+- 证据：用户授权真实Jev测试，三活动×六状态18/18返回allow，包括支持0/愉悦10；模型jev-1.13.0。请求snapshot与输入、原始答案与业务结果经主线程逐条审计一致。证据customer-activities-2026-10-21/metric-matrix/。
+- 边界：固定虚构高层/采购评估背景，每单元一次判断；不代表所有角色/上下文都必然放行，也不证明单一根因。
+- 下一步：用户确认更明确的AI拒绝/放行标准后再修提示或策略、重跑矩阵。当前不擅改数值门槛/后台provider。
+
+## ACTIVITY-005 — 现有LLM决策输出示例与严格契约不一致
+- 状态：Open
+- 最后检查：2026-10-21
+- 证据：llm-decision.ts buildDecisionMessages将response外层及choice/score/noul混为示例，而normalizeAnswers要求根answers及按题型独立type/choice字段。实测18格均产出不符格式，业务统一provider_unavailable；测试端追加准确JSON说明后18格全部通过校验。
+- 下一步：批准修正通用LLM输出格式提示后，补choice/score/noul混合题型及真实模型验证；保持严格解析，不用宽松接受任意JSON掩盖问题。
+- 边界：本批仅测试端补充格式，未修产品，不宣称LLM分支全局可用；ACTIVITY-004指标区分不足仍存在。
+
+## ACTIVITY-006 — 数值匹配仅看目标NPC，需整体组合门槛
+- 状态：In Progress
+- 来源：2026-10-21用户授权设置整体组合数值门槛。
+- 证据：customer-activities.ts原threshold与snapshot仅单人，AI numeric只比较目标支持/愉悦；正式/预览快照未附五人组织状态，后台每类仅两项数字。
+- 目标：全五冻结、组合OR/AND、至少两名实际达标、客户主动亦不豁免、新numeric保存必须whole规则，保持历史读取/计时/幂等/隐藏指标。
+- 下一步：按本日approved设计实现并验证，最后真实保存numeric配置与权威readback。
+
+### ACTIVITY-006 — 2026-10-21 Resolved（本地代码+真实后台配置）
+领域/AI numeric gate、正式state与预览服务完成全五冻结和多路径判定；新配置API/仓储/后台编辑完成组织规则，禁止单人numeric新写；matching专用loader阻断旧单人numeric用于新对话，历史冻结队列不变。客户主动不豁免、目标对象不影响判断，公共投影隐藏内部数值。独立review P2已修复复核。主线程相关专项/类型/全量lint/build通过；真实设计师页面保存numeric rev3且数据库readback一致，实际保存配置240条场景断言通过。证据organization-thresholds/VERIFICATION.md、config-readback.json、saved-config-scenarios.json与截图。远程代码部署及新真实模型完整对局未验证，首版难度待实战调校。
+
+ACTIVITY-004 2026-10-21补充：AI区分不足本身仍未修改；当前活动配置已切为整体numeric v3，日常新匹配由数值门槛控制，不继续依赖AI开展判断。保留Open以追踪可选AI模式质量，不将切换数值当AI已修好。

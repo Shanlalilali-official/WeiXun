@@ -25,9 +25,10 @@ const expectedQuestionTypes: Record<string, Record<string, string>> = {
   preview_message: { responseAction: 'choice', invitationStatus: 'choice' },
   preview_wechat_request: { accepted: 'noul' },
   preview_visit: { needsDetail: 'noul', completedTask: 'choice', playerDialogueSignal: 'choice', npcDialogueSignal: 'choice' },
+  customer_activity_feasibility: { decision: 'choice' },
 };
 
-assert.equal(JEV_DESIGNER_TASK_CATALOG.length, 10);
+assert.equal(JEV_DESIGNER_TASK_CATALOG.length, 11);
 assert.deepEqual(JEV_DESIGNER_TASK_CATALOG.map((task) => task.taskId), [...JEV_DESIGNER_TASK_IDS]);
 for (const task of JEV_DESIGNER_TASK_CATALOG) {
   const actual = Object.fromEntries(task.questions.map((question) => [question.id, question.type]));

@@ -823,6 +823,19 @@ export default function DesignerPage() {
               </button>
 
               <button
+                onClick={() => router.push('/designer/customer-activities')}
+                className="group rounded-xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-emerald-400/60 hover:shadow-md"
+              >
+                <div className="mb-4 flex items-center justify-between">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600"><ClipboardList className="h-5 w-5" /></span>
+                  <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-700">活动判定</span>
+                </div>
+                <div className="text-sm font-semibold text-foreground">客户活动匹配设置</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">选择 AI 综合判断，或按支持度与愉悦度门槛匹配活动。</p>
+                <div className="mt-4 text-xs font-medium text-emerald-700">配置活动判定方式 →</div>
+              </button>
+
+              <button
                 onClick={() => router.push('/designer/ai-provider')}
                 className="group rounded-xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-blue-400/60 hover:shadow-md"
               >

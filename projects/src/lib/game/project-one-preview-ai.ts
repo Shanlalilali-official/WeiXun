@@ -7,6 +7,46 @@ import { buildJevCandidateNpcSummaries, buildJevNpcProfile } from '@/lib/ai/jev-
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import {
+  customerActivityReplyInstruction,
+  customerActivityReplySignals,
+  reviewCustomerActivityReplySemantically,
+  type CustomerActivityReplyContext,
+  type CustomerActivityReplyDiagnostic,
+  type CustomerActivityReplySemanticInvoker,
+  type CustomerActivityReplySemanticReview,
+} from '@/lib/ai/customer-activity-reply';
+import { isCustomerActivityReplyContext } from '@/lib/game/invitation-intent';
+import {
+  decideCustomerActivityFeasibility,
+  detectCustomerActivityProposals,
+  evaluateCustomerActivityPlan,
+  type CustomerActivityInvoker,
+} from '@/lib/ai/customer-activities';
+import {
+  CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS,
+  DEFAULT_ACTIVITY_DECISION_CONFIG,
+  CUSTOMER_ACTIVITY_CONVERSATION_MAX_LENGTH,
+  CUSTOMER_ACTIVITY_CONVERSATION_MAX_MESSAGES,
+  activityDecisionConfigSchema,
+  customerActivityRelationshipSnapshotSchema,
+  createEmptyCustomerActivityState,
+  recordCustomerActivityProposalDecision,
+  customerActivityConversationMessageSchema,
+  type ActivityDecisionConfig,
+  type CustomerActivityRelationshipSnapshot,
+  finalizeExpiredCustomerActivities,
+  readCustomerActivityState,
+  recordCustomerActivityEvaluation,
+  saveCustomerActivityDraft,
+  startCustomerActivityPlanning,
+  submitCustomerActivityPlan,
+  toPublicCustomerActivityTask,
+  type CustomerActivityConversationMessage,
+  type CustomerActivityState,
+  type CustomerActivityTask,
+  type CustomerActivityType,
+} from '@/lib/game/customer-activities';
+import {
   briefVisitAiOutputSchema, messageAiOutputSchema, previewAiResponseSchema,
   previewAppointmentSchema, previewAppointmentStatusSchema, previewEndReasonSchema, previewInvitationStatusSchema, previewNpcExpressionSchema, previewNpcIdSchema, previewVisitTaskSchema, type PreviewAiRequest, type PreviewAiResponse,
   previewNpcEvaluationAiOutputSchema, previewReadNoReplyReasonCodeSchema, previewWorkingMemoryStatusSchema, previewWorkingMemoryTypeSchema,
@@ -77,10 +117,55 @@ type ActiveMeeting = {
   npcId: PreviewNpcId;
   turn: number;
   completedTasks: VisitTask[];
+  customerActivityConversationId?: string;
+  customerActivityStartIndex?: number;
   ended: boolean;
   endReason?: z.infer<typeof previewEndReasonSchema>;
   awaitingFinalReplyFrom?: 'player';
 };
+type CustomerActivityChannel = 'email' | 'wechat';
+type CustomerActivityChannelCursors = Partial<Record<PreviewNpcId, Partial<Record<CustomerActivityChannel, { conversationId: string }>>>>;
+type PendingCustomerActivityDetection = {
+  npcId: PreviewNpcId;
+  conversationId: string;
+  channel: CustomerActivityChannel | 'work_phone' | 'visit';
+  endMessageIndex: number;
+  messages: CustomerActivityConversationMessage[];
+  relationshipSnapshot: CustomerActivityRelationshipSnapshot;
+  decisionConfig: ActivityDecisionConfig;
+};
+type CustomerActivityDiagnosticEntry = {
+  at: number;
+  event: string;
+  conversationId?: string;
+  npcId?: PreviewNpcId;
+  channel?: CustomerActivityChannel | 'work_phone' | 'visit';
+  activityType?: CustomerActivityType;
+  messageId?: string;
+  reason?: string;
+  errorCode?: string;
+  configRevision?: number;
+  decision?: 'allow' | 'reject' | 'need_more';
+  details?: Record<string, unknown>;
+  organizationSnapshot?: Array<{ npcId: PreviewNpcId; support: number; pleasantness: number }>;
+};
+const pendingCustomerActivityDetectionSchema = z.object({
+  npcId: previewNpcIdSchema,
+  conversationId: z.string().min(1).max(200),
+  channel: z.enum(['email', 'wechat', 'work_phone', 'visit']),
+  endMessageIndex: z.number().int().nonnegative(),
+  messages: z.array(customerActivityConversationMessageSchema).min(1).max(120),
+  relationshipSnapshot: customerActivityRelationshipSnapshotSchema,
+  decisionConfig: activityDecisionConfigSchema,
+}).strict();
+const legacyPendingCustomerActivityDetectionSchema = pendingCustomerActivityDetectionSchema.omit({
+  relationshipSnapshot: true,
+  decisionConfig: true,
+});
+const customerActivityCursorSchema = z.object({
+  conversationId: z.string().min(1).max(200),
+  startMessageIndex: z.number().int().nonnegative().optional(),
+}).strict();
 export type PreviewAppointment = z.infer<typeof previewAppointmentSchema>;
 type WorkingMemoryType = z.infer<typeof previewWorkingMemoryTypeSchema>;
 type WorkingMemoryStatus = z.infer<typeof previewWorkingMemoryStatusSchema>;
@@ -97,6 +182,12 @@ export type PreviewServerState = {
   userId: string; previewSessionId: string; conversations: Record<PreviewNpcId, ConversationMessage[]>;
   wechat: Partial<Record<PreviewNpcId, 'accepted' | 'rejected'>>; appointments: Partial<Record<PreviewNpcId, PreviewAppointment>>;
   activeMeeting: ActiveMeeting | null; lastActiveAt: number;
+  customerActivities: CustomerActivityState;
+  activeCustomerActivityConversation: { npcId: PreviewNpcId; channel: 'work_phone'; conversationId: string; startMessageIndex: number } | null;
+  customerActivityChannelCursors: CustomerActivityChannelCursors;
+  pendingCustomerActivityDetections: PendingCustomerActivityDetection[];
+  /** Private server-only activity pipeline audit, capped to avoid unbounded session growth. */
+  customerActivityDiagnostics: CustomerActivityDiagnosticEntry[];
   approvedVisitPreparations: Partial<Record<PreviewNpcId, string>>;
   npcStates: Record<PreviewNpcId, PreviewNpcRuntimeState>;
   version: number; completedCommands: Map<string, PreviewAiResponse>;
@@ -145,7 +236,7 @@ function newNpcStates(): Record<PreviewNpcId, PreviewNpcRuntimeState> {
   }])) as unknown as Record<PreviewNpcId, PreviewNpcRuntimeState>;
 }
 export function createPreviewServerState(userId: string, previewSessionId: string, now = Date.now()): PreviewServerState {
-  return { userId, previewSessionId, conversations: newConversations(), wechat: {}, appointments: {}, activeMeeting: null, lastActiveAt: now, approvedVisitPreparations: {}, npcStates: newNpcStates(), version: 0, completedCommands: new Map() };
+  return { userId, previewSessionId, conversations: newConversations(), wechat: {}, appointments: {}, activeMeeting: null, lastActiveAt: now, customerActivities: createEmptyCustomerActivityState(), activeCustomerActivityConversation: null, customerActivityChannelCursors: {}, pendingCustomerActivityDetections: [], customerActivityDiagnostics: [], approvedVisitPreparations: {}, npcStates: newNpcStates(), version: 0, completedCommands: new Map() };
 }
 
 export function toPersistedPreviewServerState(state: PreviewServerState): PersistedPreviewServerState {
@@ -185,14 +276,59 @@ export function fromPersistedPreviewServerState(
   const initial = createPreviewServerState(userId, previewSessionId);
   if (!value || typeof value !== 'object' || Array.isArray(value)) return { ...initial, version };
   const stored = value as Partial<PersistedPreviewServerState>;
-  return {
+  const restored = {
     ...initial,
     ...structuredClone(stored),
+    customerActivities: readCustomerActivityState(stored.customerActivities),
+    pendingCustomerActivityDetections: [],
+    customerActivityDiagnostics: Array.isArray(stored.customerActivityDiagnostics)
+      ? structuredClone(stored.customerActivityDiagnostics).slice(-200)
+      : [],
     userId,
     previewSessionId,
     version,
     completedCommands: new Map(),
-  };
+  } as PreviewServerState;
+  if (stored.pendingCustomerActivityDetections !== undefined) {
+    const pendingRows = z.array(z.unknown()).max(100).parse(stored.pendingCustomerActivityDetections);
+    restored.pendingCustomerActivityDetections = pendingRows.map((value) => {
+      const current = pendingCustomerActivityDetectionSchema.safeParse(value);
+      if (current.success) return current.data;
+      if (value && typeof value === 'object' && !Array.isArray(value)
+        && ('relationshipSnapshot' in value || 'decisionConfig' in value)) {
+        throw new Error('INVALID_CUSTOMER_ACTIVITY_DETECTION_QUEUE');
+      }
+      const legacy = legacyPendingCustomerActivityDetectionSchema.safeParse(value);
+      if (!legacy.success) throw new Error('INVALID_CUSTOMER_ACTIVITY_DETECTION_QUEUE');
+      return pendingCustomerActivityDetectionSchema.parse({
+        ...legacy.data,
+        // Old queue entries had no relationship snapshot. Keep the legacy
+        // single-NPC fallback, but never invent a historical organization
+        // snapshot from today's state.
+        relationshipSnapshot: customerActivityRelationshipSnapshot(restored, legacy.data.npcId, { includeOrganization: false }),
+        decisionConfig: DEFAULT_ACTIVITY_DECISION_CONFIG,
+      });
+    });
+  }
+  const cursorObject = stored.customerActivityChannelCursors;
+  if (cursorObject && typeof cursorObject === 'object' && !Array.isArray(cursorObject)) {
+    for (const npcId of PREVIEW_NPC_IDS) {
+      const npcCursors = (cursorObject as Record<string, unknown>)[npcId];
+      if (!npcCursors || typeof npcCursors !== 'object' || Array.isArray(npcCursors)) continue;
+      const channels: Partial<Record<CustomerActivityChannel, { conversationId: string }>> = {};
+      for (const channel of ['email', 'wechat'] as const) {
+        const cursor = (npcCursors as Record<string, unknown>)[channel];
+        if (cursor !== undefined) channels[channel] = { conversationId: customerActivityCursorSchema.parse(cursor).conversationId };
+      }
+      restored.customerActivityChannelCursors[npcId] = channels;
+    }
+  }
+  // A legacy active visit has no reliable start boundary. Begin its activity
+  // window at restoration so no messages from earlier visits can be matched.
+  if (restored.activeMeeting && restored.activeMeeting.customerActivityStartIndex === undefined) {
+    restored.activeMeeting.customerActivityStartIndex = restored.conversations[restored.activeMeeting.npcId]?.length ?? 0;
+  }
+  return restored;
 }
 /** Process-local preview state; this is intentionally not persistent game state. */
 export class PreviewSessionStore {
@@ -326,6 +462,14 @@ const invokeDefaultJev: PreviewJevInvoker = (request) => {
   return invokeConfiguredJev(taskId, request, invokeJev);
 };
 
+/** Activity feasibility uses an object-shaped request with its own designer task. */
+export function createPreviewCustomerActivityJevInvoker(
+  configuredInvoker: typeof invokeConfiguredJev = invokeConfiguredJev,
+  baseInvoker: JevInvoker = invokeJev,
+): PreviewJevInvoker {
+  return (request) => configuredInvoker('customer_activity_feasibility', request, baseInvoker);
+}
+
 const narrativeContentAiOutputSchema = z.object({
   content: z.string().trim().min(1).max(2_000),
   appointment: z.object({
@@ -398,7 +542,7 @@ function hasNpcSpeakerIdentityViolation(npcId: PreviewNpcId, text: string): bool
     .map((alias) => alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .join('|');
   const selfAddress = new RegExp(
-    `^\\s*(?:(?:喂|您好|你好|您)\\s*[，,、]?\\s*(?:${aliases})|(?:${aliases})\\s*(?:您好|你好|，|,|。|！|!|？|\\?|、))`,
+    `^\\s*(?:(?:喂|您好|你好|您)\\s*[，,、]?\\s*(?:${aliases})|(?:${aliases})\\s*(?:您好|你好|，|,|。|！|!|？|\\?|、|:|：))`,
     'i',
   );
   return selfAddress.test(text.trim()) || NPC_VENDOR_SELF_IDENTIFICATION_PATTERN.test(text);
@@ -544,9 +688,15 @@ type StructuredAiQualityGate<T> = {
   check: (value: T) => boolean;
   retryInstruction: string;
   fallback: T;
+  semanticReview?: (value: T, attempt: number) => Promise<CustomerActivityReplySemanticReview>;
 };
 
-function safeNpcReplyFallback(npcId: PreviewNpcId, channel: string): string {
+function safeNpcReplyFallback(npcId: PreviewNpcId, channel: string, activityProposal = false): string {
+  if (activityProposal) {
+    return PREVIEW_NPCS[npcId].level === '高层'
+      ? '这个建议我先记下了，会结合项目情况考虑，必要时和公司内部商量，再给您反馈。'
+      : '这个建议我先记下了，会先向上级汇报，再给您反馈。';
+  }
   const spoken: Record<PreviewNpcId, string> = {
     'P1-001': '我在听，请先用一句话说明要点。',
     'P1-002': '请先说明具体问题和对应的数据依据。',
@@ -564,15 +714,44 @@ function safeNpcReplyFallback(npcId: PreviewNpcId, channel: string): string {
   return channel === 'work_phone' ? spoken[npcId] : written[npcId];
 }
 
+/** Keep contextual activity replies, including follow-ups and withdrawals, out of legacy appointment handling. */
+function isCustomerActivityProposalText(state: PreviewServerState, npcId: PreviewNpcId, text: string): boolean {
+  const recentConversation = historyFor(state, npcId).slice(-8).map((message) => ({
+    speaker: message.role === 'player' ? 'sales' as const : 'customer' as const,
+    text: message.text,
+  }));
+  return isCustomerActivityReplyContext(text, recentConversation);
+}
+function customerActivityReplyGuide(npcId: PreviewNpcId): string {
+  return customerActivityReplyInstruction(PREVIEW_NPCS[npcId].level);
+}
+
 function npcSpeakerIdentityQualityGate<T extends { content: string }>(
   npcId: PreviewNpcId,
   channel: string,
+  activityProposal = false,
+  reviewContext?: CustomerActivityReplyContext,
+  onDiagnostic?: (diagnostic: CustomerActivityReplyDiagnostic) => void,
+  reviewInvoker?: CustomerActivityReplySemanticInvoker,
 ): StructuredAiQualityGate<T> {
   const npc = PREVIEW_NPCS[npcId];
   return {
-    check: (value) => !hasNpcSpeakerIdentityViolation(npcId, value.content),
-    retryInstruction: `NPC 发言身份校验失败。当前你扮演的是 ${npc.name}（${npc.title}，人物 ID ${npcId}），正在通过 ${channel} 回复玩家。请以该 NPC 的第一人称重写：不要称呼自己为“${npc.name}”或“${npc.name.slice(0, 1)}总”，不要自称供应商、乙方、销售、服务商或交付团队；不要编造身份、事实或承诺。只输出符合原 JSON 契约的修正正文。`,
-    fallback: { content: safeNpcReplyFallback(npcId, channel) } as T,
+    check: (value) => !hasNpcSpeakerIdentityViolation(npcId, value.content)
+      && (!activityProposal || !('appointment' in value && value.appointment)),
+    retryInstruction: `发言身份校验失败。NPC 回复校验失败。NPC 回复质量校验失败。当前你扮演的是 ${npc.name}（${npc.title}，人物 ID ${npcId}），正在通过 ${channel} 回复玩家。请以该 NPC 第一人称重写，不要称呼自己为“${npc.name}”或“${npc.name.slice(0, 1)}总”，不要自称供应商、乙方、销售、服务商或交付团队，也不要编造事实、承诺、姓名或安排。${activityProposal ? `${customerActivityReplyGuide(npcId)}本轮上下文涉及新提议或尚未确认活动的后续讨论/追问时，仍不得提前接受、确认时间或让销售联系第三人；应由本人按职责考虑/内部商量或向上级汇报，并后续反馈。仅玩家明确撤回、纯历史，或已转到无关话题时，不强迫继续汇报活动。` : ''}只输出符合原 JSON 契约的修正正文。`,
+    fallback: { content: safeNpcReplyFallback(npcId, channel, activityProposal) } as T,
+    ...(activityProposal ? {
+      semanticReview: async (value: T, attempt: number) => {
+        const signal = customerActivityReplySignals(value.content, npc.level)[0] ?? 'disposition';
+        const context = reviewContext ?? { playerMessage: '' };
+        return reviewCustomerActivityReplySemantically({
+          id: npcId,
+          name: npc.name,
+          title: npc.title,
+          category: npc.level,
+        }, channel, value.content, context, { signal, attempt, ...(reviewInvoker ? { invoker: reviewInvoker } : {}), onDiagnostic });
+      },
+    } : {}),
   };
 }
 
@@ -589,6 +768,9 @@ async function callStructuredAi<T>(
       const messages: ChatMessage[] = attempt === 0 ? base : [...base,
         { role: 'user', content: serializeUntrustedPromptData('previous_invalid_model_output', { reason: failure }, { maxStringLength: 600, maxTotalLength: 1200 }) },
         ...(qualityGate && failure === 'npc_speaker_identity_invalid' ? [{ role: 'user' as const, content: qualityGate.retryInstruction }] : []),
+        ...(qualityGate && failure.startsWith('customer_activity_semantic:') ? [
+          { role: 'system' as const, content: `${qualityGate.retryInstruction}\n语义复核确认的问题类别：${failure.slice('customer_activity_semantic:'.length)}。请按规则修正该问题。` },
+        ] : []),
         { role: 'user', content: '请纠正上一轮输出，只返回符合指定 JSON 结构的对象。' },
       ];
       if (activeLlmCalls >= MAX_CONCURRENT_LLM_CALLS) throw new PreviewAiError('limit', 'PREVIEW_AI_CONCURRENCY_LIMIT');
@@ -601,8 +783,17 @@ async function callStructuredAi<T>(
       }
       const parsed = schema.safeParse(parseAiJsonObject(raw));
       if (parsed.success) {
-        if (!qualityGate || qualityGate.check(parsed.data)) return parsed.data;
-        failure = 'npc_speaker_identity_invalid';
+        if (!qualityGate) return parsed.data;
+        if (!qualityGate.check(parsed.data)) {
+          failure = 'npc_speaker_identity_invalid';
+          if (attempt === 1) return qualityGate.fallback;
+          continue;
+        }
+        if (!qualityGate.semanticReview) return parsed.data;
+        const review = await qualityGate.semanticReview(parsed.data, attempt);
+        if (review.result === 'allowed') return parsed.data;
+        if (review.result !== 'violation') return qualityGate.fallback;
+        failure = `customer_activity_semantic:${review.issue}`;
         if (attempt === 1) return qualityGate.fallback;
       } else {
         failure = parsed.error.issues.map((issue) => issue.path.join('.') || issue.message).join(', ').slice(0, 600);
@@ -721,19 +912,16 @@ function messageDecisionFallback(
   hasAppointmentDraft: boolean,
 ): MessageDecision {
   const hardBlocker = isHardBlockerText(playerText);
-  const invitation = /(?:方便|见面|拜访|预约|安排|明天|后天|下周|会议)/i.test(playerText);
-  const rejected = /(?:不方便|拒绝|不能接受|暂不|不考虑)/i.test(playerText);
   const naturalClosure = /^(?:收到|好的|好|谢谢|感谢|明白|了解)[，。！!、\s]*(?:谢谢|感谢)?[。！!]?$/i.test(playerText.trim());
   if (hardBlocker) return { responseAction: 'reply', invitationStatus: 'rejected' };
   if (allowReadNoReply && naturalClosure) {
     return { responseAction: 'read_no_reply', invitationStatus: 'none', reasonCode: 'natural_closure' };
   }
-  if (rejected) return { responseAction: 'reply', invitationStatus: 'rejected' };
-  if (invitation && (hasAppointmentDraft || /(?:方便|见面|拜访|预约)/i.test(playerText))) {
-    return { responseAction: 'reply', invitationStatus: 'accepted' };
-  }
   // Work phone has always been synchronous/reply-only in the public contract.
   // Its invitation status is still a Jev decision when Jev is available.
+  // Provider/schema failure must not guess that an ordinary invitation was
+  // accepted or rejected from a single keyword.
+  void hasAppointmentDraft;
   void channel;
   return { responseAction: 'reply', invitationStatus: 'none' };
 }
@@ -1105,8 +1293,455 @@ function meetingResponse(state: PreviewServerState) {
     ...(meeting.awaitingFinalReplyFrom ? { awaitingFinalReplyFrom: meeting.awaitingFinalReplyFrom } : {}),
     turn: meeting.turn,
     completedTasks: meeting.completedTasks,
+    historyMessageIds: activeVisitMessageIds(state, meeting),
   };
 }
+
+function activeVisitMessageIds(state: PreviewServerState, meeting: ActiveMeeting): string[] {
+  const messages = state.conversations[meeting.npcId];
+  const startIndex = typeof meeting.customerActivityStartIndex === 'number'
+    ? Math.max(0, Math.min(messages.length, Math.floor(meeting.customerActivityStartIndex)))
+    : messages.length;
+  return messages.slice(startIndex).filter((message) => message.channel === 'visit').map((message) => message.messageId);
+}
+
+function toCustomerActivityMessages(messages: ConversationMessage[]): CustomerActivityConversationMessage[] {
+  const mapped: CustomerActivityConversationMessage[] = messages.map((message) => ({
+    messageId: message.messageId,
+    speaker: message.role === 'player' ? 'sales' : 'customer',
+    text: message.text,
+  }));
+  const reversed: CustomerActivityConversationMessage[] = [];
+  let totalLength = 0;
+  for (const message of mapped.reverse()) {
+    if (reversed.length >= CUSTOMER_ACTIVITY_CONVERSATION_MAX_MESSAGES
+      || totalLength + message.text.length > CUSTOMER_ACTIVITY_CONVERSATION_MAX_LENGTH) break;
+    reversed.push(message);
+    totalLength += message.text.length;
+  }
+  return reversed.reverse();
+}
+
+function customerActivityRelationshipSnapshot(
+  state: PreviewServerState,
+  npcId: PreviewNpcId,
+  options: { includeOrganization?: boolean } = {},
+): CustomerActivityRelationshipSnapshot {
+  const npc = PREVIEW_NPCS[npcId];
+  const runtime = state.npcStates[npcId];
+  const clampMetric = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
+  const includeOrganization = options.includeOrganization ?? true;
+  return customerActivityRelationshipSnapshotSchema.parse({
+    npcId,
+    role: npc.level,
+    title: npc.title,
+    context: npc.organization.slice(0, 8_000),
+    stage: resolvePreviewNode(runtime),
+    support: clampMetric(runtime.support),
+    pleasantness: clampMetric(runtime.pleasantness),
+    dimensions: {
+      decisionAnalysis: clampMetric(runtime.dimensionScores.decisionAnalysis),
+      relationshipBuilding: clampMetric(runtime.dimensionScores.relationshipBuilding),
+      valuePresentation: clampMetric(runtime.dimensionScores.valuePresentation),
+      objectionHandling: clampMetric(runtime.dimensionScores.objectionHandling),
+      informationDiscovery: clampMetric(runtime.dimensionScores.informationDiscovery),
+    },
+    ...(includeOrganization ? {
+      organization: {
+        members: CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS.map((organizationNpcId) => ({
+          npcId: organizationNpcId,
+          support: clampMetric(state.npcStates[organizationNpcId].support),
+          pleasantness: clampMetric(state.npcStates[organizationNpcId].pleasantness),
+        })),
+      },
+    } : {}),
+  });
+}
+
+const CUSTOMER_ACTIVITY_DIAGNOSTIC_LIMIT = 200;
+const customerActivityDiagnosticEnumDetails: Record<string, ReadonlySet<string>> = {
+  detection_source: new Set(['deterministic_sales_proposal', 'llm_customer_proposal', 'sales_negation_semantic_review', 'llm_sales_semantic_fallback']),
+  model_classification: new Set(['active', 'not_proposed', 'withdrawn', 'unclear']),
+  model_skipped_reason: new Set(['sales_proposal_guaranteed_by_rule']),
+  initiator: new Set(['sales', 'customer']),
+  signal: new Set(['refusal', 'referral', 'commitment', 'disposition']),
+  result: new Set(['allowed', 'violation', 'unclear', 'unavailable']),
+  violation: new Set(['none', 'refusal', 'referral', 'commitment', 'missing_disposition', 'compliance', 'identity']),
+  responseKind: new Set(['explicit_acceptance', 'ambiguous', 'rejected', 'unclear', 'not_required']),
+  response_kind: new Set(['explicit_acceptance', 'ambiguous', 'rejected', 'unclear', 'not_required']),
+  finalStatus: new Set(['active', 'cancelled', 'unclear']),
+  final_status: new Set(['active', 'cancelled', 'unclear']),
+};
+const customerActivityDiagnosticNumericDetails = new Set(['attempt', 'confidence', 'candidate_count', 'count', 'evidence_start', 'evidence_end', 'endMessageIndex', 'messageCount', 'startMessageIndex', 'withdrawal_message_count']);
+
+function recordCustomerActivityDiagnostic(
+  state: PreviewServerState,
+  entry: Omit<CustomerActivityDiagnosticEntry, 'at'>,
+  at = Date.now(),
+): void {
+  const details = entry.details
+    ? Object.fromEntries(Object.entries(entry.details).flatMap(([key, value]) => {
+        if (customerActivityDiagnosticEnumDetails[key]?.has(String(value))) return [[key, value]];
+        if (customerActivityDiagnosticNumericDetails.has(key) && typeof value === 'number' && Number.isFinite(value)) {
+          if (key === 'attempt') return value === 0 || value === 1 ? [[key, value]] : [];
+          if (['evidence_start', 'evidence_end', 'withdrawal_message_count'].includes(key)) {
+            return Number.isSafeInteger(value) && value >= 0 && value <= 60_000 ? [[key, value]] : [];
+          }
+          return [[key, Math.max(0, Math.min(key === 'confidence' ? 1 : Number.MAX_SAFE_INTEGER, value))]];
+        }
+        if (key === 'errorName' && typeof value === 'string' && /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(value)) return [[key, value]];
+        if (key === 'evidence_digest' && typeof value === 'string' && /^[a-f0-9]{12}$/.test(value)) return [[key, value]];
+        if (key === 'withdrawal_message_id' && typeof value === 'string' && /^[A-Za-z0-9:_-]{1,160}$/.test(value)) return [[key, value]];
+        if (key === 'evidence_valid' && typeof value === 'boolean') return [[key, value]];
+        return [];
+      }))
+    : undefined;
+  const safeEntry = { ...entry };
+  delete safeEntry.details;
+  delete safeEntry.errorCode;
+  const errorCode = entry.errorCode && /^[A-Z][A-Z0-9_]{1,100}$/.test(entry.errorCode) ? entry.errorCode : undefined;
+  state.customerActivityDiagnostics.push({
+    ...safeEntry,
+    event: entry.event.slice(0, 80),
+    ...(entry.reason ? { reason: entry.reason.slice(0, 160) } : {}),
+    ...(errorCode ? { errorCode } : {}),
+    ...(details && Object.keys(details).length ? { details } : {}),
+    at: Math.floor(at),
+  });
+  if (state.customerActivityDiagnostics.length > CUSTOMER_ACTIVITY_DIAGNOSTIC_LIMIT) {
+    state.customerActivityDiagnostics.splice(0, state.customerActivityDiagnostics.length - CUSTOMER_ACTIVITY_DIAGNOSTIC_LIMIT);
+  }
+}
+
+function customerActivityReplyDiagnostics(
+  state: PreviewServerState,
+  npcId: PreviewNpcId,
+  channel: CustomerActivityDiagnosticEntry['channel'],
+  messageId: string,
+): (diagnostic: CustomerActivityReplyDiagnostic) => void {
+  return (diagnostic) => recordCustomerActivityDiagnostic(state, {
+    event: diagnostic.event,
+    reason: `customer_activity_reply_${diagnostic.result}`,
+    npcId,
+    channel,
+    messageId,
+    conversationId: `reply:${messageId}`,
+    details: {
+      signal: diagnostic.signal,
+      result: diagnostic.result,
+      violation: diagnostic.violation,
+      evidence_valid: diagnostic.evidence_valid,
+      attempt: diagnostic.attempt,
+      ...(diagnostic.evidence_start === undefined ? {} : { evidence_start: diagnostic.evidence_start }),
+      ...(diagnostic.evidence_end === undefined ? {} : { evidence_end: diagnostic.evidence_end }),
+      ...(diagnostic.evidence_digest === undefined ? {} : { evidence_digest: diagnostic.evidence_digest }),
+    },
+  });
+}
+
+function customerActivityReplyContext(
+  state: PreviewServerState,
+  npcId: PreviewNpcId,
+  playerMessage: string,
+): CustomerActivityReplyContext {
+  return {
+    playerMessage,
+    recentConversation: historyFor(state, npcId).slice(-8).map((message) => ({
+      speaker: message.role === 'player' ? 'sales' as const : 'customer' as const,
+      text: message.text,
+    })),
+  };
+}
+
+function queueCustomerActivityDetection(
+  state: PreviewServerState,
+  args: Omit<PendingCustomerActivityDetection, 'messages' | 'relationshipSnapshot'> & { messages: ConversationMessage[] },
+): void {
+  const messages = toCustomerActivityMessages(args.messages);
+  if (messages.length < 1) {
+    recordCustomerActivityDiagnostic(state, {
+      event: 'conversation_not_queued', npcId: args.npcId, conversationId: args.conversationId,
+      channel: args.channel, reason: 'conversation_requires_sales_and_customer_messages',
+      details: { messageCount: messages.length },
+    });
+    return;
+  }
+  const pending = pendingCustomerActivityDetectionSchema.parse({
+    ...args,
+    messages,
+    relationshipSnapshot: customerActivityRelationshipSnapshot(state, args.npcId),
+    decisionConfig: structuredClone(args.decisionConfig),
+  });
+  const index = state.pendingCustomerActivityDetections.findIndex((item) => item.conversationId === pending.conversationId);
+  if (index >= 0) {
+    recordCustomerActivityDiagnostic(state, {
+      event: 'conversation_duplicate_queue', npcId: pending.npcId, conversationId: pending.conversationId,
+      channel: pending.channel, reason: 'conversation_already_queued',
+    });
+    return;
+  }
+  if (state.pendingCustomerActivityDetections.length >= 100) {
+    throw new PreviewAiError('limit', 'CUSTOMER_ACTIVITY_DETECTION_QUEUE_FULL');
+  }
+  state.pendingCustomerActivityDetections.push(pending);
+  const organizationSnapshot = pending.relationshipSnapshot.organization?.members.map((member) => ({
+    npcId: member.npcId as PreviewNpcId,
+    support: member.support,
+    pleasantness: member.pleasantness,
+  }));
+  recordCustomerActivityDiagnostic(state, {
+    event: 'conversation_queued',
+    npcId: pending.npcId,
+    conversationId: pending.conversationId,
+    channel: pending.channel,
+    configRevision: pending.decisionConfig.revision,
+    ...(organizationSnapshot ? { organizationSnapshot } : {}),
+    details: { endMessageIndex: pending.endMessageIndex, messageCount: messages.length },
+  });
+}
+
+function queueAsyncCustomerActivityDetection(
+  state: PreviewServerState,
+  npcId: PreviewNpcId,
+  channel: CustomerActivityChannel,
+  decisionConfig: ActivityDecisionConfig,
+): void {
+  const conversation = state.conversations[npcId];
+  const perNpc = state.customerActivityChannelCursors[npcId] ?? (state.customerActivityChannelCursors[npcId] = {});
+  const conversationId = `preview:${state.previewSessionId}:${npcId}:${channel}:${randomUUID()}`;
+  perNpc[channel] = { conversationId };
+  // Include enough same-channel history for a proposal to meet a later response,
+  // without mixing visits, phone calls, or unrelated channels.
+  const messages = conversation.filter((message) => message.channel === channel).slice(-120);
+  queueCustomerActivityDetection(state, {
+    npcId,
+    channel,
+    conversationId,
+    endMessageIndex: conversation.length,
+    messages,
+    decisionConfig,
+  });
+}
+
+function applyCustomerActivityEvaluation(state: PreviewServerState, task: CustomerActivityTask): void {
+  if (!task.evaluation) return;
+  const parsedNpcId = previewNpcIdSchema.safeParse(task.npcId);
+  if (!parsedNpcId.success) return;
+  const npcState = state.npcStates[parsedNpcId.data];
+  const evaluation = task.evaluation;
+  npcState.support = Math.max(0, Math.min(100, npcState.support + evaluation.supportDelta));
+  npcState.pleasantness = Math.max(0, Math.min(100, npcState.pleasantness + evaluation.pleasureDelta));
+  for (const [dimension, delta] of Object.entries(evaluation.dimensionDeltas) as Array<[keyof PreviewNpcRuntimeState['dimensionScores'], number]>) {
+    npcState.dimensionScores[dimension] += delta;
+  }
+}
+
+type CustomerActivitySettlementAttempts = { detections: Set<string>; evaluations: Set<string> };
+
+function toActivityInvoker(invoker: LlmInvoker): CustomerActivityInvoker {
+  return (messages, options) => invoker(messages, {
+    temperature: options?.temperature,
+    maxTokens: options?.maxTokens,
+    jsonMode: options?.jsonMode,
+    thinking: options?.thinking,
+  });
+}
+
+async function settlePendingCustomerActivityDetections(
+  state: PreviewServerState,
+  invoker: LlmInvoker,
+  jevInvoker: PreviewJevInvoker,
+  serverNow: number,
+  attempts: CustomerActivitySettlementAttempts,
+): Promise<void> {
+  let settledCount = 0;
+  for (const pending of [...state.pendingCustomerActivityDetections]) {
+    if (settledCount >= 3 || attempts.detections.has(pending.conversationId)) break;
+    attempts.detections.add(pending.conversationId);
+    recordCustomerActivityDiagnostic(state, {
+      event: 'detection_started', npcId: pending.npcId, conversationId: pending.conversationId,
+      channel: pending.channel, configRevision: pending.decisionConfig.revision,
+    }, serverNow);
+    try {
+      const candidates = await detectCustomerActivityProposals({
+        conversationEnded: true,
+        conversationId: pending.conversationId,
+        npcId: pending.npcId,
+        messages: pending.messages,
+      }, {
+        invoker: toActivityInvoker(invoker),
+        onDiagnostic: (diagnostic) => recordCustomerActivityDiagnostic(state, {
+          event: diagnostic.event,
+          npcId: pending.npcId,
+          conversationId: pending.conversationId,
+          channel: pending.channel,
+          configRevision: pending.decisionConfig.revision,
+          ...(diagnostic.activityType ? { activityType: diagnostic.activityType } : {}),
+          ...(diagnostic.messageId ? { messageId: diagnostic.messageId } : {}),
+          ...(diagnostic.reason ? { reason: diagnostic.reason } : {}),
+          ...(diagnostic.details ? { details: diagnostic.details } : {}),
+        }, Date.now()),
+      });
+      recordCustomerActivityDiagnostic(state, {
+        event: 'candidates_count', npcId: pending.npcId, conversationId: pending.conversationId,
+        channel: pending.channel, configRevision: pending.decisionConfig.revision,
+        details: { count: candidates.length },
+      }, serverNow);
+      if (!candidates.length) {
+        recordCustomerActivityDiagnostic(state, {
+          event: 'no_candidate', npcId: pending.npcId, conversationId: pending.conversationId,
+          channel: pending.channel, configRevision: pending.decisionConfig.revision,
+          reason: 'activity_detector_returned_no_candidate',
+        }, serverNow);
+      }
+      for (const candidate of candidates) {
+        if (candidate.conversationId !== pending.conversationId || candidate.npcId !== pending.npcId) {
+          recordCustomerActivityDiagnostic(state, {
+            event: 'candidate_filtered', npcId: pending.npcId, conversationId: pending.conversationId,
+            channel: pending.channel, activityType: candidate.type, messageId: candidate.proposalMessageId,
+            reason: 'candidate_source_context_mismatch',
+          }, serverNow);
+          continue;
+        }
+        const alreadyDecided = state.customerActivities.decisions.some((record) =>
+          record.npcId === candidate.npcId
+          && record.type === candidate.type
+          && record.proposalMessageId === candidate.proposalMessageId,
+        );
+        if (alreadyDecided) {
+          recordCustomerActivityDiagnostic(state, {
+            event: 'candidate_duplicate', npcId: candidate.npcId, conversationId: candidate.conversationId,
+            channel: pending.channel, activityType: candidate.type, messageId: candidate.proposalMessageId,
+            reason: 'proposal_already_has_decision', configRevision: pending.decisionConfig.revision,
+          }, serverNow);
+          continue;
+        }
+        const decision = await decideCustomerActivityFeasibility(
+          candidate,
+          pending.relationshipSnapshot,
+          pending.decisionConfig,
+          { invoker: toActivityInvoker(invoker), jevInvoker },
+        );
+        recordCustomerActivityDiagnostic(state, {
+          event: 'threshold_decision', npcId: candidate.npcId, conversationId: candidate.conversationId,
+          channel: pending.channel, activityType: candidate.type, messageId: candidate.proposalMessageId,
+          configRevision: decision.configRevision, decision: decision.decision, reason: decision.reason,
+          ...(pending.relationshipSnapshot.organization ? {
+            organizationSnapshot: pending.relationshipSnapshot.organization.members.map((member) => ({
+              npcId: member.npcId as PreviewNpcId, support: member.support, pleasantness: member.pleasantness,
+            })),
+          } : {}),
+        }, serverNow);
+        const recorded = recordCustomerActivityProposalDecision(
+          state.customerActivities,
+          candidate,
+          pending.relationshipSnapshot,
+          pending.decisionConfig,
+          decision,
+          serverNow,
+        );
+        if (!recorded.recorded) {
+          recordCustomerActivityDiagnostic(state, {
+            event: 'decision_persistence_rejected', npcId: candidate.npcId, conversationId: candidate.conversationId,
+            channel: pending.channel, activityType: candidate.type, messageId: candidate.proposalMessageId,
+            configRevision: pending.decisionConfig.revision, reason: 'customer_activity_domain_rejected_record',
+          }, serverNow);
+          throw new Error('CUSTOMER_ACTIVITY_DECISION_NOT_RECORDED');
+        }
+        state.customerActivities = recorded.state;
+        if (recorded.task) {
+          recordCustomerActivityDiagnostic(state, {
+            event: 'task_created', npcId: candidate.npcId, conversationId: candidate.conversationId,
+            channel: pending.channel, activityType: candidate.type, messageId: candidate.proposalMessageId,
+            configRevision: decision.configRevision, decision: decision.decision,
+          }, serverNow);
+        }
+      }
+      // A valid empty match is complete. A detector/provider/schema failure
+      // throws and remains queued for a later command or recovery sync.
+      state.pendingCustomerActivityDetections = state.pendingCustomerActivityDetections
+        .filter((item) => item.conversationId !== pending.conversationId);
+      settledCount += 1;
+    } catch (error) {
+      const errorName = error instanceof Error ? error.name : '';
+      const errorMessage = error instanceof Error ? error.message : '';
+      const typedCode = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+      const errorCode = /^[A-Z][A-Z0-9_]{1,100}$/.test(errorMessage)
+        ? errorMessage
+        : typeof typedCode === 'string' && /^[A-Za-z][A-Za-z0-9_]{1,100}$/.test(typedCode)
+          ? `CUSTOMER_ACTIVITY_${typedCode.toUpperCase()}`
+          : undefined;
+      recordCustomerActivityDiagnostic(state, {
+        event: 'detection_retryable_error', npcId: pending.npcId, conversationId: pending.conversationId,
+        channel: pending.channel, configRevision: pending.decisionConfig.revision,
+        reason: errorCode ?? 'customer_activity_detection_or_decision_failed',
+        ...(errorCode ? { errorCode } : {}),
+        details: { errorName: errorName.slice(0, 64) || 'UnknownError' },
+      }, serverNow);
+      break;
+    }
+  }
+}
+
+async function settleCustomerActivityTasks(
+  state: PreviewServerState,
+  invoker: LlmInvoker,
+  jevInvoker: PreviewJevInvoker,
+  serverNow: number,
+  attempts: CustomerActivitySettlementAttempts,
+): Promise<void> {
+  await settlePendingCustomerActivityDetections(state, invoker, jevInvoker, serverNow, attempts);
+  state.customerActivities = finalizeExpiredCustomerActivities(state.customerActivities, serverNow);
+  const task = state.customerActivities.tasks.find((item) =>
+    item.status === 'submitted' && !item.evaluation && !attempts.evaluations.has(item.id),
+  );
+  if (!task) return;
+  const taskNpcId = previewNpcIdSchema.safeParse(task.npcId);
+  if (!taskNpcId.success) return;
+  const npc = PREVIEW_NPCS[taskNpcId.data];
+  attempts.evaluations.add(task.id);
+  const evaluation = await evaluateCustomerActivityPlan({
+    activityType: task.type,
+    summary: task.summary,
+    conversation: task.sourceConversation,
+    draft: task.draft,
+    customerContext: {
+      name: npc.name,
+      title: npc.title,
+      category: npc.category,
+      level: npc.level,
+      organization: npc.organization,
+      personalityType: npc.personalityType,
+      personality: npc.personality,
+      coreNeeds: npc.coreNeeds,
+      memoryFocus: npc.memoryFocus,
+      nodeGuidance: npc.nodeGuidance,
+    },
+  }, { invoker: toActivityInvoker(invoker) });
+  if (!evaluation) return;
+  const recorded = recordCustomerActivityEvaluation(state.customerActivities, task.id, evaluation, serverNow);
+  state.customerActivities = recorded.state;
+  if (recorded.applied) {
+    const updatedTask = state.customerActivities.tasks.find((item) => item.id === task.id);
+    if (updatedTask) applyCustomerActivityEvaluation(state, updatedTask);
+  }
+}
+
+export function hasCustomerActivitySettlementWork(state: PreviewServerState, serverNow = Date.now()): boolean {
+  return state.pendingCustomerActivityDetections.length > 0 || state.customerActivities.tasks.some((task) =>
+    (task.status === 'planning' && task.deadlineAt !== undefined && serverNow >= task.deadlineAt)
+    || (task.status === 'submitted' && !task.evaluation),
+  );
+}
+
+function publicCustomerActivities(state: PreviewServerState) {
+  return {
+    version: 1 as const,
+    serverNow: Date.now(),
+    tasks: state.customerActivities.tasks.map(toPublicCustomerActivityTask),
+  };
+}
+
 /** Maps private pleasantness to a safe, visual-only expression for the meeting scene. */
 export function resolvePreviewNpcExpression(pleasantness: number): z.infer<typeof previewNpcExpressionSchema> {
   if (pleasantness <= 19) return 'angry';
@@ -1155,11 +1790,13 @@ export function toPreviewRecoveryDto(state: PreviewServerState, options: { inclu
     ])),
     wechat: { ...state.wechat },
     appointments: listAppointments(state),
+    customerActivities: publicCustomerActivities(state),
     activeMeeting: state.activeMeeting ? {
       npcId: state.activeMeeting.npcId,
       turn: state.activeMeeting.turn,
       completedTasks: [...state.activeMeeting.completedTasks],
       ended: state.activeMeeting.ended,
+      historyMessageIds: activeVisitMessageIds(state, state.activeMeeting),
       ...(state.activeMeeting.endReason ? { endReason: state.activeMeeting.endReason } : {}),
       ...(state.activeMeeting.awaitingFinalReplyFrom ? { awaitingFinalReplyFrom: state.activeMeeting.awaitingFinalReplyFrom } : {}),
     } : null,
@@ -1196,7 +1833,7 @@ function completeAppointment(state: PreviewServerState, npcId: PreviewNpcId): Pr
   appointment.status = 'completed';
   return { ...appointment };
 }
-function messagePurpose(channel: string, hasAttachment: boolean, allowReadNoReply: boolean): string {
+function messagePurpose(npcId: PreviewNpcId, channel: string, hasAttachment: boolean, allowReadNoReply: boolean, activityProposal = false): string {
   const channelName = channel === 'email' ? '邮件' : channel === 'wechat' ? '工作微信' : '电话';
   const replyRule = '请通过' + channelName + '回复。输出 {content,invitationStatus,appointment?}。invitationStatus 只能是 none、accepted、rejected、later。'
     + '仅当玩家明确邀约且你接受时使用 accepted，并必须填写 appointment={timeWindow,location,agenda}；其他状态必须省略 appointment。';
@@ -1205,23 +1842,35 @@ function messagePurpose(channel: string, hasAttachment: boolean, allowReadNoRepl
       + '邮件和工作微信可选择已读不回。必须输出严格二选一 JSON：回复时 {"responseAction":"reply","content":"非空正文","invitationStatus":"none|accepted|rejected|later","appointment?":{...}}；已读不回时 {"responseAction":"read_no_reply","content":null,"invitationStatus":"none","reasonCode":"natural_closure|no_new_value|repeated_follow_up|not_responsible|current_priority_low|unwilling_to_advance","reasonEvidence":"基于已给上下文的简短证据"}。'
       + '只在自然收尾、无新增价值、重复追问、已明确非本人职责、当前优先级低或当前不愿推进时选择已读不回。职位、低支持度或消息短本身不足以沉默；具体有效新信息必须重新考虑。不得编造忙、开会、出差等事实。已读不回不得确认邀约、承诺、拒绝或披露新线索。涉及合规红线时必须回复明确拒绝，不能已读不回。'
     : replyRule)
+    + (activityProposal ? ` ${customerActivityReplyGuide(npcId)}不要输出 appointment，也不要把这类活动当作普通拜访邀约。` : '')
     + (hasAttachment ? '玩家附带了材料。若上下文说明未查看，只能知道已收到，不能假设或引用材料正文。' : '没有附件。');
 }
 
 export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?: PreviewJevInvoker; store?: PreviewSessionStore; leaseRenewIntervalMs?: number } = {}) {
   const invoker = deps.invoker ?? invokeLLM;
   const jevInvoker = deps.jevInvoker ?? invokeDefaultJev;
+  const activityJevInvoker = deps.jevInvoker ?? createPreviewCustomerActivityJevInvoker();
   const store = deps.store ?? new PreviewSessionStore();
   const leaseRenewIntervalMs = deps.leaseRenewIntervalMs ?? 30_000;
   const inFlightSessions = new Set<string>();
 
-  async function executeUnsafe(state: PreviewServerState, request: PreviewAiRequest, promptConfig: ProjectOnePromptConfig): Promise<PreviewAiResponse> {
+async function executeUnsafe(
+  state: PreviewServerState,
+  request: PreviewAiRequest,
+  promptConfig: ProjectOnePromptConfig,
+  activityDecisionConfig: ActivityDecisionConfig,
+): Promise<PreviewAiResponse> {
     const base = { previewSessionId: state.previewSessionId, version: state.version, action: request.action } as const;
     if (request.action === 'reset') {
       state.conversations = newConversations();
       state.wechat = {};
       state.appointments = {};
       state.activeMeeting = null;
+      state.customerActivities = createEmptyCustomerActivityState();
+      state.activeCustomerActivityConversation = null;
+      state.customerActivityChannelCursors = {};
+      state.pendingCustomerActivityDetections = [];
+      state.customerActivityDiagnostics = [];
       state.approvedVisitPreparations = {};
       state.npcStates = newNpcStates();
       state.completedCommands.clear();
@@ -1259,7 +1908,14 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
     if (request.action === 'start_visit') {
       if (state.activeMeeting && !state.activeMeeting.ended) throw new PreviewAiError('conflict', 'VISIT_ALREADY_ACTIVE');
       if (!request.skipPreparation && !state.approvedVisitPreparations[request.npcId]) throw new PreviewAiError('protocol', 'VISIT_PREPARATION_REQUIRED');
-      state.activeMeeting = { npcId: request.npcId, turn: 0, completedTasks: [], ended: false };
+      state.activeMeeting = {
+        npcId: request.npcId,
+        turn: 0,
+        completedTasks: [],
+        customerActivityConversationId: `preview:${state.previewSessionId}:visit:${randomUUID()}`,
+        customerActivityStartIndex: state.conversations[request.npcId].length,
+        ended: false,
+      };
       return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state), npcExpression: resolvePreviewNpcExpression(state.npcStates[request.npcId].pleasantness) });
     }
     if (request.action === 'end_visit') {
@@ -1267,16 +1923,110 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
       if (!meeting || meeting.npcId !== request.npcId || meeting.ended) throw new PreviewAiError('protocol', 'NO_ACTIVE_VISIT_FOR_NPC');
       if (meeting.awaitingFinalReplyFrom === 'player') throw new PreviewAiError('protocol', 'FINAL_PLAYER_REPLY_REQUIRED');
       meeting.ended = true; meeting.endReason = 'player_farewell';
+      if (meeting.customerActivityConversationId) {
+        queueCustomerActivityDetection(state, {
+          npcId: request.npcId,
+          conversationId: meeting.customerActivityConversationId,
+          channel: 'visit',
+          endMessageIndex: state.conversations[request.npcId].length,
+          messages: state.conversations[request.npcId].slice(meeting.customerActivityStartIndex ?? state.conversations[request.npcId].length),
+          decisionConfig: activityDecisionConfig,
+        });
+      }
       const appointment = completeAppointment(state, request.npcId);
       return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state), ...(appointment ? { appointment } : {}) });
+    }
+
+    if (request.action === 'customer_activity_start') {
+      const task = state.customerActivities.tasks.find((item) => item.id === request.taskId);
+      if (!task) throw new PreviewAiError('not_found', 'CUSTOMER_ACTIVITY_NOT_FOUND');
+      const next = startCustomerActivityPlanning(state.customerActivities, request.taskId, Date.now());
+      const started = next.tasks.find((item) => item.id === request.taskId);
+      if (task.status === 'pending' && started?.status === 'pending') {
+        throw new PreviewAiError('conflict', 'CUSTOMER_ACTIVITY_NOT_NEXT');
+      }
+      state.customerActivities = next;
+      return previewAiResponseSchema.parse({ ...base, customerActivities: publicCustomerActivities(state) });
+    }
+
+    if (request.action === 'customer_activity_save') {
+      if (!state.customerActivities.tasks.some((item) => item.id === request.taskId)) {
+        throw new PreviewAiError('not_found', 'CUSTOMER_ACTIVITY_NOT_FOUND');
+      }
+      const result = saveCustomerActivityDraft(state.customerActivities, request.taskId, request.draft, Date.now());
+      if (!result.accepted && result.state.tasks.find((item) => item.id === request.taskId)?.status === 'planning') {
+        throw new PreviewAiError('conflict', 'CUSTOMER_ACTIVITY_NOT_EDITABLE');
+      }
+      state.customerActivities = result.state;
+      return previewAiResponseSchema.parse({ ...base, customerActivities: publicCustomerActivities(state) });
+    }
+
+    if (request.action === 'customer_activity_submit') {
+      const task = state.customerActivities.tasks.find((item) => item.id === request.taskId);
+      if (!task) throw new PreviewAiError('not_found', 'CUSTOMER_ACTIVITY_NOT_FOUND');
+      if (task.status === 'planning') {
+        const saved = saveCustomerActivityDraft(state.customerActivities, request.taskId, request.draft, Date.now());
+        state.customerActivities = saved.state;
+        if (saved.accepted) state.customerActivities = submitCustomerActivityPlan(state.customerActivities, request.taskId, Date.now());
+      }
+      return previewAiResponseSchema.parse({ ...base, customerActivities: publicCustomerActivities(state) });
+    }
+
+    if (request.action === 'customer_activity_end_conversation') {
+      if (request.channel === 'work_phone') {
+        const active = state.activeCustomerActivityConversation;
+        if (active && active.npcId !== request.npcId) throw new PreviewAiError('conflict', 'CUSTOMER_ACTIVITY_CALL_MISMATCH');
+        if (active) {
+          const messages = state.conversations[active.npcId]
+            .slice(active.startMessageIndex)
+            .filter((message) => message.channel === 'work_phone');
+          state.activeCustomerActivityConversation = null;
+          queueCustomerActivityDetection(state, {
+            npcId: active.npcId,
+            conversationId: active.conversationId,
+            channel: 'work_phone',
+            endMessageIndex: state.conversations[active.npcId].length,
+            messages,
+            decisionConfig: activityDecisionConfig,
+          });
+        } else {
+          recordCustomerActivityDiagnostic(state, {
+            event: 'phone_end_without_active_call', npcId: request.npcId,
+            channel: request.channel, reason: 'no_active_customer_activity_conversation',
+          });
+        }
+      } else {
+        queueAsyncCustomerActivityDetection(state, request.npcId, request.channel, activityDecisionConfig);
+      }
+      return previewAiResponseSchema.parse({ ...base, customerActivities: publicCustomerActivities(state) });
+    }
+
+    if (request.action === 'customer_activity_sync') {
+      return previewAiResponseSchema.parse({ ...base, customerActivities: publicCustomerActivities(state) });
     }
 
     const npcId = request.npcId;
     const npc = PREVIEW_NPCS[npcId];
     if (request.action === 'message' || request.action === 'phone_connect') {
       const channel = request.action === 'phone_connect' ? 'work_phone' : request.channel;
+      if (request.action === 'phone_connect' && state.activeCustomerActivityConversation) {
+        const previousCall = state.activeCustomerActivityConversation;
+        const previousMessages = state.conversations[previousCall.npcId]
+          .slice(previousCall.startMessageIndex)
+          .filter((message) => message.channel === 'work_phone');
+        state.activeCustomerActivityConversation = null;
+        queueCustomerActivityDetection(state, {
+          npcId: previousCall.npcId,
+          conversationId: previousCall.conversationId,
+          channel: 'work_phone',
+          endMessageIndex: state.conversations[previousCall.npcId].length,
+          messages: previousMessages,
+          decisionConfig: activityDecisionConfig,
+        });
+      }
       const allowReadNoReply = request.action === 'message' && (channel === 'email' || channel === 'wechat');
       const attachment = request.action === 'message' ? request.attachment : undefined;
+      const phoneConversationStartIndex = request.action === 'phone_connect' ? state.conversations[npcId].length : undefined;
       let attachmentResult: SavedAttachment | undefined;
       if (attachment) {
         const decision = await askAttachmentDecision(jevInvoker, { npcId, attachmentTitle: attachment.title, channel, playerText: request.text });
@@ -1286,22 +2036,32 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
         attachmentResult = { title: attachment.title, viewed: decision.viewed, impact: impact.impact, ...(decision.viewed ? { content: attachment.content } : {}) };
       }
       const playerMessage = newMessage('player', channel, request.text, attachmentResult);
-      const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, channel, promptConfig), recentHistory: [...historyFor(state, npcId), { ...playerMessage, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : undefined }] }, npc: { id: npc.id, name: npc.name, title: npc.title }, channel, playerText: request.text, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : null };
+      const activityProposal = isCustomerActivityProposalText(state, npcId, request.text);
+      const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, channel, promptConfig), recentHistory: [...historyFor(state, npcId), { ...playerMessage, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : undefined }] }, npc: { id: npcId, name: npc.name, title: npc.title, level: npc.level }, channel, playerText: request.text, customerActivityProposal: activityProposal, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : null };
+      const replyReviewOptions = activityProposal ? {
+        context: customerActivityReplyContext(state, npcId, request.text),
+        invoker,
+        onDiagnostic: customerActivityReplyDiagnostics(state, npcId, channel, playerMessage.messageId),
+      } : undefined;
       type MessageOutput = z.infer<typeof messageAiOutputSchema>;
       const hardBlocker = isHardBlockerText(request.text);
       const decision = hardBlocker
         ? { responseAction: 'reply' as const, invitationStatus: 'rejected' as const }
-        : await askMessageDecision(jevInvoker, { npcId, playerText: request.text, channel, allowReadNoReply, hasAppointmentDraft: false });
+        : activityProposal
+          ? { responseAction: 'reply' as const, invitationStatus: 'none' as const }
+          : await askMessageDecision(jevInvoker, { npcId, playerText: request.text, channel, allowReadNoReply, hasAppointmentDraft: false });
       let content: string | null = null;
       let appointmentDraft: AppointmentDraft | undefined;
       if (decision.responseAction === 'reply' && !hardBlocker) {
         const messageOutput = await callStructuredAi(invoker,
-          layeredNpcPrompt(state, npcId, channel, messagePurpose(channel, Boolean(attachment), false) + ' 只输出正文及可选的预约具体安排，不得输出 responseAction 或 invitationStatus 等决定字段。', promptConfig, true),
-          promptPayload, narrativeContentAiOutputSchema, npcSpeakerIdentityQualityGate(npcId, channel));
+          layeredNpcPrompt(state, npcId, channel, messagePurpose(npcId, channel, Boolean(attachment), false, activityProposal) + ' 只输出正文及可选的预约具体安排，不得输出 responseAction 或 invitationStatus 等决定字段。', promptConfig, true),
+          promptPayload, narrativeContentAiOutputSchema, npcSpeakerIdentityQualityGate(
+            npcId, channel, activityProposal, replyReviewOptions?.context, replyReviewOptions?.onDiagnostic, invoker,
+          ));
         content = messageOutput.content;
-        appointmentDraft = messageOutput.appointment;
+        appointmentDraft = activityProposal ? undefined : messageOutput.appointment;
       }
-      const invitationStatus = decision.invitationStatus === 'accepted' && !appointmentDraft
+      const invitationStatus = activityProposal ? 'none' : decision.invitationStatus === 'accepted' && !appointmentDraft
         ? 'later'
         : decision.invitationStatus;
       const safeOutput: MessageOutput = decision.responseAction === 'read_no_reply'
@@ -1317,6 +2077,28 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
       await evaluateNpcTurn(invoker, jevInvoker, state, npcId, channel, playerMessage, npcMessage, safeOutput.responseAction, promptConfig);
       addMessage(state, npcId, playerMessage);
       if (npcMessage) addMessage(state, npcId, npcMessage);
+      if (request.action === 'phone_connect' && phoneConversationStartIndex !== undefined) {
+        const conversationId = `preview:${state.previewSessionId}:call:${playerMessage.messageId}`;
+        state.activeCustomerActivityConversation = {
+          npcId,
+          channel: 'work_phone',
+          conversationId,
+          startMessageIndex: phoneConversationStartIndex,
+        };
+        recordCustomerActivityDiagnostic(state, {
+          event: 'phone_conversation_started',
+          npcId,
+          channel: 'work_phone',
+          conversationId,
+          details: { startMessageIndex: phoneConversationStartIndex },
+        });
+      } else if (channel === 'email' || channel === 'wechat') {
+        // An email/WeChat send plus its NPC response is one closed async
+        // interaction. A bounded same-channel window permits a proposal in the
+        // preceding message and its acceptance here without scanning visit or
+        // unrelated channel history.
+        queueAsyncCustomerActivityDetection(state, npcId, channel, activityDecisionConfig);
+      }
       return previewAiResponseSchema.parse({
         ...base,
         content: safeOutput.content,
@@ -1368,13 +2150,32 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
         meeting.turn = nextTurn;
         addMessage(state, npcId, playerMessage);
         endMeeting(meeting, 'npc_farewell');
+        if (meeting.customerActivityConversationId) {
+          queueCustomerActivityDetection(state, {
+            npcId,
+            conversationId: meeting.customerActivityConversationId,
+            channel: 'visit',
+            endMessageIndex: state.conversations[npcId].length,
+            messages: state.conversations[npcId].slice(meeting.customerActivityStartIndex ?? state.conversations[npcId].length),
+            decisionConfig: activityDecisionConfig,
+          });
+        }
         const appointment = completeAppointment(state, npcId);
         return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state), npcExpression: resolvePreviewNpcExpression(state.npcStates[npcId].pleasantness), ...(appointment ? { appointment } : {}) });
       }
       const remaining = npc.allowedTasks.filter((task) => !meeting.completedTasks.includes(task));
-      const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, 'visit', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npc.id, name: npc.name, title: npc.title }, playerText: request.text, visit: { turn: nextTurn, completedTasks: meeting.completedTasks, remainingTasks: remaining } };
-      const narrative = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', '这是实际拜访第 ' + nextTurn + ' 轮。只生成符合人物和当前语境的 NPC 回复正文；不输出任务完成、告辞或强制结束的决定字段。玩家明确告辞时只写一句简短告别。输出 {content:string}。', promptConfig, true),
-        promptPayload, narrativeVisitTurnAiOutputSchema, npcSpeakerIdentityQualityGate(npcId, 'visit'));
+      const activityProposal = isCustomerActivityProposalText(state, npcId, request.text);
+      const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, 'visit', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npcId, name: npc.name, title: npc.title, level: npc.level }, playerText: request.text, customerActivityProposal: activityProposal, visit: { turn: nextTurn, completedTasks: meeting.completedTasks, remainingTasks: remaining } };
+      const activityGuidance = activityProposal ? ` ${customerActivityReplyGuide(npcId)}` : '';
+      const replyReviewOptions = activityProposal ? {
+        context: customerActivityReplyContext(state, npcId, request.text),
+        invoker,
+        onDiagnostic: customerActivityReplyDiagnostics(state, npcId, 'visit', playerMessage.messageId),
+      } : undefined;
+      const narrative = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', '这是实际拜访第 ' + nextTurn + ' 轮。只生成符合人物和当前语境的 NPC 回复正文；不输出任务完成、告辞或强制结束的决定字段。玩家明确告辞时只写一句简短告别。' + activityGuidance + ' 输出 {content:string}。', promptConfig, true),
+        promptPayload, narrativeVisitTurnAiOutputSchema, npcSpeakerIdentityQualityGate(
+          npcId, 'visit', activityProposal, replyReviewOptions?.context, replyReviewOptions?.onDiagnostic, invoker,
+        ));
       const hardBlocker = isHardBlockerText(request.text);
       const content = hardBlocker ? COMPLIANCE_REFUSAL : narrative.content;
       const decision = hardBlocker
@@ -1393,13 +2194,28 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
       else if (npcForcedExit) endMeeting(meeting, 'npc_time_constraint');
       else if (npcFarewell) meeting.awaitingFinalReplyFrom = 'player';
       else resolveMeetingEnd(meeting);
+      if (meeting.ended && meeting.customerActivityConversationId) {
+        queueCustomerActivityDetection(state, {
+          npcId,
+          conversationId: meeting.customerActivityConversationId,
+          channel: 'visit',
+          endMessageIndex: state.conversations[npcId].length,
+          messages: state.conversations[npcId].slice(meeting.customerActivityStartIndex ?? state.conversations[npcId].length),
+          decisionConfig: activityDecisionConfig,
+        });
+      }
       const appointment = meeting.ended ? completeAppointment(state, npcId) : undefined;
       return previewAiResponseSchema.parse({ ...base, content, meeting: meetingResponse(state), npcExpression: resolvePreviewNpcExpression(state.npcStates[npcId].pleasantness), ...(appointment ? { appointment } : {}) });
     }
     throw new PreviewAiError('protocol', 'UNSUPPORTED_PREVIEW_ACTION');
   }
 
-  async function execute(userId: string, request: PreviewAiRequest, promptConfig: ProjectOnePromptConfig = DEFAULT_PROJECT_ONE_PROMPT_CONFIG): Promise<PreviewAiResponse> {
+  async function execute(
+    userId: string,
+    request: PreviewAiRequest,
+    promptConfig: ProjectOnePromptConfig = DEFAULT_PROJECT_ONE_PROMPT_CONFIG,
+    activityDecisionConfig: ActivityDecisionConfig = DEFAULT_ACTIVITY_DECISION_CONFIG,
+  ): Promise<PreviewAiResponse> {
     const state = request.previewSessionId ? store.get(userId, request.previewSessionId) : store.getOrCreateForInitialCommand(userId, request.commandId);
     if (!state) throw new PreviewAiError('not_found', 'PREVIEW_SESSION_NOT_FOUND');
     const replay = state.completedCommands.get(request.commandId);
@@ -1413,12 +2229,16 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
       // Do not expose a player message, score delta, or version increment until
       // the whole command has produced a valid public response.
       const pending = structuredClone(state) as PreviewServerState;
-      const raw = await executeUnsafe(pending, request, promptConfig);
+      const activityAttempts: CustomerActivitySettlementAttempts = { detections: new Set(), evaluations: new Set() };
+      await settleCustomerActivityTasks(pending, invoker, activityJevInvoker, Date.now(), activityAttempts);
+      const raw = await executeUnsafe(pending, request, promptConfig, activityDecisionConfigSchema.parse(activityDecisionConfig));
+      await settleCustomerActivityTasks(pending, invoker, activityJevInvoker, Date.now(), activityAttempts);
       pending.version += 1;
       const response = previewAiResponseSchema.parse({
         ...raw,
         version: pending.version,
         npcTestStates: toPreviewNpcTestStates(pending),
+        customerActivities: publicCustomerActivities(pending),
       });
       pending.completedCommands.set(request.commandId, response);
       if (pending.completedCommands.size > COMPLETED_COMMAND_LIMIT) {
@@ -1442,6 +2262,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
     request: PreviewAiRequest,
     persistence: PreviewSessionPersistence,
     promptConfig: ProjectOnePromptConfig = DEFAULT_PROJECT_ONE_PROMPT_CONFIG,
+    activityDecisionConfig: ActivityDecisionConfig = DEFAULT_ACTIVITY_DECISION_CONFIG,
   ): Promise<PreviewAiResponse> {
     const acquired = await persistence.acquire(userId, request);
     if ('replay' in acquired) return acquired.replay;
@@ -1463,7 +2284,10 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
     const renewalTimer = setInterval(renewLease, leaseRenewIntervalMs);
     try {
       const pending = structuredClone(acquired.state) as PreviewServerState;
-      const raw = await executeUnsafe(pending, request, promptConfig);
+      const activityAttempts: CustomerActivitySettlementAttempts = { detections: new Set(), evaluations: new Set() };
+      await settleCustomerActivityTasks(pending, invoker, activityJevInvoker, Date.now(), activityAttempts);
+      const raw = await executeUnsafe(pending, request, promptConfig, activityDecisionConfigSchema.parse(activityDecisionConfig));
+      await settleCustomerActivityTasks(pending, invoker, activityJevInvoker, Date.now(), activityAttempts);
       if (renewal) await renewal;
       if (renewalFailure) throw renewalFailure;
       pending.version = acquired.version + 1;
@@ -1471,6 +2295,7 @@ export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?
         ...raw,
         version: pending.version,
         npcTestStates: toPreviewNpcTestStates(pending),
+        customerActivities: publicCustomerActivities(pending),
       });
       return await persistence.commit({
         userId,

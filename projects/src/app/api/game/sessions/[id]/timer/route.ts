@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
-import { synchronizeOwnedGameTimer } from '@/lib/game/repository';
+import { processPendingCustomerActivityDetections, processSubmittedCustomerActivityEvaluations, synchronizeOwnedGameTimer } from '@/lib/game/repository';
 import { getGameOutcome, toPlayerVisibleGameOutcome, toPlayerVisibleGameState } from '@/lib/game/state';
 
 export const runtime = 'nodejs';
@@ -10,7 +10,9 @@ async function sync(request: NextRequest, context: { params: Promise<{ id: strin
   if (!guard.ok || !guard.session) return guard.response!;
   const { id } = await context.params;
   try {
-    const session = await synchronizeOwnedGameTimer(id, guard.session.userId);
+    let session = await synchronizeOwnedGameTimer(id, guard.session.userId);
+    session = await processPendingCustomerActivityDetections(id, guard.session.userId).catch(() => session);
+    session = await processSubmittedCustomerActivityEvaluations(id, guard.session.userId).catch(() => session);
     return NextResponse.json({
       success: true,
       state: toPlayerVisibleGameState(session.state),

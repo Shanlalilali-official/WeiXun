@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
 import { previewAiRequestSchema } from '@/lib/contracts/project-one-preview-ai';
@@ -6,6 +7,9 @@ import { previewSessionRepository } from '@/lib/game/project-one-preview-session
 import { isFastDebugEnabled, runWithFastTestObservability } from '@/lib/testing/fast-test-observability';
 import { DEFAULT_PROJECT_ONE_PROMPT_CONFIG } from '@/lib/designer/prompt-config';
 import { loadProjectOnePromptConfig } from '@/lib/designer/prompt-config-repository';
+import { loadActivityDecisionConfigForMatching as loadActivityDecisionConfig } from '@/lib/designer/customer-activity-config-repository';
+import { DEFAULT_ACTIVITY_DECISION_CONFIG } from '@/lib/game/customer-activities';
+import { previewErrorDiagnosticFields, type PreviewErrorDiagnosticContext } from '@/lib/game/preview-error-diagnostics';
 import { getPreviewRecoveryResponse } from './handler';
 
 export const runtime = 'nodejs';
@@ -30,7 +34,10 @@ export function previewErrorResponse(error: unknown): { status: number; message:
   return { status, message };
 }
 
-export function streamPreviewResponse(run: () => ReturnType<typeof previewAiService.execute>): Response {
+export function streamPreviewResponse(
+  run: () => ReturnType<typeof previewAiService.execute>,
+  diagnosticContext: PreviewErrorDiagnosticContext = {},
+): Response {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -50,10 +57,16 @@ export function streamPreviewResponse(run: () => ReturnType<typeof previewAiServ
       } catch (error) {
         const known = previewErrorResponse(error);
         if (known) {
-          console.error('Project one preview AI stream failed', { status: known.status });
+          console.error('Project one preview AI stream failed', {
+            status: known.status,
+            ...previewErrorDiagnosticFields(error, diagnosticContext),
+          });
           send({ type: 'error', status: known.status, error: known.message });
         } else {
-          console.error('Project one preview AI stream failed unexpectedly', { code: 'PREVIEW_STREAM_UNEXPECTED_ERROR' });
+          console.error('Project one preview AI stream failed unexpectedly', {
+            status: 503,
+            ...previewErrorDiagnosticFields(error, diagnosticContext),
+          });
           send({ type: 'error', status: 503, error: '五人预览 AI 服务暂时不可用，请稍后重试。' });
         }
       } finally {
@@ -97,44 +110,77 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '操作过于频繁，请稍后再试。' }, { status: 429 });
   }
 
+  let diagnosticContext: PreviewErrorDiagnosticContext = {};
   try {
     const rawBody = await request.text();
-    if (rawBody.length > 12_000) return NextResponse.json({ error: '五人预览 AI 请求过大' }, { status: 413 });
+    // Activity drafts may contain up to 12k characters and JSON escaping can
+    // expand that payload. Keep the ordinary field schemas as the real limits.
+    if (rawBody.length > 80_000) return NextResponse.json({ error: '五人预览 AI 请求过大' }, { status: 413 });
     let body: unknown;
     try { body = JSON.parse(rawBody); } catch { return NextResponse.json({ error: '五人预览 AI 请求不是有效 JSON' }, { status: 400 }); }
     const parsed = previewAiRequestSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json({ error: '五人预览 AI 请求字段无效', details: parsed.error.flatten() }, { status: 400 });
     }
+    diagnosticContext = {
+      action: parsed.data.action,
+      npcId: 'npcId' in parsed.data ? parsed.data.npcId : undefined,
+      commandId: parsed.data.commandId,
+    };
     if (['test_adjust_npcs', 'test_adjust_appointments'].includes(parsed.data.action) && !isFastDebugEnabled()) {
       return NextResponse.json({ error: '测试调节仅在测试环境开放' }, { status: 403 });
     }
     const promptConfig = await loadProjectOnePromptConfig()
       .then((stored) => stored.config)
       .catch(() => DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
+    const closesCustomerActivityConversation = parsed.data.action === 'phone_connect'
+      || parsed.data.action === 'visit_turn'
+      || parsed.data.action === 'end_visit'
+      || parsed.data.action === 'customer_activity_end_conversation'
+      || (parsed.data.action === 'message' && ['email', 'wechat'].includes(parsed.data.channel));
+    const activityDecisionConfig = closesCustomerActivityConversation
+      ? (await loadActivityDecisionConfig()).config
+      : DEFAULT_ACTIVITY_DECISION_CONFIG;
     const execute = () => runWithFastTestObservability(
       guard.session!.userId,
-      () => previewAiService.executePersistent(guard.session!.userId, parsed.data, previewSessionRepository, promptConfig),
+      () => previewAiService.executePersistent(guard.session!.userId, parsed.data, previewSessionRepository, promptConfig, activityDecisionConfig),
     );
     const acceptsStream = request.headers.get('accept')?.includes('text/event-stream');
     const streamableAction = parsed.data.action === 'phone_connect'
       || parsed.data.action === 'visit_turn'
       || (parsed.data.action === 'message' && parsed.data.channel === 'work_phone');
-    if (acceptsStream && streamableAction) return streamPreviewResponse(execute);
+    if (acceptsStream && streamableAction) return streamPreviewResponse(execute, diagnosticContext);
     const response = await execute();
     return NextResponse.json({ success: true, previewSessionId: response.previewSessionId, version: response.version, data: response });
   } catch (error) {
     const known = previewErrorResponse(error);
     if (known) {
-      console.error('Project one preview AI request failed', { status: known.status });
+      console.error('Project one preview AI request failed', {
+        status: known.status,
+        ...previewErrorDiagnosticFields(error, diagnosticContext),
+      });
       return NextResponse.json({ error: known.message }, { status: known.status });
     }
-    console.error('Project one preview AI request failed unexpectedly', { code: 'PREVIEW_UNEXPECTED_ERROR' });
+    console.error('Project one preview AI request failed unexpectedly', {
+      status: 503,
+      ...previewErrorDiagnosticFields(error, diagnosticContext),
+    });
     return NextResponse.json({ error: '五人预览 AI 服务暂时不可用，请稍后重试。' }, { status: 503 });
   }
 }
 
 /** Restore only designer-preview state; formal player DTOs never use this route. */
 export async function GET(request: NextRequest) {
-  return getPreviewRecoveryResponse(request, previewSessionRepository);
+  return getPreviewRecoveryResponse(request, {
+    load: (userId, previewSessionId) => previewSessionRepository.load(userId, previewSessionId),
+    syncCustomerActivities: async (userId, state) => {
+      const syncRequest = previewAiRequestSchema.parse({
+        action: 'customer_activity_sync',
+        previewSessionId: state.previewSessionId,
+        commandId: randomUUID(),
+        expectedVersion: state.version,
+      });
+      await previewAiService.executePersistent(userId, syncRequest, previewSessionRepository);
+    },
+  });
 }

@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 import {
   PROMPT_EXCEL_CHANNEL_IDS,
   PROMPT_EXCEL_CHANNEL_LABELS,
@@ -19,6 +23,18 @@ import type { ProjectOnePromptConfig } from '../src/lib/designer/prompt-config';
 
 async function workbookBuffer(workbook: ExcelJS.Workbook): Promise<Buffer> {
   return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+
+async function rewriteZipXml(
+  buffer: Buffer,
+  entryName: string,
+  rewrite: (source: string) => string,
+): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(buffer);
+  const entry = zip.file(entryName);
+  assert.ok(entry, `Expected ${entryName} in workbook`);
+  zip.file(entryName, rewrite(await entry.async('string')));
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
 }
 
 function editableConfig(config: ProjectOnePromptConfig) {
@@ -235,6 +251,82 @@ async function testMalformedWorkbook(): Promise<void> {
   );
 }
 
+async function testXmlNamespaceAndTextPreservation(): Promise<void> {
+  const config = structuredClone(DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
+  config.npcChannelExceptions = {};
+  const workbook = createPromptExcelWorkbook(config);
+  const worksheet = workbook.getWorksheet(PROMPT_EXCEL_DATA_SHEET);
+  assert.ok(worksheet);
+  worksheet.getCell(2, 4).value = { richText: [{ text: '富文本' }, { text: '\r<&内容' }] };
+  worksheet.getCell(3, 4).value = 'CDATA_MARKER';
+  worksheet.getCell(4, 4).value = 'CR_MARKER';
+  let buffer = await workbookBuffer(workbook);
+  buffer = await rewriteZipXml(buffer, 'xl/sharedStrings.xml', (source) => source
+    .replace('CDATA_MARKER', '<![CDATA[CDATA<&内容]]>')
+    .replace('CR_MARKER', 'CR&#13;MARKER'));
+  // This is deliberately a default namespace: it must become a prefixed
+  // extension during normalization, never a bare SpreadsheetML sheetData.
+  buffer = await rewriteZipXml(buffer, 'xl/worksheets/sheet2.xml', (source) => source.replace(
+    '</worksheet>',
+    '<foreign xmlns="urn:unrelated"><sheetData><row r="99"><c r="D99" t="inlineStr"><is><t>INJECTED</t></is></c></row></sheetData></foreign></worksheet>',
+  ));
+
+  const result = await parsePromptExcel(buffer);
+  assert.equal(result.ok, true);
+  assert.equal(normalizeNpcRolePrompt(result.editable?.npcRolePrompts['P1-001']).base, '富文本\n<&内容');
+  assert.equal(normalizeNpcRolePrompt(result.editable?.npcRolePrompts['P1-001']).low, 'CDATA<&内容');
+  assert.equal(normalizeNpcRolePrompt(result.editable?.npcRolePrompts['P1-001']).medium, 'CR\rMARKER');
+  assert.equal(result.rows.some((row) => row.prompt.includes('INJECTED')), false);
+}
+
+async function testInvalidXmlAndExpandedSizeLimit(): Promise<void> {
+  const valid = await exportPromptExcel(DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
+  const dtdWorkbook = await rewriteZipXml(valid, 'xl/workbook.xml', (source) => source.replace(
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><!DOCTYPE workbook []>',
+  ));
+  await assert.rejects(
+    () => parsePromptExcel(dtdWorkbook),
+    (error: unknown) => error instanceof Error && error.message.includes('有效的 .xlsx'),
+  );
+
+  const largeZip = new JSZip();
+  largeZip.file('large.bin', Buffer.alloc(20 * 1024 * 1024 + 1));
+  const largeBuffer = await largeZip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+  await assert.rejects(
+    () => parsePromptExcel(largeBuffer),
+    (error: unknown) => error instanceof Error && 'status' in error && error.status === 413,
+  );
+}
+
+async function testSellSmartOriginalWorkbook(): Promise<void> {
+  const fixture = path.join(import.meta.dirname, 'fixtures', 'prompt-excel-sellsmart-original.xlsx');
+  const planFile = path.join(import.meta.dirname, 'fixtures', 'prompt-excel-sellsmart-expected.json');
+  const [buffer, planText] = await Promise.all([readFile(fixture), readFile(planFile, 'utf8')]);
+  const plan = JSON.parse(planText) as {
+    sourceSha256: string;
+    changes: Array<{ path: [string, string, string]; text: string }>;
+  };
+  assert.equal(createHash('sha256').update(buffer).digest('hex'), plan.sourceSha256);
+  assert.equal(plan.changes.length, 35);
+  assert.equal(new Set(plan.changes.map((change) => change.path.join('\u0000'))).size, 35);
+  const result = await parsePromptExcel(buffer);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.rows.length, 35);
+  assert.equal(result.warnings.length, 20);
+  assert.ok(result.warnings.every((warning) => warning.code === 'ROLE_CHANNEL_IGNORED'));
+  const imported = result.editable;
+  assert.ok(imported);
+  for (const change of plan.changes) {
+    const [group, npcId, field] = change.path;
+    const actual: string | undefined = group === 'npcRolePrompts'
+      ? normalizeNpcRolePrompt(imported.npcRolePrompts[npcId])[field as 'base' | 'low' | 'medium' | 'high']
+      : imported.npcChannelExceptions[npcId]?.[field];
+    assert.equal(actual, change.text, `${npcId}.${field} should retain every character`);
+  }
+}
+
 async function main(): Promise<void> {
   await testRoundTrip();
   await testWorkbookShape();
@@ -247,6 +339,9 @@ async function main(): Promise<void> {
   await testExtraRowsHaveValidationWithoutData();
   await testChineseEntryInReservedRow();
   await testMalformedWorkbook();
+  await testXmlNamespaceAndTextPreservation();
+  await testInvalidXmlAndExpandedSizeLimit();
+  await testSellSmartOriginalWorkbook();
   console.log('人物提示词表格导入导出专项测试通过');
 }
 

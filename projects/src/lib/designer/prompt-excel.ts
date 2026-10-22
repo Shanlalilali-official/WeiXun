@@ -1,4 +1,6 @@
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
+import { SaxesParser, type SaxesAttributeNS, type SaxesTagNS } from 'saxes';
 import {
   PROJECT_ONE_CHANNEL_MODIFIERS,
   PROJECT_ONE_FIVE_PERSON_NPCS,
@@ -21,6 +23,14 @@ export const PROMPT_EXCEL_LEGACY_HEADERS = ['人物 ID', '范围', '渠道 ID', 
 export const PROMPT_EXCEL_SCOPES = ['role_base', 'role_low', 'role_medium', 'role_high', 'channel'] as const;
 export const PROMPT_EXCEL_MAX_TEXT_LENGTH = 12_000;
 export const PROMPT_EXCEL_MAX_ROWS = 500;
+// The HTTP route already limits compressed uploads to 5 MB. Keep the
+// decompression ceiling separate so a small zip cannot exhaust the server.
+const PROMPT_EXCEL_MAX_EXPANDED_BYTES = 20 * 1024 * 1024;
+const SPREADSHEETML_URI = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+const OFFICE_RELATIONSHIPS_URI = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+const XML_URI = 'http://www.w3.org/XML/1998/namespace';
+const XMLNS_URI = 'http://www.w3.org/2000/xmlns/';
+const SPREADSHEET_MAIN_PART = /^(?:xl\/workbook\.xml|xl\/styles\.xml|xl\/sharedStrings\.xml|xl\/worksheets\/[^/]+\.xml)$/;
 
 export type PromptExcelScope = (typeof PROMPT_EXCEL_SCOPES)[number];
 
@@ -74,6 +84,8 @@ export interface PromptExcelImportResult {
   sheetName: string;
   rows: PromptExcelRow[];
   errors: PromptExcelValidationIssue[];
+  /** Non-blocking normalizations applied while reading a legacy workbook. */
+  warnings: PromptExcelValidationIssue[];
   editable: PromptExcelEditableConfig | null;
   summary: {
     totalRows: number;
@@ -517,12 +529,207 @@ function editableFromRows(rows: PromptExcelRow[]): PromptExcelEditableConfig {
   return { npcRolePrompts, npcChannelExceptions };
 }
 
+function escapeXmlText(value: string): string {
+  // Saxes resolves character references. Re-encode CR so ExcelJS' second SAX
+  // pass does not turn an intentional &#13; into a line-feed.
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\r/g, '&#13;');
+}
+
+function escapeXmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/"/g, '&quot;')
+    .replace(/\t/g, '&#9;')
+    .replace(/\n/g, '&#10;')
+    .replace(/\r/g, '&#13;');
+}
+
+function normalizeSpreadsheetMlXml(source: string, entryName: string): string {
+  const parser = new SaxesParser({ xmlns: true, fileName: entryName });
+  const output: string[] = [];
+  const elementNames: string[] = [];
+  const prefixByUri = new Map<string, string>([[OFFICE_RELATIONSHIPS_URI, 'r']]);
+  // Reserve r so an unrelated extension cannot take it before a later r:id.
+  const uriByPrefix = new Map<string, string>([['r', OFFICE_RELATIONSHIPS_URI]]);
+  let nextPrefix = 1;
+  let rootUri: string | undefined;
+  let parserError: Error | undefined;
+
+  const declare = (prefix: string, uri: string, declarations: string[]): void => {
+    const declaration = `xmlns:${prefix}="${escapeXmlAttribute(uri)}"`;
+    if (!declarations.includes(declaration)) declarations.push(declaration);
+  };
+
+  const prefixFor = (uri: string, preferred: string, declarations: string[]): string => {
+    if (uri === XML_URI) return 'xml';
+    if (uri === OFFICE_RELATIONSHIPS_URI) {
+      const existing = uriByPrefix.get('r');
+      if (existing && existing !== uri) throw new Error(`${entryName} reuses namespace prefix r.`);
+      if (!existing) {
+        uriByPrefix.set('r', uri);
+        prefixByUri.set(uri, 'r');
+      }
+      declare('r', uri, declarations);
+      return 'r';
+    }
+    const known = prefixByUri.get(uri);
+    if (known) {
+      declare(known, uri, declarations);
+      return known;
+    }
+    let prefix = preferred && preferred !== 'xml' && preferred !== 'xmlns' ? preferred : '';
+    if (!prefix || (uriByPrefix.has(prefix) && uriByPrefix.get(prefix) !== uri)) {
+      do {
+        prefix = `ns${nextPrefix}`;
+        nextPrefix += 1;
+      } while (uriByPrefix.has(prefix));
+    }
+    prefixByUri.set(uri, prefix);
+    uriByPrefix.set(prefix, uri);
+    declare(prefix, uri, declarations);
+    return prefix;
+  };
+
+  const qNameForElement = (tag: SaxesTagNS, declarations: string[]): string => {
+    if (tag.uri === SPREADSHEETML_URI) return tag.local;
+    if (!tag.uri) throw new Error(`${entryName} has an element without a namespace.`);
+    return `${prefixFor(tag.uri, tag.prefix, declarations)}:${tag.local}`;
+  };
+
+  const qNameForAttribute = (attribute: SaxesAttributeNS, declarations: string[]): string | null => {
+    if (attribute.uri === XMLNS_URI) return null;
+    if (!attribute.uri) return attribute.local;
+    if (attribute.uri === XML_URI) return `xml:${attribute.local}`;
+    if (attribute.uri === OFFICE_RELATIONSHIPS_URI) {
+      return `${prefixFor(attribute.uri, attribute.prefix, declarations)}:${attribute.local}`;
+    }
+    return `${prefixFor(attribute.uri, attribute.prefix, declarations)}:${attribute.local}`;
+  };
+
+  parser.on('xmldecl', (declaration) => {
+    const version = declaration.version ?? '1.0';
+    output.push(`<?xml version="${escapeXmlAttribute(version)}" encoding="UTF-8"?>`);
+  });
+  parser.on('processinginstruction', ({ target, body }) => {
+    output.push(`<?${target}${body ? ` ${body}` : ''}?>`);
+  });
+  parser.on('doctype', () => {
+    parserError ??= new Error(`${entryName} contains a forbidden XML declaration.`);
+  });
+  parser.on('comment', (comment) => output.push(`<!--${comment}-->`));
+  parser.on('text', (text) => output.push(escapeXmlText(text)));
+  parser.on('cdata', (cdata) => {
+    // ExcelJS' XML reader consumes ordinary text but not CDATA events. Escape
+    // it back to text; numeric CR references remain intact for the next pass.
+    output.push(escapeXmlText(cdata));
+  });
+  parser.on('opentag', (tag) => {
+    rootUri ??= tag.uri;
+    const declarations: string[] = [];
+    const name = qNameForElement(tag, declarations);
+    const attributes: string[] = [];
+    for (const attribute of Object.values(tag.attributes)) {
+      const attributeName = qNameForAttribute(attribute, declarations);
+      if (attributeName) attributes.push(`${attributeName}="${escapeXmlAttribute(attribute.value)}"`);
+    }
+    output.push(`<${name}${declarations.length || attributes.length ? ` ${[...declarations, ...attributes].join(' ')}` : ''}${tag.isSelfClosing ? '/>' : '>'}`);
+    if (!tag.isSelfClosing) elementNames.push(name);
+  });
+  parser.on('closetag', (tag) => {
+    if (!tag.isSelfClosing) {
+      const name = elementNames.pop();
+      if (!name) parserError ??= new Error(`${entryName} has an unbalanced XML element.`);
+      else output.push(`</${name}>`);
+    }
+  });
+  parser.on('error', (error) => {
+    parserError ??= error;
+  });
+
+  try {
+    parser.write(source).close();
+  } catch (error) {
+    parserError ??= error instanceof Error ? error : new Error('Invalid XML.');
+  }
+  if (parserError || elementNames.length !== 0) throw parserError ?? new Error(`${entryName} has unbalanced XML.`);
+  if (rootUri !== SPREADSHEETML_URI) {
+    if (SPREADSHEET_MAIN_PART.test(entryName)) {
+      throw new Error(`${entryName} is not a SpreadsheetML part.`);
+    }
+    return source;
+  }
+  return output.join('');
+}
+
+async function readZipEntry(
+  entry: JSZip.JSZipObject,
+  budget: { used: number },
+): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const stream = entry.nodeStream();
+    let settled = false;
+    stream.on('data', (chunk: Buffer | Uint8Array) => {
+      if (settled) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      budget.used += buffer.length;
+      if (budget.used > PROMPT_EXCEL_MAX_EXPANDED_BYTES) {
+        stream.pause();
+        settled = true;
+        reject(new PromptExcelRequestError('工作簿解压后的内容过大。', 413, 'INVALID_XLSX'));
+        return;
+      }
+      chunks.push(buffer);
+    });
+    stream.on('error', (error: Error) => {
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    });
+    stream.on('end', () => {
+      if (!settled) {
+        settled = true;
+        resolve(Buffer.concat(chunks));
+      }
+    });
+    stream.resume();
+  });
+}
+
+async function normalizeWorkbookNamespaces(input: Buffer | Uint8Array): Promise<Buffer> {
+  const source = await JSZip.loadAsync(input);
+  const normalized = new JSZip();
+  const budget = { used: 0 };
+  for (const [entryName, entry] of Object.entries(source.files)) {
+    if (entry.dir) {
+      normalized.folder(entryName);
+      continue;
+    }
+    const data = await readZipEntry(entry, budget);
+    if (/\.xml$/i.test(entryName)) {
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(data);
+      normalized.file(entryName, normalizeSpreadsheetMlXml(text, entryName));
+    } else {
+      normalized.file(entryName, data, { binary: true });
+    }
+  }
+  return normalized.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+}
+
 export async function parsePromptExcel(input: Buffer | Uint8Array): Promise<PromptExcelImportResult> {
   const workbook = new ExcelJS.Workbook();
   try {
-    const arrayBuffer = new Uint8Array(input).buffer as unknown as Parameters<typeof workbook.xlsx.load>[0];
+    const normalized = await normalizeWorkbookNamespaces(input);
+    const arrayBuffer = new Uint8Array(normalized).buffer as unknown as Parameters<typeof workbook.xlsx.load>[0];
     await workbook.xlsx.load(arrayBuffer);
-  } catch {
+  } catch (error) {
+    if (error instanceof PromptExcelRequestError) throw error;
     throw new PromptExcelRequestError('上传文件不是有效的 .xlsx 工作簿。', 400, 'INVALID_XLSX');
   }
 
@@ -533,12 +740,14 @@ export async function parsePromptExcel(input: Buffer | Uint8Array): Promise<Prom
       sheetName: PROMPT_EXCEL_DATA_SHEET,
       rows: [],
       errors: [{ message: `未找到“${PROMPT_EXCEL_DATA_SHEET}”工作表。`, code: 'MISSING_SHEET' }],
+      warnings: [],
       editable: null,
       summary: { totalRows: 0, validRows: 0, errorCount: 1 },
     };
   }
 
   const errors: PromptExcelValidationIssue[] = [];
+  const warnings: PromptExcelValidationIssue[] = [];
   const headerMap = parseHeader(worksheet, errors);
   const rows: PromptExcelRow[] = [];
   const rowNumbers: number[] = [];
@@ -560,6 +769,18 @@ export async function parsePromptExcel(input: Buffer | Uint8Array): Promise<Prom
       // 提示词正文保留空格和换行，保证导入导出不改变内容。
       prompt: readCell(worksheet, headerMap, 'prompt', rowNumber),
     };
+    // Some workbooks contain a display-only value in this column for role rows.
+    // The column has no role-row semantics, so surface it to the user but do
+    // not turn an otherwise valid prompt workbook into a failed import.
+    if (SCOPE_SET.has(item.scope) && item.scope.startsWith('role_') && item.channelId !== '') {
+      warnings.push({
+        row: rowNumber,
+        field: 'channelId',
+        code: 'ROLE_CHANNEL_IGNORED',
+        message: `“人物提示词”不需要交流方式，已忽略“${item.channelId}”。`,
+      });
+      item.channelId = '';
+    }
     rows.push(item);
     rowNumbers.push(rowNumber);
     validateRow(item, rowNumber, errors, seenKeys);
@@ -601,6 +822,7 @@ export async function parsePromptExcel(input: Buffer | Uint8Array): Promise<Prom
     sheetName: worksheet.name,
     rows,
     errors,
+    warnings,
     editable: ok ? editableFromRows(rows) : null,
     summary: {
       totalRows: rows.length,

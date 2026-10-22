@@ -1,6 +1,12 @@
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import assert from 'node:assert/strict';
+import {
+  __resetFastTestObservabilityForTests,
+  FAST_TEST_USER_ID,
+  getFastAiTraces,
+  runWithFastTestObservability,
+} from '../src/lib/testing/fast-test-observability';
 
 async function main() {
   const attempts = new Map<string, number>();
@@ -63,6 +69,25 @@ async function main() {
       }
       if (!payload.stream) {
         response.writeHead(200, { 'Content-Type': 'application/json' });
+        if (payload.model === 'blank-response') {
+          response.end(JSON.stringify({
+            choices: [{ message: { content: '                     ' }, finish_reason: 'length' }],
+            usage: { prompt_tokens: 12, completion_tokens: 0, total_tokens: 12 },
+          }));
+          return;
+        }
+        if (payload.model === 'empty-string-response') {
+          response.end(JSON.stringify({ choices: [{ message: { content: '' } }] }));
+          return;
+        }
+        if (payload.model === 'missing-content-response') {
+          response.end(JSON.stringify({ choices: [{ message: {} }] }));
+          return;
+        }
+        if (payload.model === 'spaced-json-response') {
+          response.end(JSON.stringify({ choices: [{ message: { content: ' \n{"ok":true}\t ' } }] }));
+          return;
+        }
         response.end(JSON.stringify({ choices: [{ message: { content: payload.response_format ? '{"ok":true}' : '普通响应通过' } }] }));
         return;
       }
@@ -124,6 +149,43 @@ async function main() {
 
     const jsonResponse = await invokeLLM([{ role: 'user', content: 'json test' }], { provider: 'default', jsonMode: true });
     if (jsonResponse !== '{"ok":true}') throw new Error(`JSON_MODE_MISMATCH: ${jsonResponse}`);
+    const spacedJsonResponse = await invokeLLM(
+      [{ role: 'user', content: 'spaced json test' }],
+      { provider: 'default', model: 'spaced-json-response', jsonMode: true },
+    );
+    assert.equal(spacedJsonResponse, ' \n{"ok":true}\t ', 'nonempty response content is returned without trimming');
+
+    __resetFastTestObservabilityForTests();
+    await runWithFastTestObservability(FAST_TEST_USER_ID, async () => {
+      await assert.rejects(
+        invokeLLM([{ role: 'user', content: 'blank response test' }], { provider: 'default', model: 'blank-response' }),
+        /^Error: AI_PROVIDER_EMPTY_RESPONSE$/,
+      );
+      await assert.rejects(
+        invokeLLM([{ role: 'user', content: 'empty response test' }], { provider: 'default', model: 'empty-string-response' }),
+        /^Error: AI_PROVIDER_EMPTY_RESPONSE$/,
+      );
+      await assert.rejects(
+        invokeLLM([{ role: 'user', content: 'missing response test' }], { provider: 'default', model: 'missing-content-response' }),
+        /^Error: AI_PROVIDER_EMPTY_RESPONSE$/,
+      );
+    });
+    for (const model of ['blank-response', 'empty-string-response', 'missing-content-response']) {
+      assert.equal(attempts.get(model), 1, `${model} is not retried as a generic provider failure`);
+    }
+    const blankResponseTrace = getFastAiTraces(FAST_TEST_USER_ID, 3).find((trace) => trace.model === 'blank-response');
+    assert.equal(blankResponseTrace?.status, 'error');
+    assert.equal(blankResponseTrace?.error, 'AI_PROVIDER_EMPTY_RESPONSE');
+    const blankTracePayload = blankResponseTrace?.rawResponse as {
+      choices?: Array<{ finish_reason?: string }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    } | undefined;
+    assert.equal(blankTracePayload?.choices?.[0]?.finish_reason, 'length', 'empty-response diagnostics retain finish_reason');
+    assert.deepEqual(
+      blankTracePayload?.usage,
+      { prompt_tokens: 12, completion_tokens: 0, total_tokens: 12 },
+      'empty-response diagnostics retain usage',
+    );
 
     let streamed = '';
     for await (const chunk of streamLLM([{ role: 'user', content: 'test stream' }], { provider: 'default' })) {

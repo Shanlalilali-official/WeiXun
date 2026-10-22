@@ -63,7 +63,14 @@ const testJevInvoker: JevInvoker = async (request) => {
 };
 
 const createPreviewAiService = (deps: Parameters<typeof createPreviewAiServiceBase>[0] = {}) =>
-  createPreviewAiServiceBase({ ...deps, jevInvoker: deps.jevInvoker ?? testJevInvoker });
+  createPreviewAiServiceBase({
+    ...deps,
+    ...(deps.invoker ? { invoker: async (messages, options) =>
+      messages.some((message) => message.content.includes('活动提议语义识别器') || message.content.includes('只判断这段已经结束的客户销售对话'))
+        ? json({ activities: [] })
+        : deps.invoker!(messages, options) } : {}),
+    jevInvoker: deps.jevInvoker ?? testJevInvoker,
+  });
 
 async function main() {
   assert.deepEqual(PREVIEW_NPC_IDS, ['P1-001', 'P1-002', 'P1-003', 'P1-004', 'P1-005']);
@@ -71,7 +78,7 @@ async function main() {
   assert.match(PREVIEW_NPCS['P1-001'].personality, /一两句/);
   assert.equal(PREVIEW_NPCS['P1-001'].informationBoundary.some((item) => item.includes('技术参数') && item.includes('SLA')), true);
   assert.equal(PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS['P1-001']?.visit?.includes('不追问技术参数'), true);
-  assert.equal(PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS['P1-001']?.direct_visit?.includes('不展开细节'), true);
+  assert.match(PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS['P1-001']?.direct_visit ?? '', /不讨论技术参数、验收、SLA/);
   assert.equal(PREVIEW_NPCS['P1-002'].personality.length > 0, true);
   assert.equal(PREVIEW_NPCS['P1-003'].taboos.includes('现金回扣'), true);
   assert.equal(PREVIEW_NPCS['P1-004'].parentId, 'P1-002', '赵晓晨直属项目经理李明辉');
@@ -266,6 +273,19 @@ async function main() {
   assert.equal(legacyWorkPhone.content, '请通过电话先说明具体事项。');
 
   const roleReversedReply = '您好，张总。我们是专注政企数字化交付的团队，刚中标了省里两个同类项目。';
+  let labelledDrafts = 0;
+  const labelledService = createPreviewAiService({ invoker: async (messages) => {
+    if (messages.some((message) => message.content.includes('独立评估刚刚完成的 NPC 正文'))) return json(emptyEvaluation);
+    labelledDrafts += 1;
+    return json({ content: labelledDrafts === 1 ? '张建国：您好，您先说来意。' : '林先生您好，您请讲。' });
+  } });
+  const labelledState = labelledService.store.create('user-labelled-role-repair');
+  const labelledResult = await labelledService.execute('user-labelled-role-repair', withMeta({
+    action: 'phone_connect', npcId: 'P1-001', text: '您好，我是林先生。',
+  }, 0, labelledState.previewSessionId));
+  assert.equal(labelledDrafts, 2, 'an NPC speaker label is repaired before persistence');
+  assert.equal(labelledResult.content, '林先生您好，您请讲。');
+  assert.equal(labelledState.conversations['P1-001'].at(-1)?.text, labelledResult.content);
   const correctedReply = '我在听，请先用一句话说明要点。';
   const correctedPrompts: string[] = [];
   const correctedEvaluationPrompts: string[] = [];
@@ -469,6 +489,17 @@ async function main() {
   assert.equal(appointmentCreated.appointment.npcId, 'P1-001');
   const appointmentState = appointmentService.store.get('user-appointment', appointmentCreated.previewSessionId)!;
   assert.deepEqual(appointmentState.appointments['P1-001'], appointmentCreated.appointment, 'appointment is stored in the server preview session');
+  appointmentState.conversations['P1-001'].push(...Array.from({ length: 150 }, (_, index) => ({
+    messageId: `older-email-${index}`,
+    role: 'player' as const,
+    channel: 'email' as const,
+    text: `旧邮件历史 ${index}`,
+    at: index + 1,
+  })));
+  appointmentState.conversations['P1-001'].push(
+    { messageId: 'previous-visit-npc', role: 'npc', channel: 'visit', text: '上一次拜访的客户结束语。', at: 1 },
+    { messageId: 'previous-visit-player', role: 'player', channel: 'visit', text: '上一场的最后一句。', at: 2 },
+  );
   const appointmentUpdated = await appointmentService.execute('user-appointment', withMeta({ action: 'test_adjust_appointments', appointments: [{
     npcId: 'P1-001', appointmentId: appointmentCreated.appointment.id, status: 'accepted', timeWindow: '明天 14:00', location: '客户办公室 4 楼', agenda: '复核上线与验收计划',
   }] }, appointmentCreated.version, appointmentCreated.previewSessionId));
@@ -477,10 +508,15 @@ async function main() {
   appointmentState.approvedVisitPreparations['P1-001'] = '已准备拜访';
   const visitStarted = await appointmentService.execute('user-appointment', withMeta({ action: 'start_visit', npcId: 'P1-001' }, appointmentUpdated.version, appointmentCreated.previewSessionId));
   assert.equal(visitStarted.npcExpression, 'calm', 'start_visit returns a safe visible NPC expression');
+  assert.deepEqual(visitStarted.meeting?.historyMessageIds, [], 'each newly started visit begins with an empty visit-only message history');
+  assert.deepEqual(toPreviewRecoveryDto(appointmentState).activeMeeting?.historyMessageIds, [], 'recovery preserves the new visit boundary');
+  assert.equal(toPreviewRecoveryDto(appointmentState).conversations['P1-001'].length, 100, 'recovery may truncate the conversation payload without changing its visit boundary');
   const farewell = await appointmentService.execute('user-appointment', withMeta({ action: 'visit_turn', npcId: 'P1-001', text: '感谢您的时间，今天先这样，改天再聊。' }, visitStarted.version, appointmentCreated.previewSessionId));
   assert.equal(farewell.npcExpression, 'calm', 'visit_turn returns the current safe visible NPC expression');
   assert.equal(farewell.meeting?.meetingEnded, true, 'farewell visit turn ends the active meeting');
   assert.equal(farewell.content, '好，那今天先到这里。', 'player farewell allows exactly one final NPC reply');
+  assert.equal(farewell.meeting?.historyMessageIds?.length, 2, 'the active visit response returns only its own player and NPC message IDs');
+  assert.equal(farewell.meeting?.historyMessageIds?.includes('previous-visit-npc'), false, 'prior visit message IDs are excluded');
   assert.deepEqual(farewell.appointment, { ...appointmentUpdated.appointments[0], status: 'completed' }, 'farewell visit turn completes the authoritative appointment');
   assert.equal(appointmentState.appointments['P1-001']?.status, 'completed');
   const appointmentVersion = appointmentState.version;
@@ -493,6 +529,14 @@ async function main() {
   const appointmentCleared = await appointmentService.execute('user-appointment', withMeta({ action: 'test_adjust_appointments', appointments: [{ npcId: 'P1-001', status: 'none' }] }, farewell.version, appointmentCreated.previewSessionId));
   assert.deepEqual(appointmentCleared.appointments, [], 'status none clears the server appointment');
   assert.equal(appointmentState.appointments['P1-001'], undefined);
+  const secondVisit = await appointmentService.execute('user-appointment', withMeta({ action: 'start_visit', npcId: 'P1-001', skipPreparation: true }, appointmentCleared.version, appointmentCreated.previewSessionId));
+  assert.deepEqual(secondVisit.meeting?.historyMessageIds, [], 'a second visit starts without showing the prior visit');
+  const secondVisitTurn = await appointmentService.execute('user-appointment', withMeta({ action: 'visit_turn', npcId: 'P1-001', text: '我们再次见面，今天想补充一下项目情况。' }, secondVisit.version, appointmentCreated.previewSessionId));
+  assert.equal(secondVisitTurn.meeting?.historyMessageIds?.length, 2, 'the second visit reveals its own new dialogue as it arrives');
+  assert.equal(secondVisitTurn.meeting?.historyMessageIds?.some((messageId) => ['previous-visit-npc', 'previous-visit-player'].includes(messageId)), false, 'the second visit boundary remains isolated');
+  const secondVisitRecovery = toPreviewRecoveryDto(appointmentState).activeMeeting;
+  assert.deepEqual(secondVisitRecovery?.historyMessageIds, secondVisitTurn.meeting?.historyMessageIds, 'GET recovery restores the same current-visit message IDs');
+  assert.ok(secondVisitRecovery?.historyMessageIds?.every((messageId) => toPreviewRecoveryDto(appointmentState).conversations['P1-001'].some((message) => message.messageId === messageId)), 'current visit IDs remain valid within a truncated recovery conversation');
 
   const skipService = createPreviewAiService({ invoker: async () => { throw new Error('skipping preparation must not call AI before the visit'); } });
   const skipAppointment = await skipService.execute('user-skip-preparation', withMeta({ action: 'test_adjust_appointments', appointments: [{ npcId: 'P1-002', status: 'accepted', location: '客户办公室' }] }, 0));

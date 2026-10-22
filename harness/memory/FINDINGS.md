@@ -1,5 +1,59 @@
 # 调查发现
 
+## 2026-10-22 活动历史提交时间可能覆盖测试调时锚点
+
+用户随后确认没调时间，不能把测试调时复现当作本次唯一根因。此前repeat-visit只读Chrome记录第一活动pending未开始时就已00:00；该任务创建14:01而开始14:39，超过20分钟预算。现有预览只planning到deadline暂停，匹配前等待/评估/结果均继续计时，故提交后才看见0不代表提交扣时。当前修复需独立UI暂停理由覆盖阻塞弹窗，不能只修旧任务marker。
+
+HTML applyTestControls把state.timer整体换freshTimer，清掉customerActivityTaskId/Phase。reconcileCustomerActivityTimer读取最新started任务，submitted且marker缺失时把lastResumedAt设成历史submittedAt后syncCountdown。因此测试设定新剩余时间后再同步旧任务可能追扣历史时间。只读DB session862a9e9d...v29活动manual提交时间14:40:04及14:58:27，当前DOM00:00；无客户端历史timer审计，不能据此独断用户确实做过该调时。已异步问用户，独立worker复现中，证据clock-popup-2026-10-22.json。
+
+## 2026-10-22 空方案全0来自共享明确规则
+
+ai/customer-activities.ts noPlanEvaluation全0，evaluateCustomerActivityPlan trim为空时直接返回它，prompt也要求空白全0；game/customer-activities.ts getPublicCustomerActivityOutcome对空draft覆盖固定“内容为空、本次未推进”，预览与正式结果用绿色。只改模型提示或结果文案不会产生准备不足影响，须共享确定性评估+公开结果同步修改。当前正式/预览已有通用结算应用和幂等，可复用。
+
+## 2026-10-22 新一次拜访没有展示边界
+
+修复沿用customerActivityStartIndex，导出本次稳定message IDs，避免把绝对数组下标误用于GET slice(-100)后的局部历史；本地流式消息使用其本地ID加入本场集合，GET恢复则替换为权威ID。未新增冗余持久数组。真实用户最新页面是5001，诊断期间自然进入结算，根未代操作；当前服务更新为exec1642。150条跨渠道历史与两次拜访专项、当前消息/旧failed-draft隔离专项均通过。
+
+renderMeeting从state.conversations[npc].meeting全历史逆向找lastNpc/lastPlayer；startVisitSimulation只新建meeting/turn0，未隔离旧历史和草稿。后端start_visit已经用customerActivityStartIndex记录当次全渠道消息起点，但meetingResponse/GET recovery没携带本次展示边界，因此只清前端数组也会在恢复后复发。用户截图可证新turn0携旧告辞；只读最新862a9e9d...v10时已再次npc_time_constraint结束，保留实际时间差，不据截图误写当前权威状态。
+
+## 2026-10-22 浏览器刷新仍卡拜访的实证原因
+
+PREVIEW-RECOVERY-002：exec2591连续customer_activity_sync报409/PREVIEW_SESSION_VERSION_CONFLICT；本地仅恢复旧id/version，未GET权威状态，沉浸式拜访又绕过普通错误恢复按钮。浏览器刷新会重复使用旧缓存。新前端复用现有鉴权GET，按原session恢复版本、全部渠道对话、拜访、预约、微信、活动及NPC状态，失败保留原编号和进度。真实Chrome原用户页已自动恢复张首轮原回复、发送及主动告辞可用，并验证拜访内同步按钮；只读原session仍activeMeeting turn1/ended=false，版本3→5来自同步后台活动，不代发告辞或reset。证据preview-recovery-2026-10-22，原偶发AI不可用仍不据此倒推原因。
+
+## 2026-10-22 拜访主动告辞错误含义
+
+张用户实际首轮技术交流提议后点击按钮。前端endVisit实际发送visit_turn固定告别而非end_visit。后台只存成功首轮，无failed trace，abandon会移除未完成命令，不能靠未有记录定位AI具体返回。经用户明确外部传输授权后同state隔离真实AI重放成功结束拜访turn2；不修改原DB。告别的‘时间’也会命中活动日期语境review（本次allowed），但无证据证明该分支导致旧失败。确认apiErrorMessage对502/503统一覆盖服务不可用，route日志已知错误只写status，原真实根因不可追溯；本批仅完善分类/提示，不伪称已修原偶发错误。
+
+## 2026-10-21 语义复核初轮真实LLM结果
+
+ACTIVITY-009初稿独立真实LLM12例：11符合预期，明确玩家撤回1例失败。原完整提议/撤回消息均在输入，AI复核返回引用被证据校验归unclear，原因是proposalEvidence要求等于确定性candidate的短活动锚点；合法完整原句被拒绝。独立advisor也读代码确认相同P2。正在改为同message精确连续原文且覆盖锚点（不能接受无关句），重测需保留初轮live-results-initial.json，不能覆盖失败历史。通过样例包含双重否定、时间不能定但仍提议、取消日期保留活动、纯否定、客户拒绝不撤回、回复无需找他人和真正拒绝/接受/转交。不是完整浏览器E2E，Provider全局配置未改。
+
+另独立review复现合规字眼豁免导致“这不涉及泄密，不过这个活动不能安排。”没有任何复核信号；此为同批关键词语义硬裁决残留，已交回复worker修复并新增回归。
+
+## 2026-10-21 原话定位到回复context前置误判
+
+不是只有拒绝regex缺同义词：preview isCustomerActivityProposalText以“不能安排”作取消词，用户“您看能不能安排一下？”命中其中子串，导致专用提示/guard根本未启用。实际原句+实际NPC回复回归在旧代码复现guard调用0次；疑问归一化修复后重试1次（总2次）且使用内部汇报反馈。正式专用活动context helper先依赖generic invitation，动作顺序导致同句漏检，已批准同批仅修专用helper+专项，不改普通拜访或后台门槛。
+
+## 2026-10-21 活动匹配成功但客户回复暗示拒绝
+
+已读实际guard/preview guide及权威最新赵电话：用户提供为近似引用，实际为“嗯……这个我这边暂时还没法安排，具体需求也不是我个人能定的。您看哈，先按正常流程来吧。”。共享regex依赖部分活动关键词，preview只匹配不能安排而无没法/无法安排，且均未把流程推脱作为失败。匹配路径已正常allow、用户正在planning；不能再归因于匹配识别失败。拟改普通活动表达为本人考虑/商量或汇报后反馈，guard+prompt+fallback同步；保留合规边界、不动其他规则。
+
+## 2026-10-21 销售提议规则修订后的真实赵电话通过
+
+明确sales活动由确定性候选保障，原文LLM语义补充合并，识别失败不抹已确定提议；源证据not_required不伪造客户答复。root独立tests/type/lint/build与只读Review通过后更新5000，真实Chrome重复第一条原话+挂断前全五20/60，赵回复先向上级汇报，挂断后真实匹配弹窗。DB新task/新conversation冻结全五/numericv3/allow独立断言PASS；诊断有phone_started/queued/detection/candidate/model_skip+request+response/count/threshold/task，区分已确定候选本身无需模型与补充识别实际调用。原数据session未reset，旧通话仍保留。证据sales-proposal-phone-retest/；仅一次新真实电话，不把成功倒推旧模型唯一失败原因或扩为全渠道/多人E2E结论。
+
+## 2026-10-21 电话漏识别诊断边界更正
+
+现有证据不能证明真实那次LLM调用发生，不能由pending空倒推出必然AI误判；activeCall缺失时end_conversation可空操作成功，虽然正常phone_connect/restore/调值代码未找到丢该字段路径。需要调用trace/入队审计才能定因。当前用户问题已证明未生成候选/decision/task及测试覆盖不足；240门槛断言/识别mock不能代替赵晓晨原话真实电话E2E。旧真实快测张建国邮件也不覆盖新场景。覆盖此前将活动识别空结果当唯一原因的表述，ACTIVITY-007仍Open。
+
+## 2026-10-21 应用测试值停表根因
+
+applyTestControls重建state.timer使用freshTimer，遗漏覆盖started，导致started=false；syncCountdown遇未开始直接返回。使用真实HTML VM执行applyTestControls可确定性复现，非AI等待或浏览器整体卡死。补started:true，保留meeting暂停条件；本次不改既有用户localStorage，刷新是否可自动恢复旧false需另核查，不承诺自动恢复。
+
+## 2026-10-21 全五20/60的电话活动仍未匹配
+
+只读权威会话及命令确认赵晓晨电话的提议、客户向李经理汇报的模糊回应；五人调值在挂断前完成，配置numeric v3满足。服务端已结束并同步，却无pending/decision/task，定位活动识别未产出候选，不能归因于数值不足或前端隐藏已有任务。无原始检测响应，具体LLM分类/过滤原因未知；提示词对允许向上汇报与排除暂缓/不确定的边界存在歧义。ACTIVITY-007 Open，证据PHONE_DETECTION_FINDING.md；当前仅诊断，未修复、不改用户会话。
+
 ## 2026-10-12 回复收短的本地验证与抽样限制
 
 - 五人low仍有多层示例要求索要范围/责任/证据、说明流程，再追问；通用customer两处写30-80字/1-3句。用户要求高层/低接受度更短，已缩短low各层引用及互相矛盾的追加指引，角色长度参考优先通用建议。五人base和业务边界未动；旧内置profile精确upgrade及自定义保护通过。
@@ -569,3 +623,113 @@ Qwen高档复述销售方输入，存在角色混淆；低开场误称“张建�
 预览renderCompetitorModal每次调用openModal重新写modalRoot.innerHTML，列表/详情切换与30秒/焦点资料刷新会替换遮罩和窗口；原CSS backdropIn从opacity0、modalIn从opacity0/scale.94开始，每次挂载重放。正式React Modal在页面组件外定义，无同类入场动画与整壳innerHTML替换，未据猜测修改正式页面。
 
 修复预览竞品专属稳定壳：初开使用无入场动画class；后续仅body更新且比较markup，相同内容不写DOM；revision属性不再作为内容变化导致重绘。导航重置真实modal滚动，后台更新保留滚动，身份切换/关闭清缓存。通用弹窗默认动画保持。旧版浏览器baseline未实际取得（默认sandbox本机套接字拒绝、public源修复后即时变更）；不宣称旧运行前后量化，仅记录旧代码机制和最终验证。
+
+2026-10-14分享对话已读：常规web/cua失败后公开URL直接下载HTTP200（664295bytes），解析reactRouter嵌入正文确认核心是自然对话决策、单份共用规则、低投入可推脱、高投入非销售教练。设计说明outputs/2026-10-14-提示词设计调整说明.md。源码实际已有身份锁/服务端结束契约，不重复实现；新增共享措辞不影响评分。
+
+## 2026-10-14 自然对话提示词修订（本地完成，运行时读取已确认）
+
+已读用户分享并完成共用规则单份注入、五人三档90个短例、customer及渠道去冲突。15档正文由约1400-1800字精简到229-264字；共用规则另1206字，不以角色文本压缩量冒称总模型token下降。三档同6类场景逐句不同，例句最长22字。张低通常5-25字/原则最多35，全局日常默认一句8-35，不随高支持机械增字；保持口头语、岗位/事实权限、生活背景授权披露、结构化/评估/正式邮件豁免。
+
+完整四字段默认精确升级，自定义任一字段保护；全局与渠道也精确匹配旧默认。实际接口发现全局仍是1183字旧稿，已证明与git commit81a975fb6逐字一致后添加精确指纹，单字符编辑与空字符串仍保留。未物理改数据库、评分、邀约、会面规则或Provider，不新增熟悉度/交流意愿数值。
+
+主线程最终人物/Excel/正式五人/预览AI/配置编辑范围专项通过，ts-check、全量lint和最终新增文件定向lint、Next+tsup build均通过。预览旧断言改为同等技术权限语义，未放宽权限。初始sandbox Corepack DNS失败已在正常依赖环境复跑解决。最终本地服务PID48976，API HTTP200、revision5，五人新6场景、customer新短句及渠道无自动下一步均确认；证据harness/evidence/npc-natural-dialogue-2026-10-14/，不含令牌。
+
+完整稿outputs/五人NPC提示词-自然对话设计-2026-10-14-v5.md；说明outputs/2026-10-14-提示词设计调整说明.md。主线程审阅实际diff/90例/导出与源码一致性，修正过中档生成占位，最终无undefined。未调用外部模型验证本次v5，PROMPT-007/009/010/012生成质量问题继续Open。本段覆盖较早“实施中/待验证”的当前状态；旧记录保留其发生时间。
+
+## 2026-10-14 张建国v5三模型真实抽样（15样本完成，质量未通过）
+
+用户明确要求实测并沿用此前三个具体域名/payload授权。执行当前v5源码（common恰一次、三档SHA256已留痕），3provider×5独立单轮同输入共15样本。11条有效JSON正文均13-29字、无超35参考线；4条DeepSeek仅空格、invalid_json（中档21、高档17、低敏感16、低长推销17个U+0020），不重试、不当合格短答。配置名deepseek-v4-flash、doubao-seed-2-0-lite-260428、qwen-plus，未取得独立returned-model metadata，不改全局Provider。
+
+DeepSeek1/5正文28字；豆包5/5、23-29字；Qwen5/5、13-22字。Qwen三档开场仍错称“张建国，您好”，低敏感仅含糊收束而未明确拒绝内部信息/联系承诺，低长推销加姓名前缀且未回应已给来意。豆包低敏感明确拒绝信息却承诺“后续我会安排对应业务岗位对接”，无已确认安排；低长推销继续索要材料，礼貌与低投入收束/三档行为差异仍不足。不能因全部有效正文短而判定通过，亦不将空白原因归咎服务商或宣称生产UI同样失败。
+
+证据harness/evidence/npc-zhang-natural-replies-2026-10-14/v5-live/{summary.json,responses.ndjson}含所有输入、正文、原始JSON/空白及提示摘要哈希。各样本仅张建国无其他NPC档案，0产品/评分/数据库/模型配置修改。以10/13同输入作描述性对照，非严格A/B、非完整UI或连续会话；上下文未请求额外人物。全量PDF/报告按真实数据整理，旧证据保留。PROMPT-007/009/010/012继续Open，格式空白另登记TEST-MODEL-001。
+
+2026-10-14张建国v5实测交付：报告outputs/2026-10-14-张建国三模型自然对话实测报告.md已人工复核；PDF output/pdf/2026-10-14-张建国三模型自然对话实测记录.pdf最终5页。主线程独立核对15输入、11完整正文、4份空白输出转义，渲染联系表与Qwen详情无截断；pdf-independent-audit.json、pdf-render-qa.json、independent-evidence-audit.json均在本批v5-live证据目录。DeepSeek一般忙碌表达视为允许的泛化推脱，不误判成具体日程事实；整体仍未通过，未修改产品或追加模型请求。完成样本和交付不等于解决PROMPT/TEST问题。
+
+## 2026-10-14 张建国空白定位与v6质量修复（本批本地完成，生成质量继续跟踪）
+
+确认v5原四异常的rawOutput为21/17/16/17个U+0020，invokeLLM旧逻辑只检查falsy，未把纯空格判为空。现已trim校验并抛AI_PROVIDER_EMPTY_RESPONSE；诊断trace先保留rawResponse再记错误，空白不自动重试或伪装成礼貌短答。原四次缺少HTTP/finish_reason等元数据，不能倒推模型内部根因。精确复测原四输入4/4有效；标题轻微变体2×2对照8中1条HTTP200/stop但content为13空格，非length截断；JSON协议冲突为实证缺陷和风险，不能认定其单独导致原四次。旧证据均保留。
+
+customer新增明确plain_text/json_content协议，默认正式流仍正文；JSON采样不再拼接“不输出JSON”。共享规则强化您、未知不猜名、敏感双请求明确双拒绝、无确认不承诺转办；正式/预览已有身份guard补姓名冒号前缀检测及空白保护，保底句简短。张建国职责从默认转介改为权限边界；低档明确先选行为：敏感双拒绝，已介绍/请求继续则致谢收束，首次寒暄简短接待。精确旧默认四字段升级、自定义任一字和空字段保护保留，无评分/数据库/Provider改动。
+
+真实回归first-pass15+low-refinement9+low-final9+low-action-priority9共42条，均有效JSON/无空白，0重试；前三轮完整保留，存在超字、追问、虚构联系人等失败。最后9条10-30字、无姓名倒置、敏感三家双拒绝、长推销三家均客气收束；豆包开场仍有让对方一分钟讲重点的引导感。首轮身份附加示例包含林先生，后续按实际自报动态生成；多项提示/参数改变，非严格A/B或完整UI/多轮验收。首轮高档44字等残留不以最后低档9覆盖，PROMPT-007/009/010/012保持Open。
+
+根审阅实际diff与所有回归正文；provider/身份/预览AI、角色/Excel/正式五人/配置编辑范围专项通过，完整ts-check、lint:build、最终Next+tsup build通过。最后本地3000重启PID46600，API HTTP200/revision5只读确认最终低档行为优先级/base权限及customer身份规则加载，自定义无物理覆盖。证据harness/evidence/npc-zhang-diagnosis-2026-10-14/。本批报告/全量PDF包含失败，不声称供应商问题根治或所有NPC质量已通过。
+
+## 2026-10-15 Excel版同步完成、先交豆包/Qwen（按用户最新指示）
+已通过现有设计师PUT版本检查将Excel35项（五人20基础/三档+15渠道）逐字保存，开发配置revision7→8、persisted=true；GET35/35一致，独立Zip/XML与openpyxl读出105个标识/用途/提示词单元格相同；非表内字段与35/70门槛保持。原Excel未修改，产品源码未修改，导入接口INVALID_XLSX只登记、按用户暂缓。设计师刷新后可读新版。
+
+张建国豆包5、Qwen5均实际返回有效JSON正文，10条各一次请求，无重试，字数豆包25-36、Qwen26-39，均在此Excel低40/中55/高75参考内，不套旧35字线。使用实存revision8人物和visit渠道，只发张建国虚构输入；.35/3000/JSON/thinking disabled，单轮非完整UI/多轮。用户明确失败应重试后，DeepSeek保持提示词做延时、SSE及当前接口模型标识等多轮重试仍无正文，SSE仅HTTP200保活。官方rate_limit/说明最长排队10分钟；不能断定等待全由客户端配置造成。用户随后要求先交另外两个、DeepSeek问题稍后查，根已停本批5条未完成长连接，不再追加DeepSeek请求。最终对比只列豆包/Qwen10条成功原文，DeepSeek不作失败占位，也不声称三模型完成。内部超时和取消记录原样留存，two-model-results.json与deepseek-deferred.json明确本批最终范围。
+
+质量观察不改写原文：豆包中高开场仍用“你”、有讲重点的引导感；Qwen客气收束较明确但口头语较密。泛化“我一会儿还有个会”来自用户Excel示例，可作社交推脱，不误判成编造具体日程。未因语气不够理想重抽正常回复。暂不改提示词或修导入bug；全量文本/PDF按这10条整理。仅配置变更，采用保存读回、独立字段审计、实际模型请求和文档检查，不无故重复全产品build。
+
+## 2026-10-16 修复Excel导入覆盖提示词（已批准，实施中）
+用户明确要求修复原导入bug。本批验证用户原始Downloads工作簿文件解析、35项校验/草稿预览/应用/保存/重新读取全链路；不改Excel正文、不重测外部模型、不修改其他游戏规则。已检查prompt-excel解析、API、prompt-library页面与版本保存契约：此前实际文件INVALID_XLSX；另确认导入预览只识别旧scope=role，现有role_base/low/medium/high会被误作渠道并以空channelId取label导致页面错误。解析层worker限定prompt-excel.ts/专项测试，根负责预览用途映射和真实浏览器/保存验证；原有未提交提示词修改保留。验收需原文件35项原文与保存读回一致、导入校验后草稿可应用、invalid不覆盖、错误/版本冲突不假称保存成功，必要专项/类型/lint/build与harness通过。
+
+2026-10-16原件补回：用户将原SellSmart Excel放回原Downloads编码路径，根实查14819bytes、SHA256=8de831fd8d19c2d0a14be4fee7e24f831d2658766c21d372b07c16e42853b43f，与10/15原件一致。先前“原件当前缺失”只记录恢复前状态；最终须按该原件验收，不以归档文本重建替代。解析修复与浏览器测试按文件明确分工并行，不改用户原件。
+
+2026-10-16根因补证：原件ExcelJS4.4直接load复现TypeError读取undefined.sheets，包内workbook/worksheet/styles/sharedStrings使用合法SpreadsheetML主URI的x:前缀；ExcelJS按未限定元素名匹配失败。仅按已绑定URI在内存规范化后可加载；拟采用显式锁定JSZip/saxes依赖进行受限namespace-aware兼容，不修改用户文件、不粗暴删除所有前缀、不放宽业务字段校验。预览scope错误另已用旧构建浏览器真实POST有效35行复现TypeError读取undefined.label，baseline-result.json/截图留证。最终验收将同时覆盖原件解析和新旧scope预览。
+2026-10-16补证：原SellSmart工作簿sharedStrings[16]是真字符串18，20条人物基础/支持度行C列引用它。合法XML前缀兼容后会暴露旧ROLE_CHANNEL_NOT_EMPTY校验，需以明确warning忽略不参与人物目标的多余字段；渠道行不可照此放宽。源文件SHA与10/15一致。
+
+2026-10-16最终验收：原件合法x:命名空间确为ExcelJS误报INVALID_XLSX根因；35项文本经兼容层逐字保持，20个人物行多余交流方式显式告警。旧有效35项在原构建触发undefined.label预览崩溃，新构建新旧模板均通过。浏览器route.fetch代理multipart曾造成测试上传400，移除代理、保留原生浏览器上传后通过；这属测试脚本问题，不冒作产品新增缺陷。根61项复跑、实际接口不改内容保存revision8→9和源SHA不变均有证据。
+2026-10-16新版r10已保存且五字段变化；15直连单轮样本均首轮返回，DS本批请求/返回deepseek-flash，用时约0.7–1.1秒/条，无空白。当前服务/models只列deepseek-flash/deepseek-v4-pro而配置为deepseek-v4-flash；请求ID临时兼容与SSE/时间等条件同时变化，不能推出旧超时只由alias造成。低支持度邀请继续讲、称谓你、无依据公开透明断言等质量缺口保留原文，PDF/截图无筛选改写。
+
+## 2026-10-16 测试表步骤①②张建国实际请求核验
+
+仅执行张建国13个独立单轮与T027–T029连续三轮，DeepSeek/豆包/Qwen各16条，最终48条有效正文。来源是当前服务GET的revision10；原Excel SHA及配置内容经独立对照一致，未改提示词/评分/全局模型选择。原批49次实际请求产生46条有效回复、DeepSeek多轮T028连续3次HTTP200/stop但正文为16/18/21个U+0020空格，T029因无有效前文未发。首批六份证据完整归档initial-run并逐文件SHA核验。
+
+首批多轮续接使用解码后的NPC正文；本批将三家多轮统一为续接API实际返回的JSON assistant消息，各重新执行三轮，共9次/0重试，均有效。39条原始单轮保留，正式48条由39原单轮+9格式一致性复测多轮组成。实际completion调用合计58（49+9），不能称48次首轮全通过；这不是供应商空白唯一原因已证，TEST-MODEL-001继续In Progress。DeepSeek仅本批临时deepseek-flash，豆包doubao-seed-2-0-lite-260428，Qwen qwen-plus，配置旧alias未写回。根独立解码48原始HTTP/SSE、按模型/case/attempt关联、逐字核对Excel输入、三家system一致与2/4/6条真实消息历史，全部通过；证据npc-zhang-plan-steps12-2026-10-16/root-independent-audit.json。
+
+直观质量观察：低档多轮均简短推脱，最后均明确不保证入围；部分低档单轮仍邀请讲重点；Qwen T003把听说启动变成确认，豆包T005补充内部评价公开的未给事实，Qwen T042把两个点改成一点，豆包同case使用你直接讲。PROMPT-007/009/010/012维持Open，不因格式有效关闭。仅提示词API采样，不宣称游戏UI、申请状态或强制结束已验收；不测其他NPC。完整PDF与全文/视觉验收另在下条记录。
+
+## 2026-10-16 测试表前两步交付完成
+
+7页PDF output/pdf/2026-10-16-张建国表格前两步测试记录.pdf 已生成，包含39独立单轮回复与9连续多轮回复的所有原输入/正文、来源/模型以及简单样本观察，无六维或总分。报告明确原49次尝试及统一JSON历史多轮9次复测，实际58次；不把复测当初次全通过。根独立按provider+case核对PDF48输入/回复与请求/响应记录一致，全文无替换乱码，检查全部7页渲染联系表及代表大图，无裁切/重叠；证据report/root-pdf-audit.json、report/audit/report-audit.json、report/render。最终只读GET HTTP200/persisted=true/revision10，完整config与测试snapshot逐项相同，未改提示词/模型设置/Excel；原表SHA仍一致。治理检查harness-check通过，本批无产品源码修改，未无故运行build/重启服务。仅张建国完成，其他NPC等待用户决定。
+
+## 2026-10-16 当前结构与用户全流程检查（诊断完成，不含实现）
+
+当前源码复核确认项目一正式五人/20分钟计时/存档/结算/报告已存在；不能继续以旧四人五阶段文档判为未做。用户旅程与后台由两个只读Worker分工，主线程复核实际证据并整理 outputs/2026-10-16-项目结构与用户全流程完整性检查.md。真实认证/组织归属、玩家候场与教练观察、企业501接口、部分设计师编辑不持久化、个人历史报告入口和持续训练闭环仍有缺口。报告标明代码确认、产品建议与未实查边界；远程DB/存储/部署及本轮浏览器完整对局未实查，未向外部模型发送请求，未改产品代码或当前配置。
+
+主线程已通过计时/正式工作流/正式五人三组回归及TypeScript；Corepack初次DNS失败后使用已安装tsx/tsc，不安装或升级依赖。全量ESLint及治理结果在本条后补记。既有工作区修改保留，本批未提交Git、未重建或重启应用。下一步应按用户选择的单机试用/企业交付目标批准实现范围，不能把诊断建议当自动实施授权。
+
+## 2026-10-20 客户约定活动策划（用户已批准，实施中）
+
+用户已确认：客户或销售提出、双方同意后，仅在本次拜访/邮件等对话结束后匹配技术交流会、案例现场参观、客户参观我司；弹窗进入文字策划，每项独立连续300秒，开始后不可暂停，关闭/刷新不重置，到期自动提交已保存文字（含空白）。不设新总分，复用现有支持度、愉悦度和五维增减并给总体评价；内部指标不对玩家泄漏。策划不扣游戏时间和行动点。仅约定客户受影响，策划不等于活动已举办，重复识别/请求/结算需幂等。
+
+已检查实际入口：正式 chat/stream、sessions commands/meeting、game state/repository；五人预览 project-one-preview-ai、contracts、持久化session repository；当前无上述活动任务队列/策划入口。已有对话、会面、评价及JSON权威状态可复用，不重复建设。正式游戏20分钟计时需检查策划隔离；远程数据库/生产实例尚未实查，不宣称部署完成。
+
+明确分工：activity_core仅领域/AI模块和领域测试；preview_backend仅五人预览服务端及契约；formal_backend仅正式对局后端；activity_ui仅正式/预览前端与共享组件；主线程维护台账、复核实际diff并执行最终专项/类型/lint/build/harness。保留本批开始前未提交的提示词、Excel等修改。
+
+验收：双方确认/否定/撤销/跨会话边界；三种活动及多任务串行；server deadline及草稿恢复/过期冻结；重复结算保护；正式与预览路径、隐藏指标、零AP零游戏时间；失败可重试且不伪造评价。
+
+### 2026-10-20 用户追加规则：销售提议与活动可开展判定分离（已批准，覆盖上方旧触发门槛）
+销售提出技术交流会/参观时，客户只作职级化模糊回应：高层建议与负责项目的同事商量，中基层表示需向上汇报；不要求客户直接明确同意。对话结束后按当时服务端客户指标快照判断可否开展。客户主动提出的情况暂保留销售确认；明确拒绝、撤销仍排除。已向用户说明快照取本次对话结束时，并冻结以避免重试使用后来数值。
+用户进一步确认：默认沿用AI综合决策，同时设计师后台必须能切换数值模式并设置具体门槛。实施设计为三活动各supportMin/pleasantnessMin、0..100、两项同时满足，默认AI且没有隐造数值；numeric模式必须完整配置。模式/配置revision与关系快照一起保存。活动配置使用独立designer_prompt_configs key、鉴权及真实CAS，不改NPC提示词或全局模型选择；AI决策复用当前JeV/LLM provider路由，新增封闭目录task customer_activity_feasibility。
+计时、文字方案、自动提交、现有指标结算及零游戏时间/AP等原规则继续有效。旧双方明示同意检测仅为此前实现阶段记录，不再代表销售发起路径的最终验收标准。
+
+## 2026-10-20 客户活动功能本地实现与验证完成
+
+正式对局与五人预览均已实现技术交流会、案例现场参观、客户参观我司。销售提议后客户按职级模糊回应，结束对话时冻结指标与配置，默认AI判定；设计师后台可切换为三活动各自的支持度/愉悦度门槛（0..100、同时达到、全部配置后启用）。客户主动提议仍需玩家确认。允许后进入每项独立300秒文字策划，持续存草稿、刷新恢复、到期自动提交，零行动点与零策划游戏时间；评价仅给总体文字并幂等调整已有指标。
+
+主线程已复核实际diff、跨模块契约及独立Review发现的批次部分成功重试问题，修复已成功decision逐项checkpoint、CAS复用及队列切换隔离。领域/正式/预览/配置/表单专项和既有计时、五人流程、邀请、指标、AI provider、Jev目录等相关回归通过；TypeScript、全量lint、生产build通过。正式与设计师浏览器页面及预览真实HTML均用mock API验证，证据包括三任务串行、持续输入保存、刷新、空白超时、提前提交和后台保存冲突/失败恢复。PGlite执行真实SQL迁移的最小fixture测试通过，覆盖房间提前结束、截止后计时、普通计时与权限/幂等。
+
+本地production服务在 http://127.0.0.1:5000 运行；页面/game、/project-one-preview、/designer/customer-activities返回200，未登录配置API返回401。完整证据与边界见harness/evidence/customer-activities-2026-10-20/VERIFICATION.md。远程Supabase迁移未执行、真实在线AI及远程完整登录态对局未验证，不宣称部署完成。保留本批之前的提示词/Excel等修改，未提交Git。
+
+### 2026-10-21 客户活动规则修正：本地实现完成
+已将高层回应改为本人考虑/内部商量，共享转介检测同时接入正式与预览，覆盖昨晚原句的回归；Jev默认规则和预览独立提示/兜底同步。公共活动投影用确定性短结果替换原点评，旧存储长建议也不下发；内部指标和计时结算不变。正式与预览弹窗按状态显示，去掉重复summary/basis和多段说明；结果态仅简短结果/完成按钮。未修改用户NPC持久化提示词、全局模型或数据库数据。
+已从权威DB只读核查唯一快测session：张建国匹配snapshot支持0/愉悦50、numeric rev1门槛0/0，所以allow；结算后1/51。其余四人当前0/50、无活动decision，不冒称它们是历史匹配快照。当前配置实际AI rev2且空阈值。脱敏证据harness/evidence/customer-activities-2026-10-21/REAL_TEST_NUMERICAL_EVIDENCE.md。
+主线程独立领域/邀请回应/正式活动/预览活动/既有预览AI/Jev目录及TypeScript通过，全量lint与production build通过。新本地production服务5000运行，设置页HTTP200。浏览器mock验收与边界见同目录VERIFICATION.md；本批没有重新跑真实AI五分钟全流程，也没有远程部署或迁移。保留原工作区变更，未提交Git。
+
+2026-10-21证据归档更正：activity_ui在收到明确独立目录要求前，曾修改/复跑10/20的preview-browser脚本、results和部分截图。原始预览mock截图无法恢复，故10/20目录这些预览mock产物不能继续视为原始10/20验收快照。10/20真实live-quick截图、formal证据未被该操作修改；10/21独立浏览器证据可复跑。后续每批一律独立子目录，禁止覆盖历史证据。
+
+### 2026-10-21 用户授权后：真实AI矩阵测试完成
+用户明确允许向TypeSafe/Jev发送18次固定虚构上下文请求后，主线程执行现有脚本（未切provider/未改后台），18/18成功，实际模型jev-1.13.0；三活动×支持/愉悦0/10、0/50、0/90、50/50、90/10、90/90全部allow。逐条输入snapshot/活动类型/原始答案/业务判定/AI rev2一致性审计通过；无错误。结果表明该固定背景下AI放行偏宽、指标区分不足，登记ACTIVITY-004待明确标准，不自动改产品规则。本批仅测试证据/治理修改，无产品实现变化，不无故重建服务。证据metric-matrix/summary.json、逐项JSON、root-audit.json、REPORT.md。此前approval-blocked文件属历史状态；当前实际调用18。SEC-TEST-001密钥仍需轮换。
+
+## 2026-10-21 用户要求改用LLM进行同组实测（已批准，测试完成）
+本批仅测试调用覆盖为LLM，不持久化改后台决策provider。使用当前deepseek提供方（配置模型deepseek-v4-flash、provider selection revision5），活动仍AI rev2，同一虚构高层/项目/五维0/回应下的18组支持-愉悦×活动条件。原LLM路径18组回复因response包装/缺type等不符适配器严格契约而失败；只在测试脚本中补充准确JSON说明，不改判定标准/产品代码，最终18组均校验成功且全部allow，包括0/10。与Jev结果一样，本轮未体现指标区分，ACTIVITY-004保持Open。发现现有llm-decision输出示例与解析契约不一致，登记ACTIVITY-005，未擅自扩为产品修复。
+应用层实际共56次LLM调用（首次18、诊断1、脚本替换引号失败后意外重跑18、格式探针1、最终18）；原格式根目录结果被第二失败批次覆盖，报告明确归档边界，不冒称首次冻结证据。格式修正后的探针/最终矩阵独立保存，前次Jev证据未改。本批Jev调用0。主线程逐条核对输入snapshot和原始合法JSON/业务选择，均一致；不把适配器one-hot概率当模型置信度，也不把配置别名当实际服务端模型身份。证据customer-activities-2026-10-21/llm-matrix/REPORT.md、format-corrected/summary.json、root-audit.json。无产品实现改动，未重建/部署，后台与现有对局未修改。
+
+### 2026-10-21 整体客户门槛：本地实现与真实配置保存完成
+正式/预览对话结束时冻结全五关系，新numeric以OR路径/AND条件+至少2个实际不同达标者判定；客户主动无豁免，目标NPC无单独特权。推荐所有达标者愉悦>=55，全五愉悦>=20；三活动具体支持门槛见organization-thresholds/VERIFICATION.md。历史数据可读不补造团队；新会话matching loader拒绝旧单人numeric，编辑GET仍可读升级。独立review发现的旧配置P2已修并复核无剩余P1/P2。
+主线程独立专项/相关状态回归、ts-check、全量lint、production build通过；实际设计师浏览器校验101阻止保存、推荐草稿未保存提示、真实保存与三标签。首次DB读取503后重试成功，不冒用默认值。后台从AI rev2更新numeric rev3，页面保存成功且权威DB readback三类完整组织配置与推荐逐项一致。基于真实v3配置的16场景×3活动×5提议者=240断言通过，覆盖正式/预览开局、任意单人提升不通过、双人/三人通过、非目标客户影响及19/20/54/55边界。
+证据harness/evidence/customer-activities-2026-10-21/organization-thresholds/。最新本地production服务5000运行，未远程代码部署/未跑新真实AI完整对局/未多人大局E2E；无新增SQL。未改玩家存档、全局模型或NPC持久提示，未提交Git。后续按真实对局反馈调首版门槛，不能把单元/集成通过当难度平衡已验证。

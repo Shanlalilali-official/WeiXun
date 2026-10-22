@@ -36,7 +36,7 @@ assert(html.includes('id="refresh-test-npc-states"'), '测试调节面板缺少�
 assert(route.includes("['test_adjust_npcs', 'test_adjust_appointments'].includes(parsed.data.action) && !isFastDebugEnabled()"), '生产环境没有默认关闭测试调节 action');
 assert(html.includes("if(value)state.wechat[id]=value;else delete state.wechat[id]"), '微信状态没有写入本地测试状态');
 assert(html.includes("if(state.wechat[n.id]==='accepted')return renderMessageWorkspace('wechat')"), '已添加状态不能直接进入微信对话');
-assert(html.includes('function syncCountdown(now=Date.now())'), '倒计时同步逻辑缺失');
+assert(html.includes('function syncCountdown(now=Date.now()'), '倒计时同步逻辑缺失');
 assert(html.includes('pauseCountdown();'), '进入实际拜访时没有暂停倒计时');
 assert(html.includes('resumeCountdown(turn)'), '结束拜访时没有按轮次恢复倒计时');
 assert(html.includes('const immersive=Boolean(state.meeting);'), '进行中的拜访没有切换到沉浸式页面壳');
@@ -71,6 +71,23 @@ const npcSnapshot = (supportBase: number, pleasantnessBase: number) => npcIds.ma
   effectiveContactCount: index,
   node: index === 0 ? 'N1' : 'N2',
 }));
+
+function recoveryBody(sessionId: string, version: number, npcTestStates: ReturnType<typeof npcSnapshot>) {
+  return {
+    success: true,
+    data: {
+      previewSessionId: sessionId,
+      version,
+      conversations: Object.fromEntries(npcIds.map(npcId => [npcId, []])),
+      appointments: [],
+      wechat: Object.fromEntries(npcIds.map(npcId => [npcId, null])),
+      activeMeeting: null,
+      customerActivities: { version: 1, tasks: [] },
+      approvedVisitPreparationNpcIds: [],
+      npcTestStates,
+    },
+  };
+}
 
 class MemoryStorage {
   private readonly values = new Map<string, string>();
@@ -222,6 +239,10 @@ async function verifyNpcTestStateRefresh() {
     data: { previewSessionId: sessionId, version: 5, action: 'message', content: '已回复', npcTestStates: afterChat },
   };
   const withPost = createRuntime(storage, [async (url, init) => {
+    strictAssert.equal(init?.method, 'GET', '同步会话后才允许发普通 NPC 消息');
+    strictAssert.match(url, /previewSessionId=123e4567-e89b-12d3-a456-426614174000/, '发送消息前恢复当前预览会话');
+    return { ok: true, status: 200, json: async () => recoveryBody(sessionId, 4, npcSnapshot(11, 51)) };
+  }, async (_url, init) => {
     strictAssert.equal(init?.method, 'POST', '普通 NPC 沟通通过预览 POST');
     const request = JSON.parse(String(init?.body)) as { action: string; channel?: string };
     strictAssert.equal(request.action, 'message', '关系值来自一次真实消息 action');
@@ -243,7 +264,11 @@ async function verifyNpcTestStateRefresh() {
   const reloaded = createRuntime(storage, [async (url, init) => {
     strictAssert.equal(init?.method || 'GET', 'GET', '刷新页面后读取预览恢复接口');
     strictAssert.match(url, /previewSessionId=123e4567-e89b-12d3-a456-426614174000/, '恢复请求使用当前预览会话 ID');
-    return { ok: true, status: 200, json: async () => ({ success: true, data: { previewSessionId: sessionId, version: 6, npcTestStates: refreshed } }) };
+    return { ok: true, status: 200, json: async () => recoveryBody(sessionId, 6, refreshed) };
+  }, async (url, init) => {
+    strictAssert.equal(init?.method, 'GET', '应用调节前先恢复服务端会话版本');
+    strictAssert.match(url, /previewSessionId=123e4567-e89b-12d3-a456-426614174000/, '应用调节只恢复当前预览会话');
+    return { ok: true, status: 200, json: async () => recoveryBody(sessionId, 6, refreshed) };
   }, async (_url, init) => {
     strictAssert.equal(init?.method, 'POST', '应用测试值写入预览服务端');
     const request = JSON.parse(String(init?.body)) as { action: string; adjustments?: Array<{ npcId: string; support: number; pleasantness: number }> };

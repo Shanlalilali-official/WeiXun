@@ -63,6 +63,23 @@ function response(status: number, body: unknown) {
   };
 }
 
+const npcIds = ['P1-001', 'P1-002', 'P1-003', 'P1-004', 'P1-005'];
+function recoveryResponse(sessionId: string, version: number) {
+  return response(200, {
+    success: true,
+    data: {
+      previewSessionId: sessionId,
+      version,
+      conversations: Object.fromEntries(npcIds.map(npcId => [npcId, []])),
+      appointments: [],
+      wechat: Object.fromEntries(npcIds.map(npcId => [npcId, null])),
+      activeMeeting: null,
+      customerActivities: { version: 1, tasks: [] },
+      approvedVisitPreparationNpcIds: [],
+    },
+  });
+}
+
 function createRuntime(options: {
   userId?: string;
   token?: string;
@@ -253,11 +270,17 @@ async function testInFlightAccountSwitchDoesNotMutateNewAccount() {
   const runtime = createRuntime({ userId: 'user-A', token: 'token-A' });
   seedAccount(runtime, 'A');
   let finishResponse!: (value: unknown) => void;
-  runtime.setRouteFetch(() => new Promise(resolve => { finishResponse = resolve; }));
+  runtime.setRouteFetch((_url, init) => init?.method === 'GET'
+    ? Promise.resolve(recoveryResponse('A-preview-session', 6))
+    : new Promise(resolve => { finishResponse = resolve; }));
   const pending = runtime.hooks.sendMessage({
     payload: { npcId: 'P1-001', channel: 'email', text: 'A private message' },
   });
-  assert.equal(runtime.calls.filter(call => call.url === '/api/project-one-preview/ai').length, 1, 'A request started');
+  for (let attempt = 0; attempt < 10 && !finishResponse; attempt += 1) await Promise.resolve();
+  const previewCalls = runtime.calls.filter(call => call.url.startsWith('/api/project-one-preview/ai'));
+  assert.equal(previewCalls.filter(call => call.init?.method === 'GET').length, 1, 'A session is recovered before the message request');
+  assert.equal(previewCalls.filter(call => call.init?.method === 'POST').length, 1, 'A message request started after recovery');
+  assert.equal(typeof finishResponse, 'function', 'A POST is held open to exercise the account-switch race');
 
   runtime.setAuth('user-B', 'token-B');
   assert.equal(runtime.hooks.snapshot().workPlans.global, '', 'B state loaded before A response');
@@ -288,7 +311,9 @@ async function testInFlightAccountSwitchDoesNotMutateNewAccount() {
 async function testErrorCleanupIsOwnerScoped() {
   const runtime = createRuntime({ userId: 'user-A', token: 'token-A' });
   seedAccount(runtime, 'A');
-  runtime.setRouteFetch(async () => response(401, { error: 'expired' }));
+  runtime.setRouteFetch((_url, init) => init?.method === 'GET'
+    ? Promise.resolve(recoveryResponse('A-preview-session', 6))
+    : Promise.resolve(response(401, { error: 'expired' })));
   await runtime.hooks.apiCall('plan', { text: 'retry' });
   assert.equal(runtime.hooks.snapshot().workPlans.global, 'A plan', '401 retains the same owner local cache');
   assert.equal(runtime.hooks.snapshot().previewSessionId, 'A-preview-session', '401 does not detach or reset a potentially owned server session');
@@ -297,13 +322,15 @@ async function testErrorCleanupIsOwnerScoped() {
   seedAccount(runtime, 'B');
   runtime.setAuth('user-A', 'token-A');
 
+  const callsBeforeMissingSession = runtime.calls.length;
   runtime.setRouteFetch(async () => response(404, { error: 'missing' }));
   await runtime.hooks.apiCall('plan', { text: 'retry' });
-  assert.equal(runtime.hooks.snapshot().actionPoints, 28, 'missing session resets the active owner complete preview state');
-  assert.equal(runtime.hooks.snapshot().workPlans.global, '', 'missing session clears active owner plan');
-  assert.equal(JSON.stringify(runtime.hooks.snapshot().publicIntel['P1-001'] ?? []), '[]', 'missing session clears active owner public information');
-  assert.equal(runtime.hooks.snapshot().npcTestStates['P1-001'].support, 0, 'missing session clears active owner test adjustments');
-  assert.equal(runtime.hooks.snapshot().previewSessionId, null, 'missing session clears only the active owner session pointer');
+  assert.equal(runtime.calls.length, callsBeforeMissingSession + 1, 'a missing session stops at the recovery GET without sending a POST');
+  assert.equal(runtime.hooks.snapshot().actionPoints, 7, 'missing session preserves the active owner local progress');
+  assert.equal(runtime.hooks.snapshot().workPlans.global, 'A plan', 'missing session preserves the active owner plan');
+  assert.equal(JSON.stringify(runtime.hooks.snapshot().publicIntel['P1-001'] ?? []), '["A public fact"]', 'missing session preserves active owner public information');
+  assert.equal(runtime.hooks.snapshot().npcTestStates['P1-001'].support, 91, 'missing session preserves active owner test adjustments');
+  assert.equal(runtime.hooks.snapshot().previewSessionId, 'A-preview-session', 'missing session retains its pointer so recovery can be retried');
   runtime.setAuth('user-B', 'token-B');
   assert.equal(runtime.hooks.snapshot().workPlans.global, 'B plan', '404 cleanup leaves another account cached state intact');
 }

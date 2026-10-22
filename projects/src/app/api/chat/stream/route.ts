@@ -5,6 +5,11 @@ import {
   generateNpcReplyWithIdentityGuard,
   npcSpeakerIdentityInstruction,
 } from '@/lib/ai/npc-speaker-identity';
+import {
+  customerActivityReplyInstruction,
+  generateNpcReplyWithCustomerActivityGuard,
+  type CustomerActivityReplyDiagnostic,
+} from '@/lib/ai/customer-activity-reply';
 import { evaluateNpcTurn, sanitizeReadNoReplyEvaluation } from '@/lib/ai/npc-evaluation';
 import {
   appendViewedAttachmentsToPlayerMessage,
@@ -19,7 +24,8 @@ import { npcChatRequestSchema } from '@/lib/contracts/ai';
 import type { GameCommand } from '@/lib/contracts/game';
 import { getProjectOneNpc, type ContactChannel } from '@/lib/game/project-one';
 import { BID_RULES, getProcurementRuleAccess } from '@/lib/game/bid-rules';
-import { isNaturalLanguageInvitation } from '@/lib/game/invitation-intent';
+import { loadActivityDecisionConfigForMatching as loadActivityDecisionConfig } from '@/lib/designer/customer-activity-config-repository';
+import { isCustomerActivityReplyContext, isNaturalLanguageCustomerActivityInvitation, isNaturalLanguageInvitation } from '@/lib/game/invitation-intent';
 import {
   commitGameCommand,
   appendGameEvent,
@@ -28,21 +34,27 @@ import {
   deliverPendingNpcHandoffs,
   getCommittedGameCommand,
   getNpcConversation,
+  getNpcChannelConversation,
   getNpcInbox,
+  processPendingCustomerActivityDetections,
+  processSubmittedCustomerActivityEvaluations,
   synchronizeOwnedGameTimer,
 } from '@/lib/game/repository';
 import {
   applyNpcEvaluation,
+  appendCustomerActivityDiagnostic,
   connectNpc,
   consumeChatCommunicationTime,
   consumeGameTime,
   consumeCommunicationTime,
   getGameOutcome,
+  isCustomerActivityBlockingGameActions,
   markNpcUnanswered,
   recordMeetingTurn,
   recordNpcOutbound,
   startPhoneCall,
   setMeetingWorkTopicOpenedBy,
+  queueCustomerActivityDetection,
   shouldNpcRespond,
   toPlayerVisibleGameState,
   synchronizeProjectTimer,
@@ -158,6 +170,22 @@ function addExplicitComplianceEvent(
   };
 }
 
+function boundedCustomerActivityMessages(messages: Array<{ messageId: string; speaker: 'sales' | 'customer'; text: string }>) {
+  const selected: typeof messages = [];
+  const seen = new Set<string>();
+  let totalLength = 0;
+  for (let index = messages.length - 1; index >= 0 && selected.length < 120; index -= 1) {
+    const item = messages[index];
+    if (!item.messageId || seen.has(item.messageId) || !item.text.trim()) continue;
+    const text = item.text.slice(0, 4_000);
+    if (totalLength + text.length > 60_000) continue;
+    selected.push({ ...item, text });
+    totalLength += text.length;
+    seen.add(item.messageId);
+  }
+  return selected.reverse();
+}
+
 export async function POST(req: NextRequest) {
   const guard = authGuard(req);
   if (!guard.ok || !guard.session) return guard.response!;
@@ -222,10 +250,16 @@ export async function POST(req: NextRequest) {
     return jsonResponse(code === 'MULTIPLAYER_ROOM_NOT_RUNNING' ? code : 'MULTIPLAYER_ROOM_NOT_RUNNING', 409);
   }
 
+  const detectedBeforeTurn = await processPendingCustomerActivityDetections(gameSessionId, userId).catch(() => null);
+  const settledBeforeTurn = await processSubmittedCustomerActivityEvaluations(gameSessionId, userId).catch(() => null);
+  const refreshedState = settledBeforeTurn?.state ?? detectedBeforeTurn?.state;
+  if (refreshedState) gameSession = { ...gameSession, state: refreshedState };
+
   const { state: initialState } = gameSession;
   if (initialState.version !== expectedVersion) return jsonResponse('STATE_VERSION_CONFLICT', 409, { state: toPlayerVisibleGameState(initialState) });
   if (initialState.scenarioCode !== scenarioId) return jsonResponse('场景与对局不一致', 409);
   if (initialState.status !== 'playing') return jsonResponse('对局已经结束', 409);
+  if (isCustomerActivityBlockingGameActions(initialState)) return jsonResponse('CUSTOMER_ACTIVITY_PLANNING_ACTIVE', 409);
   if (!initialState.unlockedNpcIds.includes(npcId)) return jsonResponse('NPC尚未解锁', 403);
 
   const npc = getProjectOneNpc(npcId);
@@ -302,6 +336,18 @@ export async function POST(req: NextRequest) {
   const messageResponseDecision = channel === 'email' || channel === 'online'
     ? await decideFormalMessageResponse({ npcId, channel, playerMessage: message })
     : { responseAction: 'reply' as const };
+  let recentHistory;
+  try {
+    recentHistory = await getNpcConversation(gameSessionId, npcId, 12);
+  } catch {
+    return jsonResponse('对话历史读取失败，本轮未调用AI', 503);
+  }
+  const recentActivityConversation = recentHistory.slice(-8).map((item) => ({
+    speaker: item.role === 'user' ? 'sales' as const : 'customer' as const,
+    text: item.content,
+  }));
+  const activityReplyContextActive = isCustomerActivityReplyContext(message, recentActivityConversation);
+  const replyReviewDiagnostics: CustomerActivityReplyDiagnostic[] = [];
 
   // Natural-language invitations use the same deterministic command path as
   // the former dedicated UI. This keeps visit extraction, acceptance or
@@ -311,6 +357,8 @@ export async function POST(req: NextRequest) {
   if (channel !== 'offline'
     && intent !== 'call_connect'
     && messageResponseDecision.responseAction === 'reply'
+    && !activityReplyContextActive
+    && !isNaturalLanguageCustomerActivityInvitation(message)
     && isNaturalLanguageInvitation(message)) {
     const invitationCommand: GameCommand = {
       commandId: createServerProbabilitySeed([gameSessionId, commandId, 'invite']),
@@ -408,12 +456,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  let recentHistory;
-  try {
-    recentHistory = await getNpcConversation(gameSessionId, npcId, 12);
-  } catch {
-    return jsonResponse('对话历史读取失败，本轮未调用AI', 503);
-  }
 
   if (intent === 'call_connect') {
     if (channel !== 'work_phone') return jsonResponse('CALL_CHANNEL_INVALID', 409);
@@ -470,7 +512,22 @@ export async function POST(req: NextRequest) {
 
   if (channel === 'offline' && meeting?.awaitingFinalReplyFrom === 'player') {
     try {
-      const changed = recordMeetingTurn(initialState);
+      let changed = recordMeetingTurn(initialState);
+      const priorMeetingMessages = await getNpcChannelConversation(gameSessionId, npcId, 'offline')
+        .catch(() => recentHistory);
+      const activityMessages = boundedCustomerActivityMessages(priorMeetingMessages
+        .filter((item) => item.metadata?.meetingId === meeting.id && !item.metadata?.hiddenFromTranscript)
+        .map((item) => ({ messageId: item.id, speaker: item.role === 'user' ? 'sales' as const : 'customer' as const, text: item.content })));
+      activityMessages.push({ messageId: `${commandId}:sales`, speaker: 'sales', text: message });
+      if (activityMessages.some((item) => item.speaker === 'sales')) {
+        const { config: decisionConfig } = await loadActivityDecisionConfig();
+        changed = queueCustomerActivityDetection(changed, {
+          conversationId: `visit:${meeting.id}`,
+          npcId,
+          messages: activityMessages,
+          decisionConfig,
+        });
+      }
       const committed = await commitGameCommand({
         sessionId: gameSessionId,
         commandId,
@@ -491,8 +548,10 @@ export async function POST(req: NextRequest) {
           },
         }],
       });
+      const detected = await processPendingCustomerActivityDetections(gameSessionId, userId).catch(() => null);
+      const settled = await processSubmittedCustomerActivityEvaluations(gameSessionId, userId).catch(() => null);
       return immediateSse([
-        { type: 'result', state: toPlayerVisibleGameState(committed.state), deliveryStatus: 'replied', responseAction: 'final_player_reply', channel, meetingEnded: true },
+        { type: 'result', state: toPlayerVisibleGameState(settled?.state ?? detected?.state ?? committed.state), deliveryStatus: 'replied', responseAction: 'final_player_reply', channel, meetingEnded: true },
         { type: 'done' },
       ]);
     } catch (error) {
@@ -571,10 +630,14 @@ export async function POST(req: NextRequest) {
     pleasantnessAtTurnStart,
     promptConfig.supportTierThresholds,
   );
+  const playerProposedCustomerActivity = activityReplyContextActive;
   const npcHistory = npcHistoryWithViewedAttachments(recentHistory);
   const messages: ChatMessage[] = [
     { role: 'system', content: `${promptConfig.liveCustomerPrompt || CUSTOMER_PROMPT()}\n\n## 当前人物角色提示\n${rolePrompt}` },
     { role: 'system', content: npcSpeakerIdentityInstruction(npc, channel) },
+    ...(playerProposedCustomerActivity
+      ? [{ role: 'system' as const, content: customerActivityReplyInstruction(npc.category) }]
+      : []),
     { role: 'user', content: CUSTOMER_CONTEXT(customerContext) },
     ...npcHistory,
     { role: 'user', content: message },
@@ -588,7 +651,23 @@ export async function POST(req: NextRequest) {
         // This preserves the all-or-nothing contract visible to the player.
         const responseDecision = messageResponseDecision;
         const reply = responseDecision.responseAction === 'reply'
-          ? (await generateNpcReplyWithIdentityGuard(npc, channel, async (retryInstruction) => {
+          ? (playerProposedCustomerActivity
+            ? (await generateNpcReplyWithCustomerActivityGuard(npc, channel, async (retryInstruction) => {
+              let generated = '';
+              const requestMessages = retryInstruction
+                ? [...messages, { role: 'system' as const, content: retryInstruction }]
+                : messages;
+              for await (const chunk of streamLLM(requestMessages, { temperature: 0.7, thinking: 'disabled' })) generated += chunk;
+              if (!generated.trim()) throw new Error('AI_PROVIDER_EMPTY_RESPONSE');
+              return generated;
+            }, {
+              context: {
+                playerMessage: message,
+                recentConversation: recentActivityConversation,
+              },
+              onDiagnostic: (diagnostic) => replyReviewDiagnostics.push(diagnostic),
+            })).reply
+            : (await generateNpcReplyWithIdentityGuard(npc, channel, async (retryInstruction) => {
             let generated = '';
             const requestMessages = retryInstruction
               ? [...messages, { role: 'system' as const, content: retryInstruction }]
@@ -596,7 +675,7 @@ export async function POST(req: NextRequest) {
             for await (const chunk of streamLLM(requestMessages, { temperature: 0.7, thinking: 'disabled' })) generated += chunk;
             if (!generated.trim()) throw new Error('AI_PROVIDER_EMPTY_RESPONSE');
             return generated;
-          })).reply
+          })).reply)
           : null;
 
         const assessment = await evaluateNpcTurn({
@@ -680,12 +759,75 @@ export async function POST(req: NextRequest) {
         // hybrid outcome may contain one decimal place.
         const scoreDelta = Math.round(nextOutcome.finalScore - priorOutcome.finalScore);
         const meetingEnded = channel === 'offline' && !changedState.activeMeeting;
+        let stateToCommit = changedState;
+        if (meetingEnded && meeting) {
+          const transcript = await getNpcChannelConversation(gameSessionId, npcId, 'offline')
+            .catch(() => recentHistory);
+          const messages = boundedCustomerActivityMessages([
+            ...transcript
+              .filter((item) => item.metadata?.meetingId === meeting.id && !item.metadata?.hiddenFromTranscript)
+              .map((item) => ({ messageId: item.id, speaker: item.role === 'user' ? 'sales' as const : 'customer' as const, text: item.content })),
+            { messageId: `${commandId}:sales`, speaker: 'sales' as const, text: message },
+            ...(reply ? [{ messageId: `${commandId}:customer`, speaker: 'customer' as const, text: reply }] : []),
+          ]);
+          if (messages.some((item) => item.speaker === 'sales')) {
+            const { config: decisionConfig } = await loadActivityDecisionConfig();
+            stateToCommit = queueCustomerActivityDetection(stateToCommit, {
+              conversationId: `visit:${meeting.id}`,
+              npcId,
+              messages,
+              decisionConfig,
+            });
+          }
+        } else if ((channel === 'email' || channel === 'online')
+          && (responseDecision.responseAction === 'read_no_reply'
+            || (reply && responseDecision.responseAction === 'reply'))) {
+          const transcript = await getNpcChannelConversation(gameSessionId, npcId, channel)
+            .catch(() => recentHistory.filter((item) => item.metadata?.channel === channel));
+          const messages = boundedCustomerActivityMessages([
+            ...transcript.map((item) => ({
+              messageId: item.id,
+              speaker: item.role === 'user' ? 'sales' as const : 'customer' as const,
+              text: item.content,
+            })),
+            { messageId: `${commandId}:sales`, speaker: 'sales' as const, text: message },
+            ...(reply ? [{ messageId: `${commandId}:customer`, speaker: 'customer' as const, text: reply }] : []),
+          ]);
+          if (messages.some((item) => item.speaker === 'sales')) {
+            const { config: decisionConfig } = await loadActivityDecisionConfig();
+            stateToCommit = queueCustomerActivityDetection(stateToCommit, {
+              conversationId: `${channel}:${commandId}`,
+              npcId,
+              messages,
+              decisionConfig,
+            });
+          }
+        }
+        for (const diagnostic of replyReviewDiagnostics) {
+          stateToCommit = appendCustomerActivityDiagnostic(stateToCommit, {
+            event: diagnostic.event,
+            conversationId: `reply:${commandId}`,
+            npcId,
+            messageId: `${commandId}:customer`,
+            reason: `customer_activity_reply_${diagnostic.result}`,
+            details: {
+              signal: diagnostic.signal,
+              result: diagnostic.result,
+              violation: diagnostic.violation,
+              evidence_valid: diagnostic.evidence_valid,
+              attempt: diagnostic.attempt,
+              ...(diagnostic.evidence_start === undefined ? {} : { evidence_start: diagnostic.evidence_start }),
+              ...(diagnostic.evidence_end === undefined ? {} : { evidence_end: diagnostic.evidence_end }),
+              ...(diagnostic.evidence_digest === undefined ? {} : { evidence_digest: diagnostic.evidence_digest }),
+            },
+          });
+        }
         const committed = await commitGameCommand({
           sessionId: gameSessionId,
           commandId,
           commandType: 'chat.turn',
           expectedVersion,
-          state: changedState,
+          state: stateToCommit,
           eventType: 'npc.turn.completed',
           eventPayload: {
             npcId,
@@ -759,6 +901,10 @@ export async function POST(req: NextRequest) {
           }, npcId).catch(() => undefined);
         }
 
+        const detected = await processPendingCustomerActivityDetections(gameSessionId, userId).catch(() => null);
+        const settled = await processSubmittedCustomerActivityEvaluations(gameSessionId, userId).catch(() => null);
+        const responseState = settled?.state ?? detected?.state ?? committed.state;
+
         // Emit content only after the transaction succeeds. Chunking keeps the
         // existing typewriter client behavior without exposing partial state.
         for (let index = 0; reply && index < reply.length; index += 24) {
@@ -766,7 +912,7 @@ export async function POST(req: NextRequest) {
         }
         emit({
           type: 'result',
-          state: toPlayerVisibleGameState(committed.state),
+          state: toPlayerVisibleGameState(responseState),
           deliveryStatus: responseDecision.responseAction === 'read_no_reply' ? 'read_no_reply' : 'replied',
           responseAction: responseDecision.responseAction,
           meetingEnded,

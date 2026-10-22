@@ -180,9 +180,11 @@ export async function invokeLLM(
   const { response, trace } = await requestCompletion(messages, options, false);
   try {
     const payload = await response.json() as ChatCompletionResponse;
-    const content = extractText(payload.choices?.[0]?.message?.content);
-    if (!content) throw new Error('AI_PROVIDER_EMPTY_RESPONSE');
+    // Keep diagnostic metadata (including finish_reason and usage) available
+    // even when the provider returns a valid JSON envelope with no text.
     finishFastAiTrace(trace, { rawResponse: payload });
+    const content = extractText(payload.choices?.[0]?.message?.content);
+    if (!content.trim()) throw new Error('AI_PROVIDER_EMPTY_RESPONSE');
     return content;
   } catch (error) {
     finishFastAiTrace(trace, { error });

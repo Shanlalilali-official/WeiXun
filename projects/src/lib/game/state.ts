@@ -4,6 +4,29 @@ import { PROJECT_ONE_FIVE_PERSON_NPCS } from '@/lib/designer/project-one-five-pe
 import { verifyNpcEvaluationSources } from '@/lib/ai/npc-evaluation-sources';
 import type { GameCommand } from '@/lib/contracts/game';
 import {
+  CUSTOMER_ACTIVITY_CONVERSATION_MAX_LENGTH,
+  CUSTOMER_ACTIVITY_CONVERSATION_MAX_MESSAGES,
+  CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS,
+  customerActivityConversationMessageSchema,
+  customerActivityOrganizationSnapshotSchema,
+  customerActivityRelationshipSnapshotSchema,
+  createEmptyCustomerActivityState,
+  DEFAULT_ACTIVITY_DECISION_CONFIG,
+  parseActivityDecisionConfig,
+  recordCustomerActivityProposalDecision,
+  recordCustomerActivityEvaluation,
+  readCustomerActivityState,
+  toPublicCustomerActivityTask,
+  type ActivityDecisionConfig,
+  type CustomerActivityConversationMessage,
+  type CustomerActivityEvaluation,
+  type CustomerActivityFeasibilityDecision,
+  type CustomerActivityProposalCandidate,
+  type CustomerActivityRelationshipSnapshot,
+  type CustomerActivityState,
+  type PublicCustomerActivityTask,
+} from '@/lib/game/customer-activities';
+import {
   PROJECT_ONE_ACTION_POINT_CAP,
   PROJECT_ONE_CODE,
   PROJECT_ONE_COMMUNICATION_MINUTES,
@@ -416,6 +439,30 @@ export interface ProjectTimerState {
   visitPaused: boolean;
 }
 
+export interface PendingCustomerActivityDetection {
+  conversationId: string;
+  npcId: string;
+  messages: CustomerActivityConversationMessage[];
+  /** Frozen at the interaction boundary so detector retries never see newer metrics/config. */
+  relationshipSnapshot: CustomerActivityRelationshipSnapshot;
+  decisionConfig: ActivityDecisionConfig;
+}
+
+/** Bounded server-only trace of the formal activity matching pipeline. */
+export interface CustomerActivityDiagnosticRecord {
+  at: number;
+  event: string;
+  conversationId?: string;
+  npcId?: string;
+  activityType?: string;
+  messageId?: string;
+  reason?: string;
+  details?: Record<string, string | number | boolean | null>;
+  /** Present on queue events so later reviews can see the exact decision inputs. */
+  relationshipSnapshot?: CustomerActivityRelationshipSnapshot;
+  decisionConfig?: ActivityDecisionConfig;
+}
+
 export interface PlayerVisibleProjectTimer extends ProjectTimerState {
   remainingMs: number;
   expiresAt: string | null;
@@ -478,6 +525,12 @@ export interface GameRuntimeState {
   submissionReady: boolean;
   processedCommandIds: string[];
   projectTimer: ProjectTimerState;
+  /** Internal activity evidence, drafts and numeric assessment; public snapshots project this separately. */
+  customerActivities: CustomerActivityState;
+  /** Ended conversations await authoritative AI detection; never exposed to the player. */
+  customerActivityDetectionQueue: PendingCustomerActivityDetection[];
+  /** Internal bounded diagnostic only; player projections must always strip it. */
+  customerActivityDiagnostics?: CustomerActivityDiagnosticRecord[];
 
   /** Deprecated wall-clock fields retained while old persisted rows migrate. */
   phaseStartedAt: string;
@@ -566,10 +619,14 @@ export type PlayerVisibleGameState = Omit<
   | 'overallSupportState'
   | 'bidRule'
   | 'ruleProposalHistory'
+  | 'customerActivities'
+  | 'customerActivityDetectionQueue'
+  | 'customerActivityDiagnostics'
 > & {
   /** Five player-facing expressions derived from hidden relationship values. */
   npcExpressions: Record<string, PlayerVisibleNpcExpression>;
   projectTimer: PlayerVisibleProjectTimer;
+  customerActivities: PublicCustomerActivityTask[];
 };
 
 export interface ExecuteGameCommandResult {
@@ -917,6 +974,247 @@ function normalizeProjectTimer(value: Partial<ProjectTimerState> | null | undefi
   };
 }
 
+function freezeRelationshipSnapshot(
+  npcId: string,
+  npcAttitudes: Record<string, NpcAttitudeState>,
+  npcAffinity: Record<string, number>,
+  dimensions: GameDimensions,
+  currentRound: number,
+): CustomerActivityRelationshipSnapshot {
+  const npc = getProjectOneNpc(npcId);
+  if (!npc) throw new Error('INVALID_CUSTOMER_ACTIVITY_DETECTION_QUEUE');
+  const attitude = npcAttitudes[npcId];
+  return {
+    npcId,
+    role: npc.category,
+    title: npc.title,
+    context: `${npc.personality}；主要关切：${npc.weakness}`.slice(0, 1_000),
+    stage: getPhaseName(currentRound),
+    support: Math.max(0, Math.min(100, Math.round(attitude?.support ?? npcAffinity[npcId] ?? npc.initialSupport))),
+    pleasantness: Math.max(0, Math.min(100, Math.round(attitude?.pleasantness ?? 50))),
+    dimensions: Object.fromEntries(GAME_DIMENSIONS.map((dimension) => [
+      dimension,
+      Math.max(0, Math.min(100, Math.round(dimensions[dimension]))),
+    ])) as GameDimensions,
+    organization: {
+      members: CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS.map((memberNpcId) => {
+        const member = getProjectOneNpc(memberNpcId);
+        if (!member) throw new Error('INVALID_CUSTOMER_ACTIVITY_DETECTION_QUEUE');
+        const memberAttitude = npcAttitudes[memberNpcId];
+        return {
+          npcId: memberNpcId,
+          support: Math.max(0, Math.min(100, Math.round(
+            memberAttitude?.support ?? npcAffinity[memberNpcId] ?? member.initialSupport,
+          ))),
+          pleasantness: Math.max(0, Math.min(100, Math.round(memberAttitude?.pleasantness ?? 50))),
+        };
+      }),
+    },
+  };
+}
+
+function normalizeRelationshipSnapshot(
+  value: unknown,
+  npcId: string,
+  fallback: CustomerActivityRelationshipSnapshot,
+): CustomerActivityRelationshipSnapshot {
+  const legacyFallback = { ...fallback };
+  delete legacyFallback.organization;
+  if (value === undefined || value === null) return legacyFallback;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('INVALID_CUSTOMER_ACTIVITY_DETECTION_QUEUE');
+  const item = value as Record<string, unknown>;
+  const dimensions = item.dimensions;
+  const organization = item.organization === undefined
+    ? undefined
+    : customerActivityOrganizationSnapshotSchema.safeParse(item.organization);
+  if (item.npcId !== npcId || typeof item.role !== 'string' || !item.role.trim() || item.role.length > 200
+    || (item.title !== undefined && (typeof item.title !== 'string' || item.title.length > 200))
+    || (item.context !== undefined && (typeof item.context !== 'string' || item.context.length > 1_000))
+    || !(item.stage === null || typeof item.stage === 'string' || (typeof item.stage === 'number' && Number.isFinite(item.stage)))
+    || !Number.isInteger(item.support) || Number(item.support) < 0 || Number(item.support) > 100
+    || !Number.isInteger(item.pleasantness) || Number(item.pleasantness) < 0 || Number(item.pleasantness) > 100
+    || !dimensions || typeof dimensions !== 'object' || Array.isArray(dimensions)
+    || (organization !== undefined && !organization.success)) {
+    throw new Error('INVALID_CUSTOMER_ACTIVITY_DETECTION_QUEUE');
+  }
+  const dimensionRecord = dimensions as Record<string, unknown>;
+  const normalizedDimensions = {} as GameDimensions;
+  for (const key of GAME_DIMENSIONS) {
+    const score = dimensionRecord[key];
+    if (!Number.isInteger(score) || Number(score) < 0 || Number(score) > 100) {
+      throw new Error('INVALID_CUSTOMER_ACTIVITY_DETECTION_QUEUE');
+    }
+    normalizedDimensions[key] = Number(score);
+  }
+  return {
+    npcId,
+    role: item.role,
+    ...(typeof item.title === 'string' ? { title: item.title } : {}),
+    ...(typeof item.context === 'string' ? { context: item.context } : {}),
+    stage: item.stage as string | number | null,
+    support: Number(item.support),
+    pleasantness: Number(item.pleasantness),
+    dimensions: normalizedDimensions,
+    ...(organization?.success ? { organization: organization.data } : {}),
+  };
+}
+
+function normalizeActivityDecisionConfig(value: unknown): ActivityDecisionConfig {
+  if (value === undefined || value === null) return structuredClone(DEFAULT_ACTIVITY_DECISION_CONFIG);
+  const parsed = parseActivityDecisionConfig(value);
+  if (!parsed) throw new Error('INVALID_CUSTOMER_ACTIVITY_DETECTION_QUEUE');
+  return parsed;
+}
+
+function normalizeCustomerActivityDetectionQueue(
+  value: unknown,
+  fallbackForNpc: (npcId: string) => CustomerActivityRelationshipSnapshot,
+): PendingCustomerActivityDetection[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 100) throw new Error('INVALID_CUSTOMER_ACTIVITY_DETECTION_QUEUE');
+  return value.map((candidate) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      throw new Error('INVALID_CUSTOMER_ACTIVITY_DETECTION_QUEUE');
+    }
+    const item = candidate as Record<string, unknown>;
+    if (typeof item.conversationId !== 'string' || !item.conversationId.trim() || item.conversationId.length > 200
+      || typeof item.npcId !== 'string' || !getProjectOneNpc(item.npcId)
+      || !Array.isArray(item.messages) || item.messages.length < 1
+      || item.messages.length > CUSTOMER_ACTIVITY_CONVERSATION_MAX_MESSAGES) {
+      throw new Error('INVALID_CUSTOMER_ACTIVITY_DETECTION_QUEUE');
+    }
+    const messageIds = new Set<string>();
+    let totalLength = 0;
+    const messages = item.messages.map((message) => {
+      const parsed = customerActivityConversationMessageSchema.safeParse(message);
+      if (!parsed.success || typeof (message as CustomerActivityConversationMessage)?.text !== 'string'
+        || (message as CustomerActivityConversationMessage).text.length > 4_000
+        || messageIds.has(parsed.data.messageId)) {
+        throw new Error('INVALID_CUSTOMER_ACTIVITY_DETECTION_QUEUE');
+      }
+      messageIds.add(parsed.data.messageId);
+      totalLength += (message as CustomerActivityConversationMessage).text.length;
+      // Keep source text byte-for-byte so detector quotes can be checked against
+      // the actual transcript instead of a normalized copy.
+      return { ...parsed.data, text: (message as CustomerActivityConversationMessage).text };
+    });
+    if (totalLength > CUSTOMER_ACTIVITY_CONVERSATION_MAX_LENGTH
+      || !messages.some((message) => message.speaker === 'sales')) {
+      throw new Error('INVALID_CUSTOMER_ACTIVITY_DETECTION_QUEUE');
+    }
+    return {
+      conversationId: item.conversationId,
+      npcId: item.npcId,
+      messages,
+      relationshipSnapshot: normalizeRelationshipSnapshot(item.relationshipSnapshot, item.npcId, fallbackForNpc(item.npcId)),
+      decisionConfig: normalizeActivityDecisionConfig(item.decisionConfig),
+    };
+  });
+}
+
+const CUSTOMER_ACTIVITY_DIAGNOSTICS_LIMIT = 100;
+const CUSTOMER_ACTIVITY_DIAGNOSTIC_DETAIL_KEYS = new Set([
+  'detection_source', 'model_skipped_reason', 'response_kind', 'confidence', 'final_status',
+  'candidate_count', 'threshold_decision', 'config_revision', 'provider', 'parse_code',
+  'detection_error_code', 'decision_error_code', 'task_count', 'decision_mode', 'message_count', 'initiator',
+  // AI callback fields are camel-cased; keep these explicit scalar fields while
+  // continuing to reject arbitrary payload keys and transcript/model text.
+  'responseKind', 'finalStatus',
+]);
+
+// Semantic review traces retain only fixed classifications and source offsets,
+// never the reviewed reply, transcript, prompt, or arbitrary model reasoning.
+const CUSTOMER_ACTIVITY_SEMANTIC_DETAIL_ENUMS: Record<string, ReadonlySet<string>> = {
+  signal: new Set(['refusal', 'referral', 'commitment', 'disposition', 'appointment']),
+  result: new Set(['allowed', 'violation', 'unclear', 'unavailable']),
+  violation: new Set(['none', 'refusal', 'referral', 'commitment', 'missing_disposition', 'compliance', 'identity']),
+  model_classification: new Set(['active', 'not_proposed', 'withdrawn', 'unclear']),
+};
+const CUSTOMER_ACTIVITY_SEMANTIC_DETAIL_INTEGERS = new Set([
+  'evidence_start', 'evidence_end', 'withdrawal_message_count',
+]);
+
+function normalizeCustomerActivityDiagnostics(value: unknown): CustomerActivityDiagnosticRecord[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error('INVALID_CUSTOMER_ACTIVITY_DIAGNOSTICS');
+  return value.slice(-CUSTOMER_ACTIVITY_DIAGNOSTICS_LIMIT).flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+    const item = entry as Record<string, unknown>;
+    if (typeof item.event !== 'string' || item.event.length < 1 || item.event.length > 80) return [];
+    const stringField = (key: string, maxLength: number): string | undefined =>
+      typeof item[key] === 'string' && (item[key] as string).length <= maxLength ? item[key] as string : undefined;
+    const rawDetails = item.details;
+    const details: CustomerActivityDiagnosticRecord['details'] = {};
+    if (rawDetails && typeof rawDetails === 'object' && !Array.isArray(rawDetails)) {
+      for (const [key, detail] of Object.entries(rawDetails as Record<string, unknown>)) {
+        if (CUSTOMER_ACTIVITY_SEMANTIC_DETAIL_ENUMS[key]) {
+          if (typeof detail === 'string' && CUSTOMER_ACTIVITY_SEMANTIC_DETAIL_ENUMS[key].has(detail)) details[key] = detail;
+          continue;
+        }
+        if (CUSTOMER_ACTIVITY_SEMANTIC_DETAIL_INTEGERS.has(key)) {
+          if (typeof detail === 'number' && Number.isSafeInteger(detail) && detail >= 0 && detail <= 60_000) details[key] = detail;
+          continue;
+        }
+        if (key === 'evidence_valid') {
+          if (typeof detail === 'boolean') details[key] = detail;
+          continue;
+        }
+        if (key === 'attempt') {
+          if (detail === 0 || detail === 1) details[key] = detail;
+          continue;
+        }
+        if (key === 'evidence_digest') {
+          if (typeof detail === 'string' && /^[a-f0-9]{12}$/.test(detail)) details[key] = detail;
+          continue;
+        }
+        if (key === 'withdrawal_message_id') {
+          if (typeof detail === 'string' && detail.trim().length > 0 && detail.length <= 160) details[key] = detail;
+          continue;
+        }
+        if (!CUSTOMER_ACTIVITY_DIAGNOSTIC_DETAIL_KEYS.has(key)) continue;
+        if (typeof detail === 'boolean' || detail === null
+          || (typeof detail === 'number' && Number.isFinite(detail))) details[key] = detail;
+        else if (typeof detail === 'string' && detail.length <= 120) details[key] = detail;
+      }
+    }
+    const relationshipSnapshot = item.relationshipSnapshot === undefined
+      ? undefined
+      : customerActivityRelationshipSnapshotSchema.safeParse(item.relationshipSnapshot);
+    const decisionConfig = item.decisionConfig === undefined
+      ? undefined
+      : parseActivityDecisionConfig(item.decisionConfig);
+    return [{
+      at: Number.isSafeInteger(item.at) && Number(item.at) >= 0 ? Number(item.at) : 0,
+      event: item.event,
+      ...(stringField('conversationId', 200) ? { conversationId: stringField('conversationId', 200) } : {}),
+      ...(stringField('npcId', 80) ? { npcId: stringField('npcId', 80) } : {}),
+      ...(stringField('activityType', 80) ? { activityType: stringField('activityType', 80) } : {}),
+      ...(stringField('messageId', 160) ? { messageId: stringField('messageId', 160) } : {}),
+      ...(stringField('reason', 160) ? { reason: stringField('reason', 160) } : {}),
+      ...(Object.keys(details).length ? { details } : {}),
+      ...(relationshipSnapshot?.success ? { relationshipSnapshot: relationshipSnapshot.data } : {}),
+      ...(decisionConfig ? { decisionConfig } : {}),
+    }];
+  });
+}
+
+/** Append a compact, private event without retaining transcript text or raw model output. */
+export function appendCustomerActivityDiagnostic(
+  state: GameRuntimeState,
+  diagnostic: Omit<CustomerActivityDiagnosticRecord, 'at'> & { at?: number },
+): GameRuntimeState {
+  const normalized = normalizeCustomerActivityDiagnostics([{
+    ...diagnostic,
+    at: diagnostic.at ?? Date.now(),
+  }]);
+  if (normalized.length !== 1) return state;
+  return {
+    ...state,
+    customerActivityDiagnostics: [...normalizeCustomerActivityDiagnostics(state.customerActivityDiagnostics), normalized[0]]
+      .slice(-CUSTOMER_ACTIVITY_DIAGNOSTICS_LIMIT),
+  };
+}
+
 /** A pure projection; callers may safely render it without persisting. */
 export function getPlayerVisibleProjectTimer(state: GameRuntimeState, nowMs = Date.now()): PlayerVisibleProjectTimer {
   const timer = state.projectTimer;
@@ -943,6 +1241,7 @@ export function getPlayerVisibleProjectTimer(state: GameRuntimeState, nowMs = Da
 export function synchronizeProjectTimer(state: GameRuntimeState, nowMs = Date.now(), materializeElapsed = false): GameRuntimeState {
   if (state.status !== 'playing') return state;
   const timer = normalizeProjectTimer(state.projectTimer);
+  if (timer.elapsedMs >= timer.durationMs && hasUnsettledCustomerActivityEvaluations(state)) return state;
   if (timer.visitPaused) return state;
   const elapsedMs = Math.min(
     timer.durationMs,
@@ -1051,6 +1350,13 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
   ]));
   const companyId = state.companyId ?? 'player-company';
   const candidateBidRule = (state as Partial<GameRuntimeState>).bidRule;
+  const customerActivities = readCustomerActivityState(state.customerActivities);
+  const hasPlanningActivity = customerActivities.tasks.some((task) => task.status === 'planning');
+  const customerActivityDetectionQueue = normalizeCustomerActivityDetectionQueue(
+    state.customerActivityDetectionQueue,
+    (npcId) => freezeRelationshipSnapshot(npcId, npcAttitudes, npcAffinity, state.dimensions, state.currentStage ?? state.currentRound),
+  );
+  const customerActivityDiagnostics = normalizeCustomerActivityDiagnostics(state.customerActivityDiagnostics);
   const normalized: GameRuntimeState = {
     ...state,
     progressionMultiplier: state.progressionMultiplier ?? 1,
@@ -1108,12 +1414,15 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
     competitorClaims: normalizePlayerVisibleCompetitorClaims(state.competitorClaims),
     submissionReady: false,
     processedCommandIds: state.processedCommandIds ?? [],
+    customerActivities,
+    customerActivityDetectionQueue,
+    customerActivityDiagnostics,
     projectTimer: {
       ...normalizeProjectTimer(state.projectTimer),
       // A pre-timer save may already be inside a visit. Preserve that lock on
       // migration rather than silently starting the countdown on reload.
-      visitPaused: state.status === 'playing' && (Boolean(state.activeMeeting) || Boolean(state.projectTimer?.visitPaused)),
-      lastResumedAt: state.status !== 'playing' || state.activeMeeting ? null : normalizeProjectTimer(state.projectTimer).lastResumedAt,
+      visitPaused: state.status === 'playing' && (Boolean(state.activeMeeting) || hasPlanningActivity || Boolean(state.projectTimer?.visitPaused)),
+      lastResumedAt: state.status !== 'playing' || state.activeMeeting || hasPlanningActivity ? null : normalizeProjectTimer(state.projectTimer).lastResumedAt,
     },
     phaseStartedAt: LEGACY_SIMULATION_MARKER,
     phaseEndsAt: LEGACY_SIMULATION_MARKER,
@@ -1189,6 +1498,9 @@ export function createProjectOneState(progressionMultiplier = 1, _legacyNow?: nu
       recoveredIntervals: 0,
       visitPaused: false,
     },
+    customerActivities: createEmptyCustomerActivityState(),
+    customerActivityDetectionQueue: [],
+    customerActivityDiagnostics: [],
     lastAction: null,
     version: 1,
   };
@@ -1354,6 +1666,142 @@ export function applyNpcAttitudeDelta(
     },
   };
   return reconcileAutomaticBidRule(nextState);
+}
+
+export function isCustomerActivityPlanning(state: GameRuntimeState): boolean {
+  return readCustomerActivityState(state.customerActivities).tasks.some((task) => task.status === 'planning');
+}
+
+export function hasUnsettledCustomerActivityEvaluations(state: GameRuntimeState): boolean {
+  return readCustomerActivityState(state.customerActivities).tasks.some((task) => task.status === 'submitted' && !task.evaluation);
+}
+
+export function isCustomerActivityBlockingGameActions(state: GameRuntimeState): boolean {
+  return isCustomerActivityPlanning(state) || hasUnsettledCustomerActivityEvaluations(state);
+}
+
+/** Queue an ended conversation in the same versioned write that closes it. */
+export function queueCustomerActivityDetection(
+  state: GameRuntimeState,
+  request: Omit<PendingCustomerActivityDetection, 'relationshipSnapshot' | 'decisionConfig'>
+    & Partial<Pick<PendingCustomerActivityDetection, 'relationshipSnapshot' | 'decisionConfig'>>,
+): GameRuntimeState {
+  if (state.customerActivityDetectionQueue.some((item) => item.conversationId === request.conversationId)) {
+    return appendCustomerActivityDiagnostic(state, {
+      event: 'duplicate_queue', conversationId: request.conversationId, npcId: request.npcId,
+      reason: 'conversation_already_queued',
+    });
+  }
+  const fallbackForNpc = (npcId: string) => freezeRelationshipSnapshot(
+    npcId,
+    state.npcAttitudes,
+    state.npcAffinity,
+    state.dimensions,
+    state.currentStage ?? state.currentRound,
+  );
+  const frozenSnapshot = fallbackForNpc(request.npcId);
+  const queue = normalizeCustomerActivityDetectionQueue([...state.customerActivityDetectionQueue, {
+    ...request,
+    relationshipSnapshot: {
+      ...(request.relationshipSnapshot ?? frozenSnapshot),
+      // The organization-wide score is always captured from this authoritative
+      // state at the conversation boundary, never trusted from a caller.
+      organization: frozenSnapshot.organization,
+    },
+    decisionConfig: request.decisionConfig ?? DEFAULT_ACTIVITY_DECISION_CONFIG,
+  }], fallbackForNpc);
+  const next = { ...state, customerActivityDetectionQueue: queue };
+  return appendCustomerActivityDiagnostic(next, {
+    event: 'conversation_queued',
+    conversationId: request.conversationId,
+    npcId: request.npcId,
+    relationshipSnapshot: queue.at(-1)!.relationshipSnapshot,
+    decisionConfig: queue.at(-1)!.decisionConfig,
+  });
+}
+
+/** Atomically records resolved proposals and clears the retryable ended-conversation queue item. */
+export function completeCustomerActivityProposalDetection(
+  state: GameRuntimeState,
+  conversationId: string,
+  resolutions: Array<{ candidate: CustomerActivityProposalCandidate; decision: CustomerActivityFeasibilityDecision }>,
+  serverNow: number,
+  options: { keepQueue?: boolean } = {},
+): GameRuntimeState {
+  const request = state.customerActivityDetectionQueue.find((item) => item.conversationId === conversationId);
+  if (!request) return state;
+  let customerActivities = readCustomerActivityState(state.customerActivities);
+  for (const { candidate, decision } of resolutions) {
+    if (candidate.conversationId !== request.conversationId || candidate.npcId !== request.npcId) {
+      throw new Error('CUSTOMER_ACTIVITY_DECISION_SOURCE_MISMATCH');
+    }
+    if (customerActivities.decisions.some((item) => item.npcId === candidate.npcId
+      && item.type === candidate.type && item.proposalMessageId === candidate.proposalMessageId)) continue;
+    const recorded = recordCustomerActivityProposalDecision(
+      customerActivities,
+      candidate,
+      request.relationshipSnapshot,
+      request.decisionConfig,
+      decision,
+      serverNow,
+    );
+    if (!recorded.recorded) throw new Error('CUSTOMER_ACTIVITY_DECISION_INVALID');
+    customerActivities = recorded.state;
+  }
+  return {
+    ...state,
+    customerActivities,
+    customerActivityDetectionQueue: options.keepQueue
+      ? state.customerActivityDetectionQueue
+      : state.customerActivityDetectionQueue.filter((item) => item.conversationId !== conversationId),
+  };
+}
+
+/** Freeze the project budget at the trusted server start of an activity plan. */
+export function pauseProjectTimerForCustomerActivity(state: GameRuntimeState, nowMs = Date.now()): GameRuntimeState {
+  const checkpointed = synchronizeProjectTimer(state, nowMs, true);
+  if (checkpointed.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
+  if (checkpointed.activeMeeting || checkpointed.activePhoneCall) throw new Error('INTERACTION_ALREADY_ACTIVE');
+  return {
+    ...checkpointed,
+    projectTimer: { ...checkpointed.projectTimer, visitPaused: true, lastResumedAt: null },
+  };
+}
+
+/** Resume at the server submission/deadline timestamp, so time after timeout counts on reload. */
+export function resumeProjectTimerAfterCustomerActivity(state: GameRuntimeState, resumedAtMs: number): GameRuntimeState {
+  if (!Number.isFinite(resumedAtMs) || resumedAtMs < 0) throw new Error('ACTIVITY_TIMESTAMP_INVALID');
+  return {
+    ...state,
+    projectTimer: {
+      ...state.projectTimer,
+      visitPaused: false,
+      lastResumedAt: new Date(resumedAtMs).toISOString(),
+    },
+  };
+}
+
+/** Applies the existing relationship and five-dimension indicators once with the activity evaluation marker. */
+export function applyCustomerActivityEvaluation(
+  state: GameRuntimeState,
+  taskId: string,
+  evaluation: CustomerActivityEvaluation,
+  serverNow: number,
+): GameRuntimeState {
+  const recorded = recordCustomerActivityEvaluation(state.customerActivities, taskId, evaluation, serverNow);
+  if (!recorded.applied) return state;
+  const task = recorded.state.tasks.find((item) => item.id === taskId);
+  if (!task) return state;
+  const dimensions = Object.fromEntries(GAME_DIMENSIONS.map((key) => [
+    key,
+    clamp(state.dimensions[key] + evaluation.dimensionDeltas[key] * state.progressionMultiplier),
+  ])) as GameDimensions;
+  return applyNpcAttitudeDelta({ ...state, dimensions, customerActivities: recorded.state }, task.npcId, {
+    supportDelta: evaluation.supportDelta * state.progressionMultiplier,
+    pleasantnessDelta: evaluation.pleasureDelta * state.progressionMultiplier,
+    reason: evaluation.overallEvaluation,
+    source: `customer_activity:${taskId}`,
+  });
 }
 
 type ExtendedNpcEvaluation = NpcTurnEvaluation & {
@@ -1896,9 +2344,13 @@ export function toPlayerVisibleGameState(state: GameRuntimeState): PlayerVisible
   delete playerState.overallSupportState;
   delete playerState.bidRule;
   delete playerState.ruleProposalHistory;
+  delete playerState.customerActivities;
+  delete playerState.customerActivityDetectionQueue;
+  delete playerState.customerActivityDiagnostics;
   return {
     ...playerState,
     projectTimer: getPlayerVisibleProjectTimer(state),
+    customerActivities: readCustomerActivityState(state.customerActivities).tasks.map(toPublicCustomerActivityTask),
     npcExpressions: Object.fromEntries(Object.entries(state.npcAttitudes)
       .map(([npcId, attitude]) => [npcId, playerVisibleNpcExpression(attitude.pleasantness)])),
     // These records represent public facts the player explicitly searched;
@@ -2088,6 +2540,7 @@ function processComplianceRisks(state: GameRuntimeState, finalAudit = false, pro
 export function submitGame(state: GameRuntimeState, probabilitySeed = 'legacy-submit'): GameRuntimeState {
   if (state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
   if (state.activeMeeting) throw new Error('MEETING_ALREADY_ACTIVE');
+  if (hasUnsettledCustomerActivityEvaluations(state)) return state;
   const audited = processComplianceRisks(state, true, probabilitySeed);
   const outcome = getGameOutcome(audited);
   return refreshCompetitivePosition({
@@ -3007,6 +3460,8 @@ export function executeGameCommand(
   }
   if (command.expectedVersion !== state.version) throw new Error('STATE_VERSION_CONFLICT');
   if (state.status !== 'playing' && command.type !== 'mark_notification_read') throw new Error('GAME_ALREADY_FINISHED');
+  if (command.type !== 'mark_notification_read' && isCustomerActivityPlanning(state)) throw new Error('CUSTOMER_ACTIVITY_PLANNING_ACTIVE');
+  if (command.type !== 'mark_notification_read' && hasUnsettledCustomerActivityEvaluations(state)) throw new Error('CUSTOMER_ACTIVITY_EVALUATION_PENDING');
   if (state.activePhoneCall) {
     const activePhoneAllowsCommand = command.type === 'end_phone_call'
       || command.type === 'mark_notification_read'

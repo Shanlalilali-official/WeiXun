@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { isCurrentPreparationType, type GamePublicResearchRecord, type GameRuntimeState } from '@/lib/game/state';
 import { isLegacyCompetitorPlaceholder, type CompetitorProfile } from '@/lib/contracts/competitors';
+import { CustomerActivityPlanner } from '@/components/customer-activity-planner';
 import { BID_RULE_PROPOSAL_COST } from '@/lib/game/bid-rules';
 import styles from './game-board.module.css';
 
@@ -660,6 +661,7 @@ function GameInner() {
   const [publicInfoRecord, setPublicInfoRecord] = useState<GamePublicResearchRecord | undefined>();
   const [invitationResult, setInvitationResult] = useState<InvitationResultView | null>(null);
   const [showSubmissionCheck, setShowSubmissionCheck] = useState(false);
+  const [customerActivityRefreshKey, setCustomerActivityRefreshKey] = useState(0);
   const [showBidRuleProposal, setShowBidRuleProposal] = useState(false);
   const [proposalNpcId, setProposalNpcId] = useState('');
   const [proposalText, setProposalText] = useState('');
@@ -678,6 +680,10 @@ function GameInner() {
   const commandBusyRef = useRef(false);
   const retryCommandRef = useRef<{ signature: string; commandId: string } | null>(null);
   const retryChatRef = useRef<{ signature: string; commandId: string } | null>(null);
+
+  const refreshCustomerActivitiesAfter = (delayMs = 0) => window.setTimeout(() => {
+    setCustomerActivityRefreshKey((current) => current + 1);
+  }, delayMs);
 
   useEffect(() => {
     let cancelled = false;
@@ -1277,6 +1283,8 @@ function GameInner() {
         setPhoneCallStartedAt(null);
         setCallHistoryRefreshKey((current) => current + 1);
       }
+      if (type === 'end_visit') refreshCustomerActivitiesAfter(700);
+      if (type === 'end_phone_call') refreshCustomerActivitiesAfter();
       if (type === 'invite' && nextState) {
         const result = asRecord(data?.result);
         const appointmentId = firstString(firstRecord(result, ['appointment']), ['id', 'appointmentId']);
@@ -1373,12 +1381,18 @@ function GameInner() {
     if (typewriterTimerRef.current !== null) window.clearInterval(typewriterTimerRef.current);
     let networkComplete = false;
     let turnCommitted = false;
+    let shouldRefreshCustomerActivities = false;
+    let activityRefreshScheduled = false;
     const finishIfReady = () => {
       if (!networkComplete || typewriterQueueRef.current.length > 0) return;
       if (typewriterTimerRef.current !== null) window.clearInterval(typewriterTimerRef.current);
       typewriterTimerRef.current = null;
       streamingRef.current = false;
       setStreaming(false);
+      if (turnCommitted && shouldRefreshCustomerActivities && !activityRefreshScheduled) {
+        activityRefreshScheduled = true;
+        refreshCustomerActivitiesAfter(700);
+      }
     };
     typewriterTimerRef.current = window.setInterval(() => {
       const backlog = typewriterQueueRef.current.length;
@@ -1444,6 +1458,7 @@ function GameInner() {
               applyServerState(event.state);
               retryChatRef.current = null;
               turnCommitted = true;
+              if (channel === 'email' || event.responseAction === 'final_player_reply') shouldRefreshCustomerActivities = true;
                 if (typeof event.npcExpression === 'string' && NPC_EXPRESSIONS.has(event.npcExpression)) {
                   setVisitExpressionOverride((current) => ({ ...current, [selectedNpc]: event.npcExpression }));
                 }
@@ -2200,6 +2215,12 @@ function GameInner() {
           <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-4 text-[11px] text-slate-500"><span>来源：{publicInfoRecord.sourceNote}</span><span>本次搜索消耗 {publicInfoRecord.costPoints} 行动点；关闭后不保存显示</span></div>
         </Modal>
       )}
+
+      <CustomerActivityPlanner
+        sessionId={gameSessionId}
+        refreshSignal={customerActivityRefreshKey}
+        onGameState={(state) => applyServerState(state as GameRuntimeState)}
+      />
 
     </div>
   );

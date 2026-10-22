@@ -1,0 +1,543 @@
+{
+  "auditType": "independent-readback-of-excel-prompt-sync",
+  "auditedAt": "2026-10-15T04:02:13.692Z",
+  "source": {
+    "workbookSha256": "8de831fd8d19c2d0a14be4fee7e24f831d2658766c21d372b07c16e42853b43f",
+    "planSourceSha256": "8de831fd8d19c2d0a14be4fee7e24f831d2658766c21d372b07c16e42853b43f",
+    "sourceHashMatchesPlan": true,
+    "revisionBefore": 7,
+    "revisionAfter": 8,
+    "persisted": true
+  },
+  "workbookEntries": 35,
+  "exactMatchCount": 35,
+  "exactAllEntriesMatch": true,
+  "entries": [
+    {
+      "cell": "D2",
+      "path": [
+        "npcRolePrompts",
+        "P1-001",
+        "base"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 1125,
+      "sha256": "a1f1de7b2a2256b7afc69cb34f2a8daa285053732d04d9fdc101473f8fd20709"
+    },
+    {
+      "cell": "D3",
+      "path": [
+        "npcRolePrompts",
+        "P1-001",
+        "low"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 388,
+      "sha256": "26918975275df24aa898fc374fd07c5657ba8f784942da3ad855e9e23203cf9c"
+    },
+    {
+      "cell": "D4",
+      "path": [
+        "npcRolePrompts",
+        "P1-001",
+        "medium"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 332,
+      "sha256": "8ef6a131616768a39d75158d1625b47f892749f58048ef9c34639e21f6349763"
+    },
+    {
+      "cell": "D5",
+      "path": [
+        "npcRolePrompts",
+        "P1-001",
+        "high"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 295,
+      "sha256": "a78efcc199da1a8b2ce070aca93be9f4219efa3435852fd3e7fde126a70c728f"
+    },
+    {
+      "cell": "D6",
+      "path": [
+        "npcRolePrompts",
+        "P1-002",
+        "base"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 1080,
+      "sha256": "e51ec3fc6c4eb974c3970a7276ff83792b34dbf2666430bfc03ba964339f7278"
+    },
+    {
+      "cell": "D7",
+      "path": [
+        "npcRolePrompts",
+        "P1-002",
+        "low"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 287,
+      "sha256": "aa820d397aa2da1dbd1e472d44040a09b25e099dc48fb943eb64b089a3f08da4"
+    },
+    {
+      "cell": "D8",
+      "path": [
+        "npcRolePrompts",
+        "P1-002",
+        "medium"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 278,
+      "sha256": "debab4584186f3373193ef7ee17c06f50a4a735dd61d89106a510e9a6df6c29c"
+    },
+    {
+      "cell": "D9",
+      "path": [
+        "npcRolePrompts",
+        "P1-002",
+        "high"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 285,
+      "sha256": "36aa0c1d9b5a1bc26ce5cf33076e6e8dc592e554a8db21c3f70ff496f53e2d54"
+    },
+    {
+      "cell": "D10",
+      "path": [
+        "npcRolePrompts",
+        "P1-003",
+        "base"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 1109,
+      "sha256": "81f0ed72085ea6e0653878fb8665d3721bb9d0a29cec24a67aca00189f5b5ed7"
+    },
+    {
+      "cell": "D11",
+      "path": [
+        "npcRolePrompts",
+        "P1-003",
+        "low"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 270,
+      "sha256": "2399391bf523eb836f909018f69810d170e2a6e83ccff61fe45027706e48b341"
+    },
+    {
+      "cell": "D12",
+      "path": [
+        "npcRolePrompts",
+        "P1-003",
+        "medium"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 269,
+      "sha256": "e6756724c24193d449d81e79a3158fcd05a95e38b19c44de738c43fd6046c51b"
+    },
+    {
+      "cell": "D13",
+      "path": [
+        "npcRolePrompts",
+        "P1-003",
+        "high"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 264,
+      "sha256": "d6e7c230e48807e8be68a51cf5cbb3babcea85aa11dfe7797870c2f7a0306672"
+    },
+    {
+      "cell": "D14",
+      "path": [
+        "npcRolePrompts",
+        "P1-004",
+        "base"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 1077,
+      "sha256": "233d633ecaa67a0f91cb94cc50f19a496abf2bb556a2730c00a8cd84b4f50f6b"
+    },
+    {
+      "cell": "D15",
+      "path": [
+        "npcRolePrompts",
+        "P1-004",
+        "low"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 251,
+      "sha256": "3712a3416c83f8049c363eb61f4f732332ba60ea28e46424c2fd1297d79cdefd"
+    },
+    {
+      "cell": "D16",
+      "path": [
+        "npcRolePrompts",
+        "P1-004",
+        "medium"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 249,
+      "sha256": "e52b603edab43ebcf6895f9edf761b859fee3df68d3a4836042138aa127a1f22"
+    },
+    {
+      "cell": "D17",
+      "path": [
+        "npcRolePrompts",
+        "P1-004",
+        "high"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 247,
+      "sha256": "bc54515c50cbe89add936ed280c2572e550f9681f5f18065e5185483575767cd"
+    },
+    {
+      "cell": "D18",
+      "path": [
+        "npcRolePrompts",
+        "P1-005",
+        "base"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 1092,
+      "sha256": "bda8de5d681cf0cf5364c5ebd9cbd79825af500eacdd4a79c10ca6751dada0cf"
+    },
+    {
+      "cell": "D19",
+      "path": [
+        "npcRolePrompts",
+        "P1-005",
+        "low"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 259,
+      "sha256": "26ec152d426c6d52b7fb7e29d4eb5fedaf7751ee4f3a9544b103ec81095dd65d"
+    },
+    {
+      "cell": "D20",
+      "path": [
+        "npcRolePrompts",
+        "P1-005",
+        "medium"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 254,
+      "sha256": "a8fcc7c50865958d85191a3ce88feef082ac69edcbc42df9013de76b59d8118d"
+    },
+    {
+      "cell": "D21",
+      "path": [
+        "npcRolePrompts",
+        "P1-005",
+        "high"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 260,
+      "sha256": "af8cdf5c0173db3613c3b6e73a4360e10b44c09b20a660255cb11b1a2ec1f140"
+    },
+    {
+      "cell": "D22",
+      "path": [
+        "npcChannelExceptions",
+        "P1-001",
+        "email"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 184,
+      "sha256": "527c73acd139dbaf44d0c864e95bd5cd971659eab59aef923493ca560d5c7854"
+    },
+    {
+      "cell": "D23",
+      "path": [
+        "npcChannelExceptions",
+        "P1-001",
+        "wechat"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 157,
+      "sha256": "25a4f8d9e7873b97f480fc15b8863cceea915780d0f2f70463b7c3467b58ac8e"
+    },
+    {
+      "cell": "D24",
+      "path": [
+        "npcChannelExceptions",
+        "P1-001",
+        "work_phone"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 155,
+      "sha256": "727054c65f848ea0e9413133a193431f9da9cf7054e0d27b2ecc42c499cd676e"
+    },
+    {
+      "cell": "D25",
+      "path": [
+        "npcChannelExceptions",
+        "P1-001",
+        "visit"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 152,
+      "sha256": "cbb2945bc38189c7bebbde7ce878b14e4235066f1ea9cba2f568d3a551a7cab7"
+    },
+    {
+      "cell": "D26",
+      "path": [
+        "npcChannelExceptions",
+        "P1-001",
+        "wechat_request"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 134,
+      "sha256": "b2c82679604e04b9d337cdc3e2c8603e86bc27afcd467e0c6a9372da0fdac870"
+    },
+    {
+      "cell": "D27",
+      "path": [
+        "npcChannelExceptions",
+        "P1-001",
+        "direct_visit"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 150,
+      "sha256": "3ebb5666b302ab831abd0c469932c9c255060a96c32315c108118b79a73b70ea"
+    },
+    {
+      "cell": "D28",
+      "path": [
+        "npcChannelExceptions",
+        "P1-001",
+        "scheduled_visit"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 163,
+      "sha256": "24b2f2d96ab70c40af2a5909795fffbad34da1220710247edf38fec4a1517543"
+    },
+    {
+      "cell": "D29",
+      "path": [
+        "npcChannelExceptions",
+        "P1-002",
+        "email"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 170,
+      "sha256": "5ce052ad0c755b2dd1ffcb53aaf5b0111b4c571129eccd06f2506a4e5b5a9bf3"
+    },
+    {
+      "cell": "D30",
+      "path": [
+        "npcChannelExceptions",
+        "P1-002",
+        "visit"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 148,
+      "sha256": "5193a7b88a414eae3f77ff53a4b5b0f814cf4e898415ebc469a24b20afef61bb"
+    },
+    {
+      "cell": "D31",
+      "path": [
+        "npcChannelExceptions",
+        "P1-003",
+        "email"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 164,
+      "sha256": "b5b65f69015a6a5378b53c0f7ba2579f71fdbb3ab8c18438ee2620961f7fa943"
+    },
+    {
+      "cell": "D32",
+      "path": [
+        "npcChannelExceptions",
+        "P1-003",
+        "visit"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 138,
+      "sha256": "4c4ab69721895a18272cd29feebb689dc30d5b90010ffffdbcb19f0a8a31c609"
+    },
+    {
+      "cell": "D33",
+      "path": [
+        "npcChannelExceptions",
+        "P1-004",
+        "wechat"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 137,
+      "sha256": "2568be5e2b23b29ce954234c15fa15f82a898e6d9c80b5b03e99e67fdc640b72"
+    },
+    {
+      "cell": "D34",
+      "path": [
+        "npcChannelExceptions",
+        "P1-004",
+        "visit"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 119,
+      "sha256": "35cf9331a9355a8b19504b19d86bf331cf3b1f3a59d5ccc9f90559aad51cc4ff"
+    },
+    {
+      "cell": "D35",
+      "path": [
+        "npcChannelExceptions",
+        "P1-005",
+        "email"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 162,
+      "sha256": "c0f92d1923f1c4ed9dbb10182ca346adcdca1b35dbe38ebfb495d77224a1ce38"
+    },
+    {
+      "cell": "D36",
+      "path": [
+        "npcChannelExceptions",
+        "P1-005",
+        "wechat"
+      ],
+      "workbookTextMatchesPlan": true,
+      "afterTextMatchesWorkbook": true,
+      "afterTextMatchesPlan": true,
+      "chars": 146,
+      "sha256": "10a6819d86d07d7d30f1aeb77bb35752ebe8b2c6b269bdd2b980e79e45fa0101"
+    }
+  ],
+  "preservedNonTableFields": [
+    {
+      "field": "liveCustomerPrompt",
+      "unchanged": true,
+      "beforeSha256": "af78a28b5f8c48af98fd795739b1b19e1e52966cbb30eca649eb64f8f6280678",
+      "afterSha256": "af78a28b5f8c48af98fd795739b1b19e1e52966cbb30eca649eb64f8f6280678"
+    },
+    {
+      "field": "promptLayers",
+      "unchanged": true,
+      "beforeSha256": "c9d90682a10f1f2e6618bfeb0bce75470440653e1ed3944d1ca90bb792e23f3b",
+      "afterSha256": "c9d90682a10f1f2e6618bfeb0bce75470440653e1ed3944d1ca90bb792e23f3b"
+    },
+    {
+      "field": "supportTierThresholds",
+      "unchanged": true,
+      "beforeSha256": "acdc0c012a6a9d1e310e21ed675d9edd77c98aa0011ac5929a493de0f6b3e335",
+      "afterSha256": "acdc0c012a6a9d1e310e21ed675d9edd77c98aa0011ac5929a493de0f6b3e335"
+    },
+    {
+      "field": "channelModifiers",
+      "unchanged": true,
+      "beforeSha256": "903b6754307d0cb24a2117ce1eb9fe006275f4d5316db576c4314f09b5381213",
+      "afterSha256": "903b6754307d0cb24a2117ce1eb9fe006275f4d5316db576c4314f09b5381213"
+    },
+    {
+      "field": "liveEvaluatorPrompt",
+      "unchanged": true,
+      "beforeSha256": "f2f05df6f6aca5100d5618e2e6a6273b05e204262ab7136db4009846c0d84d8a",
+      "afterSha256": "f2f05df6f6aca5100d5618e2e6a6273b05e204262ab7136db4009846c0d84d8a"
+    },
+    {
+      "field": "previewEvaluatorPrompt",
+      "unchanged": true,
+      "beforeSha256": "1efda75f1a6bcfb5f7cc31d82ea2a1a0852009975f1a83199b8e5d6d5db1f1bc",
+      "afterSha256": "1efda75f1a6bcfb5f7cc31d82ea2a1a0852009975f1a83199b8e5d6d5db1f1bc"
+    },
+    {
+      "field": "promptTestNpcPrompt",
+      "unchanged": true,
+      "beforeSha256": "d28a7bbabf3a607e1b96ad5c61efde613ad08989923b2e6ec3a6d3fb934edf51",
+      "afterSha256": "d28a7bbabf3a607e1b96ad5c61efde613ad08989923b2e6ec3a6d3fb934edf51"
+    },
+    {
+      "field": "promptTestEvaluatorPrompt",
+      "unchanged": true,
+      "beforeSha256": "895f566262c87c47548f18726f5b866d7d4ff53b116f3529bb9eea709be49b91",
+      "afterSha256": "895f566262c87c47548f18726f5b866d7d4ff53b116f3529bb9eea709be49b91"
+    }
+  ],
+  "allNonTableFieldsUnchanged": true,
+  "thresholds": {
+    "before": {
+      "mediumMin": 35,
+      "highMin": 70
+    },
+    "after": {
+      "mediumMin": 35,
+      "highMin": 70
+    },
+    "unchanged": true,
+    "expected": {
+      "mediumMin": 35,
+      "highMin": 70
+    },
+    "matchesExpected": true
+  },
+  "workbookParserFact": {
+    "error": "上传文件不是有效的 .xlsx 工作簿。",
+    "code": "INVALID_XLSX"
+  }
+}

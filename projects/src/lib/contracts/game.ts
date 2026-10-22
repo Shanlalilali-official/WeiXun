@@ -1,6 +1,31 @@
 import { z } from 'zod';
 import { emailAttachmentSchema } from '@/lib/contracts/ai';
 
+const customerActivityCommandBaseSchema = {
+  taskId: z.string().trim().min(1).max(512),
+  commandId: z.string().trim().min(1).max(128),
+  expectedVersion: z.number().int().nonnegative(),
+};
+
+export const customerActivityMutationSchema = z.discriminatedUnion('action', [
+  z.object({
+    ...customerActivityCommandBaseSchema,
+    action: z.literal('start'),
+  }).strict(),
+  z.object({
+    ...customerActivityCommandBaseSchema,
+    action: z.literal('save'),
+    draft: z.string().max(12_000),
+  }).strict(),
+  z.object({
+    ...customerActivityCommandBaseSchema,
+    action: z.literal('submit'),
+    draft: z.string().max(12_000).optional(),
+  }).strict(),
+]);
+
+export type CustomerActivityMutation = z.infer<typeof customerActivityMutationSchema>;
+
 export const createGameSessionRequestSchema = z.object({
   scenarioCode: z.literal('project-1'),
   replaceExisting: z.boolean().default(false),

@@ -32,7 +32,7 @@ import {
   getPromptTestNpcPromptDraftStorageKey,
   getPromptTestUserId,
 } from '@/lib/designer/prompt-test-storage';
-import type { PromptExcelImportResult } from '@/lib/designer/prompt-excel';
+import type { PromptExcelImportResult, PromptExcelRow } from '@/lib/designer/prompt-excel';
 import { getProjectOnePersonalityType } from '@/lib/designer/personality-types';
 
 type Person = (typeof PROJECT_ONE_FIVE_PERSON_NPCS)[ProjectOneFivePersonId];
@@ -130,6 +130,12 @@ function getChannelMenuLabel(channelId: ProjectOneChannelId): string {
     if (item) return item.label;
   }
   return getChannel(channelId).label;
+}
+
+function getExcelScopeLabel(scope: PromptExcelRow['scope']): string {
+  if (scope === 'channel') return '渠道补充';
+  if (scope === 'role') return '人物总提示词';
+  return PERSON_PROMPT_FIELDS.find(({ field }) => scope === `role_${field}`)?.label ?? '未知用途';
 }
 
 export default function PromptLibraryPage() {
@@ -280,11 +286,17 @@ export default function PromptLibraryPage() {
   function applyExcel() {
     const imported = excelResult?.editable;
     if (!excelResult?.ok || !imported) return;
-    setConfig((current) => ({
-      ...current,
-      npcRolePrompts: imported.npcRolePrompts,
-      npcChannelExceptions: imported.npcChannelExceptions,
-    }));
+    setConfig((current) => {
+      const exceptions = structuredClone(current.npcChannelExceptions);
+      for (const [npcId, channels] of Object.entries(imported.npcChannelExceptions)) {
+        exceptions[npcId] = { ...exceptions[npcId], ...channels };
+      }
+      return {
+        ...current,
+        npcRolePrompts: { ...current.npcRolePrompts, ...imported.npcRolePrompts },
+        npcChannelExceptions: exceptions,
+      };
+    });
     setDirty(true);
     setExcelResult(null);
     setNotice('已应用人物提示词到页面草稿，点击“保存全部”后生效。');
@@ -308,7 +320,7 @@ export default function PromptLibraryPage() {
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             <button onClick={() => void exportExcel()} disabled={loading || excelBusy !== null} className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"><Download className="h-4 w-4" />{excelBusy === 'export' ? '导出中…' : '导出 Excel'}</button>
             <input ref={excelInputRef} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importExcel(file); }} />
-            <button onClick={() => excelInputRef.current?.click()} disabled={loading || excelBusy !== null} className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"><Upload className="h-4 w-4" />{excelBusy === 'import' ? '解析中…' : '导入 Excel'}</button>
+            <button onClick={() => excelInputRef.current?.click()} disabled={loading || saving || excelBusy !== null} className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"><Upload className="h-4 w-4" />{excelBusy === 'import' ? '解析中…' : '导入 Excel'}</button>
             <button
               onClick={() => router.push('/designer/dialogue-prompts')}
               className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
@@ -317,7 +329,7 @@ export default function PromptLibraryPage() {
             </button>
             <button
               onClick={() => void save()}
-              disabled={loading || saving || !dirty || !thresholdsValid}
+              disabled={loading || saving || excelBusy !== null || !dirty || !thresholdsValid}
               className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Save className="h-4 w-4" />{saving ? '保存中…' : '保存全部'}
@@ -339,10 +351,12 @@ export default function PromptLibraryPage() {
         </section>
         {notice && <div role="status" className="mb-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs text-slate-700">{notice}</div>}
         {excelResult && <section className="mb-4 rounded-xl border border-slate-200 bg-white p-4 text-xs shadow-sm" aria-label="Excel 导入校验结果">
-          <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2 font-semibold text-slate-800"><FileSpreadsheet className="h-4 w-4 text-blue-600" />{excelResult.ok ? `校验通过：${excelResult.rows.length} 项人物提示词` : `校验失败：${excelResult.errors.length} 个错误`}</div><button onClick={applyExcel} disabled={!excelResult.ok} className="rounded-lg bg-blue-600 px-3 py-2 font-semibold text-white disabled:opacity-40">应用到页面草稿</button></div>
+          <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2 font-semibold text-slate-800"><FileSpreadsheet className="h-4 w-4 text-blue-600" />{excelResult.ok ? `校验通过：${excelResult.rows.length} 项人物提示词` : `校验失败：${excelResult.errors.length} 个错误`}</div><button onClick={applyExcel} disabled={!excelResult.ok || saving || excelBusy !== null} className="rounded-lg bg-blue-600 px-3 py-2 font-semibold text-white disabled:opacity-40">应用到页面草稿</button></div>
+          {excelResult.ok && <p className="mt-2 text-slate-500">校验通过后，点击“应用到页面草稿”查看覆盖结果，再点击“保存全部”使其生效。表格中未包含的渠道补充会保留。</p>}
           {dirty && excelResult.ok && <p className="mt-2 text-amber-700">应用会替换当前尚未保存的人物提示词修改。</p>}
           {excelResult.errors.length > 0 && <ul className="mt-3 max-h-36 space-y-1 overflow-y-auto text-rose-700">{excelResult.errors.map((issue, index) => <li key={index}>{issue.row ? `第 ${issue.row} 行：` : ''}{issue.message}</li>)}</ul>}
-          {excelResult.ok && <div className="mt-3 max-h-44 overflow-y-auto rounded-lg border border-slate-200"><table className="w-full text-left"><thead className="sticky top-0 bg-slate-50"><tr><th className="px-3 py-2">人物</th><th className="px-3 py-2">提示词用途</th><th className="px-3 py-2">内容预览</th></tr></thead><tbody>{excelResult.rows.map((row, index) => <tr key={index} className="border-t border-slate-100"><td className="px-3 py-2">{PROJECT_ONE_FIVE_PERSON_NPCS[row.npcId as ProjectOneFivePersonId]?.name ?? row.npcId}</td><td className="px-3 py-2">{row.scope === 'role' ? '人物总提示词' : getChannelMenuLabel(row.channelId as ProjectOneChannelId)}</td><td className="max-w-xl truncate px-3 py-2" title={row.prompt}>{row.prompt}</td></tr>)}</tbody></table></div>}
+          {(excelResult.warnings?.length ?? 0) > 0 && <div className="mt-3 text-amber-700"><p>以下多余字段已忽略，提示词正文未改动：</p><ul className="mt-1 max-h-28 space-y-1 overflow-y-auto">{excelResult.warnings?.map((issue, index) => <li key={index}>{issue.row ? `第 ${issue.row} 行：` : ''}{issue.message}</li>)}</ul></div>}
+          {excelResult.ok && <div className="mt-3 max-h-44 overflow-y-auto rounded-lg border border-slate-200"><table className="w-full text-left"><thead className="sticky top-0 bg-slate-50"><tr><th className="px-3 py-2">人物</th><th className="px-3 py-2">提示词用途</th><th className="px-3 py-2">交流方式</th><th className="px-3 py-2">内容预览</th></tr></thead><tbody>{excelResult.rows.map((row, index) => <tr key={index} className="border-t border-slate-100"><td className="px-3 py-2">{PROJECT_ONE_FIVE_PERSON_NPCS[row.npcId as ProjectOneFivePersonId]?.name ?? row.npcId}</td><td className="px-3 py-2">{getExcelScopeLabel(row.scope)}</td><td className="px-3 py-2">{row.scope === 'channel' ? getChannelMenuLabel(row.channelId as ProjectOneChannelId) : '—'}</td><td className="max-w-xl truncate px-3 py-2" title={row.prompt}>{row.prompt}</td></tr>)}</tbody></table></div>}
         </section>}
 
         <div className="grid overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:grid-cols-[245px_225px_minmax(0,1fr)]">

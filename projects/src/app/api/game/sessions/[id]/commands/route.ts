@@ -8,14 +8,34 @@ import {
   deliverPendingNpcHandoffs,
   assertOwnedMultiplayerRoomRunning,
   getCommittedGameCommand,
+  getNpcChannelConversation,
+  processPendingCustomerActivityDetections,
+  processSubmittedCustomerActivityEvaluations,
   synchronizeOwnedGameTimer,
 } from '@/lib/game/repository';
 import { getProjectOneNpc } from '@/lib/game/project-one';
 import { assertMultiplayerCommandAllowed } from '@/lib/game/multiplayer';
-import { executeGameCommand, synchronizeProjectTimer, toPlayerVisibleGameCommandResult, toPlayerVisibleGameState } from '@/lib/game/state';
+import { loadActivityDecisionConfigForMatching as loadActivityDecisionConfig } from '@/lib/designer/customer-activity-config-repository';
+import { appendCustomerActivityDiagnostic, executeGameCommand, isCustomerActivityBlockingGameActions, queueCustomerActivityDetection, synchronizeProjectTimer, toPlayerVisibleGameCommandResult, toPlayerVisibleGameState } from '@/lib/game/state';
 import { createServerProbabilitySeed } from '@/lib/game/server-random';
 
 export const runtime = 'nodejs';
+
+function boundedCustomerActivityMessages(messages: Array<{ messageId: string; speaker: 'sales' | 'customer'; text: string }>) {
+  const selected: typeof messages = [];
+  const seen = new Set<string>();
+  let totalLength = 0;
+  for (let index = messages.length - 1; index >= 0 && selected.length < 120; index -= 1) {
+    const item = messages[index];
+    if (!item.messageId || seen.has(item.messageId) || !item.text.trim()) continue;
+    const text = item.text.slice(0, 4_000);
+    if (totalLength + text.length > 60_000) continue;
+    selected.push({ ...item, text });
+    totalLength += text.length;
+    seen.add(item.messageId);
+  }
+  return selected.reverse();
+}
 
 export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
   const guard = authGuard(request);
@@ -54,6 +74,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         state: toPlayerVisibleGameState(gameSession.state),
       }, { status: 409 });
     }
+    if (isCustomerActivityBlockingGameActions(gameSession.state) && parsed.data.type !== 'mark_notification_read') {
+      return NextResponse.json({ error: 'CUSTOMER_ACTIVITY_PLANNING_ACTIVE', state: toPlayerVisibleGameState(gameSession.state) }, { status: 409 });
+    }
 
     // Legacy phase controls are rejected by the reducer; multiplayer still
     // keeps its room ownership check for normal company actions.
@@ -87,6 +110,72 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     if (settledSession.state.version !== parsed.data.expectedVersion) throw new Error('STATE_VERSION_CONFLICT');
     const executionState = synchronizeProjectTimer(settledSession.state, Date.now(), true);
     let execution = executeGameCommand(executionState, probabilityCommand, workflowEvaluation);
+    if (parsed.data.type === 'end_visit' && executionState.activeMeeting) {
+      const meeting = executionState.activeMeeting;
+      const transcript = await getNpcChannelConversation(id, meeting.npcId, 'offline');
+      const messages = boundedCustomerActivityMessages(transcript
+        .filter((item) => item.metadata?.meetingId === meeting.id && !item.metadata?.hiddenFromTranscript)
+        .map((item) => ({ messageId: item.id, speaker: item.role === 'user' ? 'sales' as const : 'customer' as const, text: item.content })));
+      if (messages.some((item) => item.speaker === 'sales')) {
+        const { config: decisionConfig } = await loadActivityDecisionConfig();
+        execution = {
+          ...execution,
+          state: queueCustomerActivityDetection(execution.state, {
+            conversationId: `visit:${meeting.id}`,
+            npcId: meeting.npcId,
+            messages,
+            decisionConfig,
+          }),
+        };
+      } else {
+        execution = {
+          ...execution,
+          state: appendCustomerActivityDiagnostic(execution.state, {
+            event: 'conversation_not_queued', conversationId: `visit:${meeting.id}`, npcId: meeting.npcId,
+            reason: 'ended_visit_has_no_sales_message', details: { message_count: messages.length },
+          }),
+        };
+      }
+    }
+    if (parsed.data.type === 'end_phone_call' && executionState.activePhoneCall) {
+      const call = executionState.activePhoneCall;
+      const transcript = await getNpcChannelConversation(id, call.npcId, 'work_phone');
+      const messages = boundedCustomerActivityMessages(transcript
+        .filter((item) => Date.parse(item.createdAt) >= Date.parse(call.startedAt) && !item.metadata?.hiddenFromTranscript)
+        .map((item) => ({
+          messageId: item.id,
+          speaker: item.role === 'user' ? 'sales' as const : 'customer' as const,
+          text: item.content,
+        })));
+      if (messages.some((item) => item.speaker === 'sales')) {
+        const { config: decisionConfig } = await loadActivityDecisionConfig();
+        execution = {
+          ...execution,
+          state: queueCustomerActivityDetection(execution.state, {
+            conversationId: `phone:${call.startedAt}`,
+            npcId: call.npcId,
+            messages,
+            decisionConfig,
+          }),
+        };
+      } else {
+        execution = {
+          ...execution,
+          state: appendCustomerActivityDiagnostic(execution.state, {
+            event: 'conversation_not_queued', conversationId: `phone:${call.startedAt}`, npcId: call.npcId,
+            reason: 'ended_call_has_no_sales_message', details: { message_count: messages.length },
+          }),
+        };
+      }
+    } else if (parsed.data.type === 'end_phone_call') {
+      execution = {
+        ...execution,
+        state: appendCustomerActivityDiagnostic(execution.state, {
+          event: 'phone_end_without_active_call', npcId: parsed.data.payload.npcId,
+          reason: 'active_phone_call_missing',
+        }),
+      };
+    }
     if (parsed.data.type === 'give_gift') {
       const giftCommand = parsed.data;
       const preparation = executionState.preparations.find((item) => item.id === giftCommand.payload.preparationId);
@@ -146,12 +235,19 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       eventPayload: execution.eventPayload,
       result: execution.result,
     });
+    let responseState = committed.state;
+    if (parsed.data.type === 'end_visit' || parsed.data.type === 'end_phone_call') {
+      responseState = (await processPendingCustomerActivityDetections(id, guard.session.userId).catch(() => null))?.state ?? responseState;
+    }
+    if (parsed.data.type === 'submit' || parsed.data.type === 'end_visit' || parsed.data.type === 'end_phone_call') {
+      responseState = (await processSubmittedCustomerActivityEvaluations(id, guard.session.userId).catch(() => null))?.state ?? responseState;
+    }
     await deliverPendingNpcHandoffs(id, committed.state.currentRound).catch(() => undefined);
     return NextResponse.json({
       success: true,
       ...committed,
       result: toPlayerVisibleGameCommandResult(committed.result),
-      state: toPlayerVisibleGameState(committed.state),
+      state: toPlayerVisibleGameState(responseState),
     });
   } catch (error) {
     const code = error instanceof Error ? error.message : 'GAME_COMMAND_FAILED';

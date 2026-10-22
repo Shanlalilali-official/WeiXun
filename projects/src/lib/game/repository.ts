@@ -1,8 +1,24 @@
+import { createHash } from 'node:crypto';
 import { createServerClient } from '@/storage/database/supabase-client';
+import {
+  CustomerActivityDecisionError,
+  CustomerActivityDetectionError,
+  decideCustomerActivityFeasibility,
+  detectCustomerActivityProposals,
+  evaluateCustomerActivityPlan,
+  type CustomerActivityDiagnostic,
+} from '@/lib/ai/customer-activities';
 import { getProgressionMultiplier } from '@/lib/game/acceptance-mode';
 import { assertMultiplayerRoomRunning } from '@/lib/game/multiplayer';
-import { createProjectOneState, getGameOutcome, normalizeProjectOneState, synchronizeProjectTimer, toPlayerVisibleGameOutcome, type GameOutcome, type GameRuntimeState } from '@/lib/game/state';
+import { getProjectOneNpc } from '@/lib/game/project-one';
+import { appendCustomerActivityDiagnostic, applyCustomerActivityEvaluation, completeCustomerActivityProposalDetection, createProjectOneState, getGameOutcome, normalizeProjectOneState, synchronizeProjectTimer, toPlayerVisibleGameOutcome, type GameOutcome, type GameRuntimeState } from '@/lib/game/state';
 import type { GameReview } from '@/lib/contracts/game';
+import {
+  finalizeExpiredCustomerActivities,
+  type CustomerActivityFeasibilityDecision,
+  type CustomerActivityProposalCandidate,
+} from '@/lib/game/customer-activities';
+import { resumeProjectTimerAfterCustomerActivity } from '@/lib/game/state';
 
 export interface StoredChatMessage {
   id: string;
@@ -382,6 +398,38 @@ export async function synchronizeOwnedGameTimer(sessionId: string, userId: strin
         timerBase = { ...timerBase, projectTimer: { ...timerBase.projectTimer, lastResumedAt: new Date().toISOString() } };
       }
     }
+    const planningTask = timerBase.customerActivities.tasks.find((task) => task.status === 'planning');
+    if (planningTask) {
+      const nowMs = Date.now();
+      if (planningTask.deadlineAt === undefined || nowMs < planningTask.deadlineAt) return loaded;
+      const finalizedActivities = finalizeExpiredCustomerActivities(timerBase.customerActivities, nowMs);
+      const resumedAtDeadline = resumeProjectTimerAfterCustomerActivity({
+        ...timerBase,
+        customerActivities: finalizedActivities,
+      }, planningTask.deadlineAt);
+      const next = synchronizeProjectTimer(resumedAtDeadline, nowMs, true);
+      try {
+        const committed = await commitGameCommand({
+          sessionId,
+          commandId: `customer-activity-timeout:${loaded.state.version}:${planningTask.deadlineAt}`,
+          commandType: 'customer_activity.timeout_submit',
+          expectedVersion: loaded.state.version,
+          state: next,
+          eventType: 'customer_activity.plan_auto_submitted',
+          eventPayload: {
+            taskId: planningTask.id,
+            submittedAt: planningTask.deadlineAt,
+            submitReason: 'timeout',
+            projectTimerExpired: next.status !== 'playing',
+          },
+          result: { activityTaskId: planningTask.id, submitReason: 'timeout' },
+        });
+        return { ...loaded, state: committed.state };
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'STATE_VERSION_CONFLICT' || attempt === 2) throw error;
+        continue;
+      }
+    }
     const next = synchronizeProjectTimer(timerBase);
     if (next === loaded.state) return loaded;
     try {
@@ -545,6 +593,318 @@ export async function commitGameCommand(args: {
     result: envelope.response.result ?? {},
     replayed: Boolean(envelope.replayed),
   };
+}
+
+function customerActivityDetectionCommandId(conversationId: string): string {
+  const hash = createHash('sha256').update(conversationId).digest('hex').slice(0, 32);
+  return `customer-activity-detect:${hash}`;
+}
+
+function customerActivityDecisionKey(candidate: CustomerActivityProposalCandidate): string {
+  return `${candidate.npcId}\u0000${candidate.type}\u0000${candidate.proposalMessageId}`;
+}
+
+function customerActivityDecisionCheckpointCommandId(
+  conversationId: string,
+  resolutions: Array<{ candidate: CustomerActivityProposalCandidate; decision: CustomerActivityFeasibilityDecision }>,
+  diagnosticVersion?: number,
+): string {
+  const checkpoint = resolutions
+    .map(({ candidate, decision }) => ({
+      key: customerActivityDecisionKey(candidate),
+      decision: decision.decision,
+      mode: decision.mode,
+      configRevision: decision.configRevision,
+      reason: decision.reason,
+    }))
+    .sort((left, right) => left.key.localeCompare(right.key));
+  const hash = createHash('sha256').update(JSON.stringify({ checkpoint, diagnosticVersion })).digest('hex').slice(0, 32);
+  const conversationHash = createHash('sha256').update(conversationId).digest('hex').slice(0, 16);
+  return `customer-activity-checkpoint:${conversationHash}:${hash}`;
+}
+
+export async function resolveCustomerActivityProposalDecisions(args: {
+  candidates: CustomerActivityProposalCandidate[];
+  existingDecisionKeys: ReadonlySet<string>;
+  resolutionCache: Map<string, {
+    candidate: CustomerActivityProposalCandidate;
+    decision: CustomerActivityFeasibilityDecision;
+  }>;
+  relationshipSnapshot: OwnedGameSession['state']['customerActivityDetectionQueue'][number]['relationshipSnapshot'];
+  decisionConfig: OwnedGameSession['state']['customerActivityDetectionQueue'][number]['decisionConfig'];
+  decide?: typeof decideCustomerActivityFeasibility;
+}): Promise<{ resolutions: Array<{
+  candidate: CustomerActivityProposalCandidate;
+  decision: CustomerActivityFeasibilityDecision;
+}>; decisionFailed: boolean; failureCode?: string }> {
+  const decide = args.decide ?? decideCustomerActivityFeasibility;
+  let decisionFailed = false;
+  let failureCode: string | undefined;
+  for (const candidate of args.candidates) {
+    const decisionKey = customerActivityDecisionKey(candidate);
+    // A proposal is globally consumed once, even if a later bounded transcript
+    // happens to contain it again under a different boundary.
+    if (args.existingDecisionKeys.has(decisionKey) || args.resolutionCache.has(decisionKey)) continue;
+    try {
+      const decision = await decide(candidate, args.relationshipSnapshot, args.decisionConfig);
+      args.resolutionCache.set(decisionKey, { candidate, decision });
+    } catch (error) {
+      if (!(error instanceof CustomerActivityDecisionError)) throw error;
+      decisionFailed = true;
+      failureCode = error.code;
+      break;
+    }
+  }
+  return {
+    resolutions: [...args.resolutionCache.entries()]
+      .filter(([decisionKey]) => !args.existingDecisionKeys.has(decisionKey))
+      .map(([, resolution]) => resolution),
+    decisionFailed,
+    ...(failureCode ? { failureCode } : {}),
+  };
+}
+
+/** Retries ended-conversation detection from session reads and interaction commits. */
+export async function processPendingCustomerActivityDetections(
+  sessionId: string,
+  userId: string,
+  dependencies: {
+    load?: typeof getOwnedGameSession;
+    detect?: typeof detectCustomerActivityProposals;
+    decide?: typeof decideCustomerActivityFeasibility;
+    commit?: typeof commitGameCommand;
+    now?: () => number;
+  } = {},
+): Promise<OwnedGameSession> {
+  const load = dependencies.load ?? getOwnedGameSession;
+  const detect = dependencies.detect ?? detectCustomerActivityProposals;
+  const commit = dependencies.commit ?? commitGameCommand;
+  const now = dependencies.now ?? Date.now;
+  // Keep AI output and successful gate decisions across CAS retries. A conflict
+  // must not allow a completed reject/need_more decision to be drawn again.
+  let detectedCandidates: CustomerActivityProposalCandidate[] | null = null;
+  let detectedConversationId: string | null = null;
+  let detectionDiagnostics: CustomerActivityDiagnostic[] = [];
+  const resolutionCache = new Map<string, {
+    candidate: CustomerActivityProposalCandidate;
+    decision: CustomerActivityFeasibilityDecision;
+  }>();
+  let decisionFailed = false;
+  let decisionFailureCode: string | undefined;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const loaded = await load(sessionId, userId, { materializeTimer: false });
+    const request = loaded.state.customerActivityDetectionQueue[0];
+    if (!request) return loaded;
+    if (detectedConversationId !== null && request.conversationId !== detectedConversationId) return loaded;
+    if (detectedCandidates === null) {
+      detectionDiagnostics = [{ event: 'detection_started', reason: 'ended_conversation_queued' }];
+      try {
+        detectedCandidates = await detect({
+          conversationEnded: true,
+          conversationId: request.conversationId,
+          npcId: request.npcId,
+          messages: request.messages,
+        }, { onDiagnostic: (diagnostic) => detectionDiagnostics.push(diagnostic) });
+        detectedConversationId = request.conversationId;
+      } catch (error) {
+        const failureCode = error instanceof CustomerActivityDetectionError ? error.code : 'unexpected_detection_error';
+        const failedState = detectionDiagnostics.reduce((state, diagnostic) => appendCustomerActivityDiagnostic(state, {
+          at: now(), conversationId: request.conversationId, npcId: request.npcId,
+          event: diagnostic.event, reason: diagnostic.reason, activityType: diagnostic.activityType,
+          messageId: diagnostic.messageId,
+          details: diagnostic.details as Record<string, string | number | boolean | null> | undefined,
+        }), loaded.state);
+        const auditedState = appendCustomerActivityDiagnostic(failedState, {
+          at: now(), conversationId: request.conversationId, npcId: request.npcId,
+          event: 'detection_failed', reason: failureCode, details: { detection_error_code: failureCode },
+        });
+        try {
+          const committed = await commit({
+            sessionId,
+            commandId: customerActivityDecisionCheckpointCommandId(request.conversationId, [], loaded.state.version),
+            commandType: 'customer_activity.detection_failed',
+            expectedVersion: loaded.state.version,
+            state: auditedState,
+            eventType: 'customer_activity.detection_failed',
+            eventPayload: { npcId: request.npcId, conversationId: request.conversationId, failureCode },
+            result: { queueRetained: true },
+          });
+          return { ...loaded, state: committed.state };
+        } catch (commitError) {
+          if (!(commitError instanceof Error) || commitError.message !== 'STATE_VERSION_CONFLICT' || attempt === 2) throw commitError;
+          continue;
+        }
+      }
+    }
+    const existingDecisionKeys = new Set(loaded.state.customerActivities.decisions.map((item) =>
+      `${item.npcId}\u0000${item.type}\u0000${item.proposalMessageId}`));
+    if (!decisionFailed) {
+      const resolved = await resolveCustomerActivityProposalDecisions({
+        candidates: detectedCandidates,
+        existingDecisionKeys,
+        resolutionCache,
+        relationshipSnapshot: request.relationshipSnapshot,
+        decisionConfig: request.decisionConfig,
+        decide: dependencies.decide,
+      });
+      decisionFailed = resolved.decisionFailed;
+      decisionFailureCode = resolved.failureCode;
+    }
+
+    // Persist normally completed decisions even when a later candidate fails.
+    // The queue remains retryable, while the decision audit prevents the first
+    // candidate from being re-evaluated or changing into an allow on retry.
+    const resolutions = [...resolutionCache.entries()]
+      .filter(([decisionKey]) => !existingDecisionKeys.has(decisionKey))
+      .map(([, resolution]) => resolution);
+    try {
+      const beforeTaskCount = loaded.state.customerActivities.tasks.length;
+      let nextState = completeCustomerActivityProposalDetection(
+        loaded.state,
+        request.conversationId,
+        resolutions,
+        now(),
+        { keepQueue: decisionFailed },
+      );
+      const createdTaskCount = nextState.customerActivities.tasks.length - beforeTaskCount;
+      const appendDiagnostic = (diagnostic: Omit<import('@/lib/game/state').CustomerActivityDiagnosticRecord, 'at'>) => {
+        nextState = appendCustomerActivityDiagnostic(nextState, { ...diagnostic, at: now() });
+      };
+      for (const diagnostic of detectionDiagnostics) appendDiagnostic({
+        conversationId: request.conversationId,
+        npcId: request.npcId,
+        event: diagnostic.event,
+        reason: diagnostic.reason,
+        activityType: diagnostic.activityType,
+        messageId: diagnostic.messageId,
+        details: diagnostic.details as Record<string, string | number | boolean | null> | undefined,
+      });
+      appendDiagnostic({
+        conversationId: request.conversationId,
+        npcId: request.npcId,
+        event: 'candidate_count',
+        reason: detectedCandidates.length ? 'candidates_returned' : 'no_candidate_returned',
+        details: { candidate_count: detectedCandidates.length },
+      });
+      const resolutionByKey = new Map(resolutions.map((resolution) => [customerActivityDecisionKey(resolution.candidate), resolution.decision]));
+      for (const candidate of detectedCandidates) {
+        const proposalKey = customerActivityDecisionKey(candidate);
+        if (existingDecisionKeys.has(proposalKey)) {
+          appendDiagnostic({
+            conversationId: request.conversationId, npcId: request.npcId, activityType: candidate.type,
+            messageId: candidate.proposalMessageId, event: 'candidate_duplicate', reason: 'proposal_already_decided',
+          });
+          continue;
+        }
+        const decision = resolutionByKey.get(proposalKey);
+        if (decision) {
+          appendDiagnostic({
+            conversationId: request.conversationId,
+            npcId: request.npcId,
+            activityType: candidate.type,
+            messageId: candidate.proposalMessageId,
+            event: 'threshold_decision',
+            reason: decision.reason,
+            details: { threshold_decision: decision.decision, config_revision: decision.configRevision, decision_mode: decision.mode },
+          });
+        }
+      }
+      if (decisionFailed) appendDiagnostic({
+        conversationId: request.conversationId,
+        npcId: request.npcId,
+        event: 'feasibility_decision_failed',
+        reason: decisionFailureCode ?? 'decision_provider_unavailable',
+        details: { decision_error_code: decisionFailureCode ?? 'decision_provider_unavailable' },
+      });
+      appendDiagnostic({
+        conversationId: request.conversationId,
+        npcId: request.npcId,
+        event: createdTaskCount ? 'task_created' : 'no_task_created',
+        reason: createdTaskCount ? 'threshold_allowed' : detectedCandidates.length ? 'no_new_allowed_candidate' : 'no_candidate_returned',
+        details: { task_count: createdTaskCount },
+      });
+      const committed = await commit({
+        sessionId,
+        commandId: decisionFailed
+          ? customerActivityDecisionCheckpointCommandId(request.conversationId, resolutions, resolutions.length ? undefined : loaded.state.version)
+          : customerActivityDetectionCommandId(request.conversationId),
+        commandType: decisionFailed ? 'customer_activity.decision_checkpoint' : 'customer_activity.detect',
+        expectedVersion: loaded.state.version,
+        state: nextState,
+        eventType: decisionFailed
+          ? 'customer_activity.proposal_decisions_checkpointed'
+          : 'customer_activity.match_completed',
+        eventPayload: {
+          npcId: request.npcId,
+          conversationId: request.conversationId,
+          proposalCount: detectedCandidates.length,
+          decisionCount: resolutions.length,
+          createdTaskCount,
+          queueRetained: decisionFailed,
+        },
+        result: {
+          proposalCount: detectedCandidates.length,
+          decisionCount: resolutions.length,
+          createdTaskCount,
+          queueRetained: decisionFailed,
+        },
+      });
+      return { ...loaded, state: committed.state };
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== 'STATE_VERSION_CONFLICT' || attempt === 2) throw error;
+    }
+  }
+  throw new Error('STATE_VERSION_CONFLICT');
+}
+
+function customerActivityEvaluationCommandId(taskId: string): string {
+  const hash = createHash('sha256').update(taskId).digest('hex').slice(0, 32);
+  return `customer-activity-eval:${hash}`;
+}
+
+/** Settles only submitted tasks; metric deltas and the idempotency marker share one CAS write. */
+export async function processSubmittedCustomerActivityEvaluations(
+  sessionId: string,
+  userId: string,
+): Promise<OwnedGameSession> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const loaded = await getOwnedGameSession(sessionId, userId, { materializeTimer: false });
+    const task = loaded.state.customerActivities.tasks.find((item) => item.status === 'submitted' && !item.evaluation);
+    if (!task) return loaded;
+    const npc = getProjectOneNpc(task.npcId);
+    const evaluation = await evaluateCustomerActivityPlan({
+      activityType: task.type,
+      summary: task.summary,
+      conversation: task.sourceConversation,
+      draft: task.draft,
+      customerContext: npc ? {
+        name: npc.name,
+        title: npc.title,
+        personality: npc.personality,
+        concern: npc.weakness,
+        stage: '项目限时推进',
+      } : null,
+    });
+    if (!evaluation) return loaded;
+    const nextState = applyCustomerActivityEvaluation(loaded.state, task.id, evaluation, Date.now());
+    try {
+      const committed = await commitGameCommand({
+        sessionId,
+        commandId: customerActivityEvaluationCommandId(task.id),
+        commandType: 'customer_activity.evaluate',
+        expectedVersion: loaded.state.version,
+        state: nextState,
+        eventType: 'customer_activity.plan_evaluated',
+        eventPayload: { taskId: task.id, npcId: task.npcId },
+        result: { taskId: task.id },
+      });
+      return { ...loaded, state: committed.state };
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== 'STATE_VERSION_CONFLICT' || attempt === 2) throw error;
+    }
+  }
+  throw new Error('STATE_VERSION_CONFLICT');
 }
 
 export async function commitPhaseTransition(
@@ -738,6 +1098,33 @@ export async function getNpcConversation(sessionId: string, npcId: string, limit
     .in('sender', ['user', 'assistant'])
     .order('created_at', { ascending: false })
     .limit(limit);
+  if (error) throw new Error('CHAT_HISTORY_LOAD_FAILED');
+  return (data ?? []).reverse().map((message) => ({
+    id: String(message.id),
+    role: message.sender as 'user' | 'assistant',
+    content: String(message.content),
+    round: Number(message.round),
+    createdAt: String(message.created_at),
+    metadata: (message.metadata as Record<string, unknown> | null) ?? undefined,
+  }));
+}
+
+/** Recent transcript for one channel, kept bounded for activity matching. */
+export async function getNpcChannelConversation(
+  sessionId: string,
+  npcId: string,
+  channel: string,
+  limit = 120,
+): Promise<StoredChatMessage[]> {
+  const supabase = createServerClient();
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .select('id, sender, content, round, created_at, metadata')
+    .eq('session_id', sessionId)
+    .contains('metadata', { npcId, channel })
+    .in('sender', ['user', 'assistant'])
+    .order('created_at', { ascending: false })
+    .limit(Math.max(1, Math.min(120, limit)));
   if (error) throw new Error('CHAT_HISTORY_LOAD_FAILED');
   return (data ?? []).reverse().map((message) => ({
     id: String(message.id),

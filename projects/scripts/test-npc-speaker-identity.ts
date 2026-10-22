@@ -30,6 +30,8 @@ assert.equal(
   false,
   'a normal NPC phone self-introduction remains valid',
 );
+assert.equal(hasNpcSpeakerIdentityViolation(zhang, '张建国：您好，您先说来意。'), true, 'a speaker-name prefix is not spoken NPC dialogue');
+assert.equal(hasNpcSpeakerIdentityViolation(zhang, '林先生您好，您请讲。'), false, 'the actual visitor may be addressed normally');
 assert.equal(
   hasNpcSpeakerIdentityViolation(li, '张建国只负责方向判断，技术问题请先和我核对数据。'),
   false,
@@ -62,7 +64,13 @@ async function main() {
   });
   assert.equal(fallbackCalls, 2, 'repeated role reversals stop after one retry');
   assert.equal(fallback.source, 'fallback');
-  assert.equal(fallback.reply, '我先了解一下。请用一句话说明具体事项、已有依据，以及希望我确认的下一步。');
+  assert.equal(fallback.reply, '抱歉，这件事我暂时不便答复。');
+
+  await assert.rejects(
+    generateNpcReplyWithIdentityGuard(zhang, 'work_phone', async () => ' \n\t '),
+    /AI_PROVIDER_EMPTY_RESPONSE/,
+    'whitespace from a streamed generation must never be accepted or persisted as NPC speech',
+  );
 
   const route = readFileSync(resolve(process.cwd(), 'src/app/api/chat/stream/route.ts'), 'utf8');
   assert.match(route, /generateNpcReplyWithIdentityGuard\(npc, channel/);

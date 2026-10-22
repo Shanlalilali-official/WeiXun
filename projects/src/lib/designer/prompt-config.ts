@@ -4,6 +4,7 @@ import {
   promptTestNpcPromptConfigSchema,
 } from '@/lib/contracts/prompt-test';
 import { CUSTOMER_PROMPT } from '@/lib/ai/prompts/customer';
+import { NPC_NATURAL_DIALOGUE_RULES } from '@/lib/ai/prompts/npc-dialogue-rules';
 import {
   PROJECT_ONE_NPC_ROLE_PROMPT_PROFILES,
 } from '@/lib/designer/npc-role-prompts';
@@ -111,6 +112,75 @@ const OCTOBER_12_BEFORE_SHORT_REPLIES_PROFILE_FINGERPRINTS: Record<string, Recor
   'P1-005': { base: ['4102c17818903638', 524], low: ['700c0910c5d25f96', 1303], medium: ['e11edd48ed508a4c', 1404], high: ['1744c5be83f81016', 1500] },
 };
 
+// Exact complete profiles saved before the shared natural-dialogue rules were
+// introduced on 2026-10-14. Only an untouched four-field match upgrades.
+const OCTOBER_14_BEFORE_NATURAL_DIALOGUE_PROFILE_FINGERPRINTS: Record<string, Record<NpcSupportPromptTier | 'base', readonly [hash: string, length: number]>> = {
+  'P1-001': { base: ['4c8c315ab4dfdb16', 508], low: ['c8add3cb18403c77', 1578], medium: ['e20e8d96fb89f584', 1760], high: ['b272a86f755ecacb', 1847] },
+  'P1-002': { base: ['65d82cb4795ecfc6', 553], low: ['29b61722004cdd0e', 1427], medium: ['304c78c6e17c4be6', 1701], high: ['1efca7b45b382a42', 1774] },
+  'P1-003': { base: ['852216ef8028143d', 536], low: ['a12bc827e6f781d5', 1414], medium: ['07258672e153d2ec', 1701], high: ['feba0758f105ab7a', 1769] },
+  'P1-004': { base: ['583f53f1d4362d1f', 515], low: ['b9c5102633cb2602', 1420], medium: ['8f5448d2489602b4', 1691], high: ['1daf2ba0f764e4a2', 1786] },
+  'P1-005': { base: ['4102c17818903638', 524], low: ['a3cb4456d176a260', 1408], medium: ['3d55a3099bee2979', 1718], high: ['21a3446b3838621d', 1811] },
+};
+
+// Exact four-field fingerprints for the 2026-10-14 v5 quality-fix baseline.
+// Only a complete match upgrades to today's defaults; even a one-character
+// designer edit keeps the profile custom.
+const OCTOBER_14_BEFORE_QUALITY_FIX_PROFILE_FINGERPRINTS: Record<string, Record<NpcSupportPromptTier | 'base', readonly [hash: string, length: number]>> = {
+  'P1-001': { base: ['1446fb6b90170857', 517], low: ['efefb2db62c7ad2d', 238], medium: ['462582aac46c82f8', 242], high: ['1282c83b2a773561', 255] },
+  'P1-002': { base: ['1591a46ee35642f0', 558], low: ['2e8000684f161a4e', 229], medium: ['2a59bc67ec0b6995', 245], high: ['a3fde572c5a2dd38', 257] },
+  'P1-003': { base: ['27a56a1ddb7897a9', 542], low: ['33a983553af6db01', 240], medium: ['42953270efdb2f00', 247], high: ['4ace069deaa8ad71', 264] },
+  'P1-004': { base: ['1ce43e1665cdf304', 531], low: ['a576be856d91f183', 236], medium: ['ff94d4cba3a0553d', 244], high: ['89c7b5f39f43c6cf', 252] },
+  'P1-005': { base: ['9a17d14d1260d0a1', 535], low: ['973ce2d23937e054', 231], medium: ['1d708a3cfdfc2a6c', 250], high: ['a360a748ec6e08a0', 263] },
+};
+
+// Exact fingerprints of the saved, complete 2026-10-14 customer and channel
+// defaults. Per-field matching means a designer edit is never overwritten.
+const CUSTOMER_DEFAULT_PROMPT_FINGERPRINTS: readonly (readonly [hash: string, length: number])[] = [
+  ['51d964858d8b8f11', 1822],
+  // Frozen v5 customer default from before the 2026-10-14 quality fix.
+  ['9375ce4205a880ce', 1643],
+  // The exact CUSTOMER_PROMPT shipped by commit 81a975fb6, retained in the
+  // fixture because older revision-5 projects can still persist this value.
+  ['333814893eebc7ad', 1183],
+];
+const OCTOBER_14_BEFORE_NATURAL_DIALOGUE_CHANNEL_MODIFIER_FINGERPRINTS: Record<string, readonly [hash: string, length: number]> = {
+  email: ['8ac01782f5e7ff76', 28],
+  wechat: ['22f1c097f90ba6ef', 25],
+  work_phone: ['45bbb2b27bb5c600', 36],
+  visit: ['d961c847fc13620d', 28],
+  wechat_request: ['8b647c0daff31829', 33],
+  direct_visit: ['1aeb55a3043ccc25', 35],
+  scheduled_visit: ['48759e5d1a24f2af', 39],
+  referral: ['02bf4559030c4f2f', 42],
+};
+const OCTOBER_14_BEFORE_NATURAL_DIALOGUE_NPC_CHANNEL_EXCEPTION_FINGERPRINTS: Record<string, Record<string, readonly [hash: string, length: number]>> = {
+  'P1-001': {
+    email: ['b5bba55544aafce1', 61],
+    wechat: ['c31f97073fa2a305', 55],
+    work_phone: ['6b73f34d864ac7ab', 56],
+    visit: ['994bc113c4f217e3', 65],
+    wechat_request: ['5fe5b3a956c347a9', 55],
+    direct_visit: ['36d21ca546b63d73', 48],
+    scheduled_visit: ['339e10693b09046b', 60],
+  },
+  'P1-002': {
+    email: ['f1bb696c7043a9de', 32],
+    visit: ['8c832982ff24c480', 27],
+  },
+  'P1-003': {
+    email: ['689e80d94ec8cb3f', 40],
+    visit: ['9b00e790e12a939a', 26],
+  },
+  'P1-004': {
+    wechat: ['efde07758b0bb7df', 62],
+    visit: ['232b3a25e7a6e6bb', 57],
+  },
+  'P1-005': {
+    email: ['cd756442f04deefa', 33],
+    wechat: ['81066b3f74e04bd3', 30],
+  },
+};
+
 function promptFingerprint(value: string): string {
   let first = 0x811c9dc5;
   let second = 0x9e3779b9;
@@ -131,7 +201,9 @@ function hasLegacyDefaultProfile(npcId: string, value: NpcRolePrompt | undefined
   const octoberFingerprints = OCTOBER_08_PRE_REFRESH_PROFILE_FINGERPRINTS[npcId];
   const octoberBeforeTierScenariosFingerprints = OCTOBER_08_BEFORE_TIER_SCENARIOS_PROFILE_FINGERPRINTS[npcId];
   const octoberBeforeShortRepliesFingerprints = OCTOBER_12_BEFORE_SHORT_REPLIES_PROFILE_FINGERPRINTS[npcId];
-  if (!legacyFingerprints && !septemberFingerprints && !octoberFingerprints && !octoberBeforeTierScenariosFingerprints && !octoberBeforeShortRepliesFingerprints) return false;
+  const octoberBeforeNaturalDialogueFingerprints = OCTOBER_14_BEFORE_NATURAL_DIALOGUE_PROFILE_FINGERPRINTS[npcId];
+  const octoberBeforeQualityFixFingerprints = OCTOBER_14_BEFORE_QUALITY_FIX_PROFILE_FINGERPRINTS[npcId];
+  if (!legacyFingerprints && !septemberFingerprints && !octoberFingerprints && !octoberBeforeTierScenariosFingerprints && !octoberBeforeShortRepliesFingerprints && !octoberBeforeNaturalDialogueFingerprints && !octoberBeforeQualityFixFingerprints) return false;
   if (typeof value === 'string') return Boolean(legacyFingerprints && matchesLegacyFingerprint(value, legacyFingerprints.base));
   if (!value) return false;
   const matchesProfile = (fingerprints: Record<NpcSupportPromptTier | 'base', readonly [hash: string, length: number]> | undefined) => fingerprints
@@ -144,7 +216,9 @@ function hasLegacyDefaultProfile(npcId: string, value: NpcRolePrompt | undefined
     || matchesProfile(septemberFingerprints)
     || matchesProfile(octoberFingerprints)
     || matchesProfile(octoberBeforeTierScenariosFingerprints)
-    || matchesProfile(octoberBeforeShortRepliesFingerprints),
+    || matchesProfile(octoberBeforeShortRepliesFingerprints)
+    || matchesProfile(octoberBeforeNaturalDialogueFingerprints)
+    || matchesProfile(octoberBeforeQualityFixFingerprints),
   );
 }
 
@@ -232,6 +306,7 @@ export function composeNpcRolePrompt(
   const profile = normalizeNpcRolePrompt(prompt);
   const tier = supportPromptTier(support, thresholds);
   return [
+    NPC_NATURAL_DIALOGUE_RULES,
     stripLegacySupportRules(profile.base),
     profile[tier],
     pleasantnessWordingRule(pleasantness),
@@ -297,9 +372,29 @@ export function normalizeProjectOnePromptConfig(value: unknown): ProjectOnePromp
   if (!parsed.success) return structuredClone(DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
   return {
     ...parsed.data,
+    liveCustomerPrompt: CUSTOMER_DEFAULT_PROMPT_FINGERPRINTS.some((fingerprint) => matchesLegacyFingerprint(parsed.data.liveCustomerPrompt, fingerprint))
+      ? DEFAULT_PROJECT_ONE_PROMPT_CONFIG.liveCustomerPrompt
+      : parsed.data.liveCustomerPrompt,
     supportTierThresholds: parsed.data.supportTierThresholds ?? { ...DEFAULT_NPC_SUPPORT_TIER_THRESHOLDS },
     npcRolePrompts: Object.fromEntries(
       Object.entries(parsed.data.npcRolePrompts).map(([npcId, prompt]) => [npcId, normalizeNpcRolePromptForNpc(npcId, prompt)]),
+    ),
+    channelModifiers: Object.fromEntries(
+      Object.entries(parsed.data.channelModifiers).map(([channelId, modifier]) => {
+        const expected = OCTOBER_14_BEFORE_NATURAL_DIALOGUE_CHANNEL_MODIFIER_FINGERPRINTS[channelId];
+        const currentDefault = DEFAULT_PROJECT_ONE_PROMPT_CONFIG.channelModifiers[channelId];
+        return [channelId, expected && currentDefault && matchesLegacyFingerprint(modifier, expected) ? currentDefault : modifier];
+      }),
+    ),
+    npcChannelExceptions: Object.fromEntries(
+      Object.entries(parsed.data.npcChannelExceptions).map(([npcId, channels]) => [
+        npcId,
+        Object.fromEntries(Object.entries(channels).map(([channelId, exception]) => {
+          const expected = OCTOBER_14_BEFORE_NATURAL_DIALOGUE_NPC_CHANNEL_EXCEPTION_FINGERPRINTS[npcId]?.[channelId];
+          const currentDefault = DEFAULT_PROJECT_ONE_PROMPT_CONFIG.npcChannelExceptions[npcId]?.[channelId];
+          return [channelId, expected && currentDefault && matchesLegacyFingerprint(exception, expected) ? currentDefault : exception];
+        })),
+      ]),
     ),
   };
 }
