@@ -87,6 +87,7 @@ function omittedPath(relative) {
   const parts = normalizeEntry(relative).split('/');
   if (parts.some((part) => omittedDirectory.test(part))) return 'runtime/cache/generated directory';
   const base = parts.at(-1) ?? '';
+  if (base.startsWith('~$')) return 'temporary Office lock file';
   if (base.toLowerCase() === '.env.example') return null;
   if (omittedFile.test(base)) return 'environment, credential, or transient file';
   return null;
