@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import {
-  CUSTOMER_ACTIVITY_TYPES,
+  HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD,
+  ORGANIZATION_CUSTOMER_ACTIVITY_TYPES,
   RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS,
-  type CustomerActivityType,
   type OrganizationActivityThreshold,
 } from '../src/lib/game/customer-activities';
 import {
   buildOrganizationActivityThreshold,
+  buildSingleCustomerActivityThreshold,
   parseCustomerActivityDecisionConfigWrite,
   parseCustomerActivityThreshold,
   type OrganizationActivityThresholdForm,
@@ -78,10 +79,16 @@ const invalidGlobal = validForm();
 invalidGlobal.minimumPleasantness = '100.1';
 assert.equal(buildOrganizationActivityThreshold(invalidGlobal), null);
 
-const completeThresholds = Object.fromEntries(CUSTOMER_ACTIVITY_TYPES.map((type) => [
+assert.deepEqual(buildSingleCustomerActivityThreshold({ supportMin: '0', pleasantnessMin: '100' }), { supportMin: 0, pleasantnessMin: 100 });
+assert.equal(buildSingleCustomerActivityThreshold({ supportMin: '15', pleasantnessMin: '101' }), null);
+
+const completeThresholds = {
+  ...Object.fromEntries(ORGANIZATION_CUSTOMER_ACTIVITY_TYPES.map((type) => [
   type,
   { organization: buildOrganizationActivityThreshold(validForm()) },
-])) as Record<CustomerActivityType, { organization: NonNullable<ReturnType<typeof buildOrganizationActivityThreshold>> }>;
+  ])),
+  hospitality: { ...HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD },
+} as const;
 const completeNumeric = { mode: 'numeric', thresholds: completeThresholds } as const;
 assert.deepEqual(parseCustomerActivityDecisionConfigWrite(completeNumeric), completeNumeric);
 assert.equal(parseCustomerActivityDecisionConfigWrite({
@@ -106,21 +113,30 @@ function thresholdToForm(threshold: OrganizationActivityThreshold): Organization
   };
 }
 
-const recommendedThresholds = Object.fromEntries(CUSTOMER_ACTIVITY_TYPES.map((type) => {
+const recommendedThresholds = Object.fromEntries(ORGANIZATION_CUSTOMER_ACTIVITY_TYPES.map((type) => {
   const form = thresholdToForm(RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS[type]);
   const built = buildOrganizationActivityThreshold(form);
   assert.ok(built, `${type} recommendation is valid in the editor`);
   assert.deepEqual(built, RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS[type], `${type} recommendation survives form editing`);
   return [type, { organization: built }];
-})) as Record<CustomerActivityType, { organization: OrganizationActivityThreshold }>;
-assert.ok(parseCustomerActivityDecisionConfigWrite({ mode: 'numeric', thresholds: recommendedThresholds }), 'all three recommended team configurations can be written');
+})) as Record<(typeof ORGANIZATION_CUSTOMER_ACTIVITY_TYPES)[number], { organization: OrganizationActivityThreshold }>;
+const recommendedConfig = { ...recommendedThresholds, hospitality: { ...HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD } };
+assert.ok(parseCustomerActivityDecisionConfigWrite({ mode: 'numeric', thresholds: recommendedConfig }), 'all three team configurations and hospitality threshold can be written');
 
 const legacyThresholds = {
   technical_meeting: { supportMin: 55, pleasantnessMin: 50 },
   case_site_visit: { supportMin: 60, pleasantnessMin: 55 },
   company_visit: { supportMin: 65, pleasantnessMin: 60 },
+  hospitality: { ...HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD },
 };
 assert.equal(parseCustomerActivityDecisionConfigWrite({ mode: 'numeric', thresholds: legacyThresholds }), null, 'new numeric writes reject legacy single-person thresholds');
 assert.deepEqual(parseCustomerActivityDecisionConfigWrite({ mode: 'ai', thresholds: legacyThresholds }), { mode: 'ai', thresholds: legacyThresholds }, 'AI mode can retain legacy values');
+const legacyAiWithoutHospitality = { ...legacyThresholds } as Record<string, unknown>;
+delete legacyAiWithoutHospitality.hospitality;
+assert.deepEqual(
+  parseCustomerActivityDecisionConfigWrite({ mode: 'ai', thresholds: legacyAiWithoutHospitality }),
+  { mode: 'ai', thresholds: { ...legacyAiWithoutHospitality, hospitality: HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD } },
+  'older AI config writes receive the default single-customer hospitality thresholds',
+);
 
-console.log('客户活动团队门槛表单与写入校验回归通过');
+console.log('客户活动团队及单客户门槛表单与写入校验回归通过');

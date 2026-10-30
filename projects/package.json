@@ -54,6 +54,9 @@
     "test:multiplayer-e2e": "tsx scripts/test-multiplayer-e2e.ts",
     "test:single-save-e2e": "tsx scripts/test-single-save-e2e.ts",
     "test:metrics": "tsx scripts/test-metrics.ts",
+    "test:system-evaluation": "tsx scripts/test-system-evaluation.ts",
+    "test:system-evaluation-judge": "tsx scripts/test-system-evaluation-judge.ts",
+    "test:system-evaluation-ui": "tsx scripts/test-system-evaluation-ui.ts",
     "test:customer-activities": "tsx scripts/test-customer-activities.ts",
     "test:preview-customer-activities": "tsx scripts/test-preview-customer-activities.ts",
     "test:formal-customer-activities": "tsx scripts/test-formal-customer-activities.ts",
@@ -94,11 +97,13 @@
     "@radix-ui/react-toggle": "^1.1.10",
     "@radix-ui/react-toggle-group": "^1.1.11",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@sentry/node": "11.9.0",
     "@supabase/supabase-js": "2.95.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
+    "deepeval": "0.9.23",
     "dotenv": "^17.2.3",
     "drizzle-kit": "^0.31.8",
     "drizzle-orm": "^0.45.1",
@@ -143,5 +148,10 @@
   "engines": {
     "node": ">=20.0.0",
     "pnpm": ">=9.0.0 <10.0.0"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "deepeval@0.9.23": "patches/deepeval@0.9.23.patch"
+    }
   }
 }

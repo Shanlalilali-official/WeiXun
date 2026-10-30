@@ -19,13 +19,14 @@ import {
   submitCustomerActivityPlan,
   toPublicCustomerActivityTask,
   type CustomerActivityFeasibilityDecision,
+  type CustomerActivityConversationMessage,
   type CustomerActivityOrganizationMember,
   type CustomerActivityProposalCandidate,
   type CustomerActivityRelationshipSnapshot,
   type ActivityDecisionConfig,
   type OrganizationActivityThreshold,
 } from '../src/lib/game/customer-activities';
-import { CustomerActivityDecisionError, CustomerActivityDetectionError, decideCustomerActivityFeasibility } from '../src/lib/ai/customer-activities';
+import { CustomerActivityDecisionError, CustomerActivityDetectionError, decideCustomerActivityFeasibility, detectCustomerActivityProposals } from '../src/lib/ai/customer-activities';
 import { processPendingCustomerActivityDetections } from '../src/lib/game/repository';
 import {
   applyCustomerActivityEvaluation,
@@ -911,6 +912,124 @@ async function testRoleAwareActivityReplyGuard() {
   assert.equal(calls, 2, 'a definite agreement clause is corrected once despite a later caveat');
 }
 
+async function testHospitalityFormalServiceFlow() {
+  const targetNpcId = 'P1-002' as const;
+  const decisionConfig: ActivityDecisionConfig = { revision: 21, mode: 'ai', thresholds: {} };
+  const plan = '先确认客户的用餐与饮酒偏好，选择安静合规的场合，控制交流时长；围绕项目问题交流，不劝酒、不作采购承诺，会后发送简短纪要并确认下一步。';
+  const salesMessages: CustomerActivityConversationMessage[] = [
+    { messageId: 'formal-hospitality-sales', speaker: 'sales', text: '赵老师，周末要不要喝酒？我也想听听您对项目安排的想法。' },
+    { messageId: 'formal-hospitality-customer', speaker: 'customer', text: '我先结合工作安排考虑一下，之后再给您反馈。' },
+  ];
+
+  async function runDetection(
+    key: string,
+    messages: CustomerActivityConversationMessage[],
+    support: number,
+    pleasantness: number,
+  ) {
+    const initial = createProjectOneState();
+    const npcAttitudes = Object.fromEntries(CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS.map((npcId) => [
+      npcId,
+      { ...initial.npcAttitudes[npcId], support: npcId === targetNpcId ? support : 0, pleasantness: npcId === targetNpcId ? pleasantness : 0 },
+    ])) as typeof initial.npcAttitudes;
+    const queued = queueCustomerActivityDetection({ ...initial, npcAttitudes }, {
+      conversationId: `email:${key}`,
+      npcId: targetNpcId,
+      messages,
+      decisionConfig,
+    });
+    let storedState = queued;
+    let decisionCount = 0;
+    const result = await processPendingCustomerActivityDetections(`session-${key}`, 'test-user', {
+      load: async () => ({ id: `session-${key}`, userId: 'test-user', state: storedState }),
+      detect: async (args) => detectCustomerActivityProposals(args, {
+        invoker: async () => {
+          if (messages === salesMessages) return JSON.stringify({ activities: [] });
+          const customerProposal = messages.find((message) => message.speaker === 'customer' && /吃饭|聚餐|饭局|喝酒/u.test(message.text));
+          const salesConfirmation = messages.find((message) => message.speaker === 'sales' && /吃饭|聚餐|饭局|喝酒/u.test(message.text));
+          assert.ok(customerProposal && salesConfirmation, 'the customer proposal and sales confirmation are present in the ended conversation');
+          return JSON.stringify({ activities: [{
+            type: 'hospitality',
+            initiator: 'customer',
+            proposal: { messageId: customerProposal.messageId, quote: '一起吃个饭' },
+            response: { messageId: salesConfirmation.messageId, quote: '可以，我愿意一起吃饭', kind: 'explicit_acceptance' },
+            finalStatus: 'active',
+            finalOutcome: { messageId: salesConfirmation.messageId, quote: salesConfirmation.text },
+            confidence: 0.99,
+          }] });
+        },
+      }),
+      decide: async (candidate, frozenSnapshot, frozenConfig) => {
+        decisionCount += 1;
+        return decideCustomerActivityFeasibility(candidate, frozenSnapshot, frozenConfig, {
+          invoker: async () => { throw new Error('hospitality uses its numeric gate under global AI mode'); },
+          jevInvoker: async () => { throw new Error('hospitality must not use Jev'); },
+        });
+      },
+      now: () => 310_000,
+      commit: async (args) => {
+        storedState = { ...args.state, version: storedState.version + 1 };
+        return { state: storedState, result: args.result ?? {}, replayed: false };
+      },
+    });
+    assert.equal(decisionCount, result.state.customerActivities.decisions.length,
+      'each detected hospitality candidate records one authoritative numeric decision');
+    return { result, get state() { return storedState; } };
+  }
+
+  const allowed = await runDetection('formal-hospitality-allowed', salesMessages, 15, 55);
+  assert.equal(allowed.state.customerActivities.tasks.length, 1,
+    'target metrics at 15/55 pass even when the other four organization members are 0/0');
+  const task = allowed.state.customerActivities.tasks[0];
+  assert.equal(task.type, 'hospitality');
+  assert.equal(task.npcId, targetNpcId);
+  assert.equal(task.decisionMode, 'numeric');
+  assert.equal(allowed.state.customerActivities.decisions[0]?.mode, 'numeric',
+    'global AI configuration cannot bypass the hospitality numeric gate');
+  assert.equal(allowed.state.customerActivityDetectionQueue.length, 0,
+    'the ended conversation is consumed after matching');
+
+  let planning = startCustomerActivityPlanning(allowed.state.customerActivities, task.id, 311_000);
+  const saved = saveCustomerActivityDraft(planning, task.id, plan, 312_000);
+  assert.equal(saved.state.tasks[0]?.draft, plan, 'the player strategy draft is saved by the formal activity domain');
+  const submitted = submitCustomerActivityPlan(saved.state, task.id, 313_000);
+  assert.equal(submitted.tasks[0]?.status, 'submitted');
+  assert.equal(submitted.tasks[0]?.draft, plan);
+  const beforeEvaluation = { ...allowed.state, customerActivities: submitted };
+  const evaluated = applyCustomerActivityEvaluation(beforeEvaluation, task.id, evaluation, 314_000);
+  assert.equal(evaluated.customerActivities.tasks[0]?.evaluation?.overallEvaluation, evaluation.overallEvaluation);
+  assert.deepEqual(applyCustomerActivityEvaluation(evaluated, task.id, evaluation, 315_000), evaluated,
+    'formal activity settlement is idempotent');
+  const publicState = toPlayerVisibleGameState(evaluated);
+  assert.equal(JSON.stringify(publicState).includes('relationshipSnapshot'), false,
+    'the formal player projection hides the frozen relationship snapshot');
+  assert.equal(JSON.stringify(publicState).includes('supportMin'), false,
+    'the formal player projection hides numeric hospitality thresholds');
+
+  const belowSupport = await runDetection('formal-hospitality-low-support', salesMessages, 14, 55);
+  assert.equal(belowSupport.state.customerActivities.tasks.length, 0);
+  assert.equal(belowSupport.state.customerActivities.decisions[0]?.decision, 'reject',
+    'a target support score below 15 blocks the hospitality event');
+  const belowPleasantness = await runDetection('formal-hospitality-low-pleasantness', salesMessages, 15, 54);
+  assert.equal(belowPleasantness.state.customerActivities.tasks.length, 0);
+  assert.equal(belowPleasantness.state.customerActivities.decisions[0]?.decision, 'reject',
+    'a target pleasantness score below 55 blocks the hospitality event');
+
+  const customerMessages: CustomerActivityConversationMessage[] = [
+    { messageId: 'formal-hospitality-customer-proposal', speaker: 'customer', text: '我们周五项目组聚餐，您要不要一起吃个饭？' },
+    { messageId: 'formal-hospitality-sales-confirmation', speaker: 'sales', text: '可以，我愿意一起吃饭。' },
+  ];
+  const customerConfirmed = await runDetection('formal-hospitality-customer-confirmed', customerMessages, 15, 55);
+  assert.equal(customerConfirmed.state.customerActivities.tasks.length, 1,
+    'a customer-initiated proposal becomes an event after sales explicitly confirms');
+  assert.equal(customerConfirmed.state.customerActivities.tasks[0]?.initiator, 'customer');
+  assert.equal(customerConfirmed.state.customerActivities.tasks[0]?.responseKind, 'explicit_acceptance');
+  assert.equal(customerConfirmed.state.customerActivities.tasks[0]?.decisionMode, 'numeric',
+    'customer confirmation still runs the target-customer threshold');
+  planning = startCustomerActivityPlanning(customerConfirmed.state.customerActivities, customerConfirmed.state.customerActivities.tasks[0].id, 320_000);
+  assert.equal(planning.tasks[0]?.status, 'planning');
+}
+
 async function main() {
   await testSnapshotFreezeAndQueueDecision();
   await testFrozenWholeOrganizationGate();
@@ -919,6 +1038,7 @@ async function main() {
   testServerClockDeadlineAndNoFreeProjectTime();
   testEvaluationOnceAndPublicProjection();
   await testRoleAwareActivityReplyGuard();
+  await testHospitalityFormalServiceFlow();
   console.log('Formal customer activity queue, snapshot gating, planning timer, settlement idempotency and privacy tests passed.');
 }
 

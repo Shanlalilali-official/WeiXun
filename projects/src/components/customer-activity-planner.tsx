@@ -26,6 +26,7 @@ const ACTIVITY_LABELS: Record<CustomerActivityType, string> = {
   technical_meeting: '技术交流会',
   case_site_visit: '案例现场参观',
   company_visit: '客户参观我们公司',
+  hospitality: '吃饭或喝酒邀约',
 };
 
 function epoch(value: unknown): number | null {
@@ -444,6 +445,7 @@ export function CustomerActivityPlanner({ sessionId, refreshSignal = 0, onGameSt
   const remaining = deadlineAt === null ? CUSTOMER_ACTIVITY_PLANNING_MS : deadlineAt - now;
   const canEdit = active.status === 'planning' && remaining > 0 && action !== 'submit';
   const title = ACTIVITY_LABELS[active.type] ?? '客户活动';
+  const isHospitality = active.type === 'hospitality';
   const stateTitle = active.status === 'pending'
     ? `活动提议已匹配：「${title}」`
     : active.status === 'planning'
@@ -481,7 +483,7 @@ export function CustomerActivityPlanner({ sessionId, refreshSignal = 0, onGameSt
                 <strong className="font-mono text-2xl tabular-nums text-amber-950" aria-live="off">{formatRemaining(remaining)}</strong>
               </div>
               <label className="block">
-                <span className="mb-2 block text-xs font-bold text-slate-700">活动方案</span>
+                <span className="mb-2 block text-xs font-bold text-slate-700">{isHospitality ? '邀约策略 / 方案' : '活动方案'}</span>
                 <textarea
                   value={draft}
                   onChange={(event) => { draftRef.current = event.target.value; dirtyRef.current = true; setSaved(false); setDraft(event.target.value); }}
@@ -489,7 +491,9 @@ export function CustomerActivityPlanner({ sessionId, refreshSignal = 0, onGameSt
                   disabled={!canEdit}
                   maxLength={12_000}
                   rows={9}
-                  placeholder="结合客户已表达的需求，描述活动目标、参与人员、议程或参观安排、准备材料以及活动后的跟进。未确认的时间和人员请写明拟议安排或确认方式。"
+                  placeholder={isHospitality
+                    ? '结合客户偏好，说明邀约目的、餐叙或小酌场合、地点与时间的备选安排、预算与礼貌边界、如何尊重对方选择，以及活动后的业务跟进；未确认事项写明商量方式。'
+                    : '结合客户已表达的需求，描述活动目标、参与人员、议程或参观安排、准备材料以及活动后的跟进。未确认的时间和人员请写明拟议安排或确认方式。'}
                   className="w-full resize-y rounded-xl border border-slate-300 bg-white p-4 text-sm leading-6 text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-100"
                 />
                 <span className="mt-1 flex justify-between text-[10px] text-slate-400"><span>{action === 'save' ? '正在保存草稿…' : saved ? '草稿已保存' : '草稿保存中…'}{active.status === 'planning' && ' · 每项最多 12,000 字'}</span><span>{draft.length}/12,000</span></span>

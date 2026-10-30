@@ -1,5 +1,43 @@
 # 动态问题台账
 
+## HANDOVER-001 Windows Storage 备份路径兼容
+
+- 状态：Resolved；最后检查：2026-10-30；仅交接导出工具缺陷。
+- 首次只读导出27表672行成功，但30个原Storage key含冒号，Windows创建目录失败。源对象未修改。
+- projects/scripts/handover-export.mjs改为以原key的SHA-256生成本地文件名，manifest保留原path和本地file；恢复工具按清单还原。新目录完整重导出35对象、65,274,220字节，错误0；主线程verify-only复核计数/大小/SHA-256通过。
+- 边界：交付REST逻辑副本不含私有schema/服务端平台设置，未做目标环境真实恢复；详见docs/handover/DELIVERY_REPORT.md与DATA_RESTORE.md。既有未解决问题继续保留。
+
+## TEST-LEGACY-001 旧UI契约断言与现有竞品入口不符
+
+- 状态：Open；最后检查：2026-10-29；本批附加回归发现，非饭局事件实现范围。
+- scripts/test-legacy-ui-contracts.ts 首条要求game/page.tsx不含showCompetitors，但当前及HEAD版本已有可点击的竞品资料入口及该状态；该文件本批未修改。专项因此失败，不能声称全部仓库测试通过。
+- 下一步：独立核对旧测试的产品预期，再调整断言；本批不删除已有竞品功能或放宽测试。
+
+## ACTIVITY-013 吃饭/喝酒邀约策略事件
+
+- 状态：Resolved（本地实现）；最后检查：2026-10-29。来源：用户新增需求。
+- 原有三类组织活动匹配/策划/结算已复用；新增hospitality类型、单目标门槛及后台/玩家UI已完成。
+- 默认支持15/愉悦55同时达标，后台可调；复用共享domain/AI、正式/预览服务、invitation-intent、两端策划UI。
+- 根实际diff、六活动专项、七相关回归、最终tsc/完整lint/Next+tsup构建和harness通过；证据harness/evidence/hospitality-2026-10-29.md。新功能真实AI/浏览器/远程部署未验收，不声称已完成。
+
+## ACTIVITY-OBS-001 · 2026-10-27 张建国个人达标但未弹策划框 · Resolved（诊断符合现有团队规则）
+
+本人当前session 2ca1e658 v31，最后张拜访3轮正常player_farewell。结束后诊断依次conversation_queued/candidate_accepted/candidates_count1/threshold_decision reject，reason团队当前关系状态尚未达到推进条件；没有task、没有pending。冻结张49/79，其余0/50；实际配置numeric rev3要求整体路径且至少两位不同成员达标，故个人达标不能触发。核查活动源码/原型HTML没有本批diff，preview主流程仅函数export。用户原话已识别，不属于代码回退。未修改门槛/数值或存档，不擅自增加拒绝提示等范围。详见customer-activities-2026-10-27/READBACK.md。
+
+## NET-001 · 2026-10-27 Supabase直连TLS被重置 · Open（原因已缩小，未改网络设置）
+
+用户频繁遇启动SUPABASE_NETWORK_ERROR而其他应用正常。根只读捕获实际fetch.cause：ECONNRESET，Client network socket disconnected before secure TLS connection was established，约176–234ms即失败，非10秒超时。A/B/A：直连16次全失败；仅诊断子进程NODE_USE_ENV_PROXY=1+HTTP(S)_PROXY=http://127.0.0.1:7897，16次health_check鉴权查询全200；再直连16次全失败。地址/密钥/查询一致，当前Windows系统代理关闭但7897本地代理监听；OS lookup可返回IPv4，resolve4另有ECONNREFUSED，不能据此直接认定DNS为唯一原因。定位到直连/代理路线差异，尚未识别具体重置节点。未改系统代理/项目配置、未启动已停止的本地服务。下一步可由用户在启动终端显式使用本地代理并保持代理运行；若实施持久化方案需限定项目并保留可选性，不能全局重试写请求。证据supabase-network-2026-10-27.md。
+
+## EVAL-002 · 2026-10-27 正常提前结束被评测误报失败 · Resolved（本地）
+
+实证：根只读浏览器5000报告d64b6af4，首轮结束原因npc_time_constraint，第二轮NO_ACTIVE_VISIT_FOR_NPC。当前runner没有成功轮后结束检查，phase partial导致未调DeepEval。修复目标正常结束即评分实际完成轮，报告披露未执行计划；真实失败仍标partial/error。验收须覆盖首轮/多轮结束、不结束、真实异常和源快照不变；不修改游戏会面规则。此前EVAL-001本地离线验收保留，不作为本次真实运行成功的证据。
+
+结果：system-evaluation.ts成功轮后检查权威meeting.ended，同NPC即记录termination并停止后续、继续judge；contract/page公开原因/完成/计划/跳过数。根回归、SDK、预览、类型/lint/build通过，5000/5010更新，5000HTTP200/DB健康/build一致。源快照不变，真正生成失败仍不可通过。没有重跑用户付费请求，真实修后AI结果待用户再次运行。证据early-end-fix.md。
+
+## EVAL-001 · 2026-10-27 设计师系统链路评测 · Resolved（本地首版）
+
+用户要求真实状态接入与设计师入口。已在projects新增system-evaluation contracts/service/judge/API/page与测试中心卡片，复用五人预览状态驱动链路、本人快照隔离副本与DeepEval四项评分。根三新专项+五项回归/类型/完整lint/production build/浏览器mock及实际HTTP401/403/200/404通过，DB结构配置只读核验；独立Review配置漂移P2已修并复审。证据system-evaluation-2026-10-27/VERIFICATION.md。仅关闭本地首版功能缺口；真实付费AI质量、正式多人全链路、其它渠道/远程部署未验证，不扩称覆盖。熟悉度无独立数值，依据真实历史/有效接触次数/工作记忆。
+
 - ACTIVITY-TIMER-011（P1，Resolved，当前五人预览本地，2026-10-22）：用户未调时间，实际pending时已有00:00；原仅planning五分钟暂停，阻塞弹窗仍消耗项目预算。HTML新增独立UI暂停marker覆盖匹配/策划/评价/未读结果，最后确认才恢复now；刷新离线、队列、锚点cap与拜访轮次扣时保护已回归。主线程五专项/tsc/lint/build、actual diff及独立Review通过，5001新静态HTML HTTP200确认。未重设当前0预算。调时旧marker回放为另一个确认缺陷同批保护，不倒推为本次原因。证据clock-popup-2026-10-22.md。
 
 - ACTIVITY-TIMER-012（P2，Open，2026-10-22）：正式/多人服务端活动计时目前按提交或deadline恢复（state.ts resumeProjectTimerAfterCustomerActivity），尚无结果确认暂停持久契约；当前预览全UI暂停修复不直接替代服务器权威计时。后续须独立设计确认事件/事务及多人一致性，不在此预览批次擅自扩展，未做真实正式UI复测。

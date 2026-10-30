@@ -15,7 +15,7 @@ import {
   type CustomerActivityReplySemanticInvoker,
   type CustomerActivityReplySemanticReview,
 } from '@/lib/ai/customer-activity-reply';
-import { isCustomerActivityReplyContext } from '@/lib/game/invitation-intent';
+import { isCustomerActivityReplyContext, isHospitalityCustomerActivityContext } from '@/lib/game/invitation-intent';
 import {
   decideCustomerActivityFeasibility,
   detectCustomerActivityProposals,
@@ -442,7 +442,7 @@ export type PreviewJevInvoker = JevInvoker;
  * without importing/configuring the external client.  The module is provided
  * by the Jev integration and intentionally has no browser-facing dependency.
  */
-function previewTaskIdForRequest(request: PreviewJevRequest): JevDesignerTaskId | undefined {
+export function previewTaskIdForRequest(request: PreviewJevRequest): JevDesignerTaskId | undefined {
   // Every preview state is labelled by the code-owned `jevState` helper. The
   // label selects a configuration class but does not let browser input choose
   // a task, question, type, or criterion.
@@ -691,8 +691,9 @@ type StructuredAiQualityGate<T> = {
   semanticReview?: (value: T, attempt: number) => Promise<CustomerActivityReplySemanticReview>;
 };
 
-function safeNpcReplyFallback(npcId: PreviewNpcId, channel: string, activityProposal = false): string {
+function safeNpcReplyFallback(npcId: PreviewNpcId, channel: string, activityProposal = false, hospitality = false): string {
   if (activityProposal) {
+    if (hospitality) return '这个邀约我先记下了，会结合工作安排和相关边界考虑，再给您反馈。';
     return PREVIEW_NPCS[npcId].level === '高层'
       ? '这个建议我先记下了，会结合项目情况考虑，必要时和公司内部商量，再给您反馈。'
       : '这个建议我先记下了，会先向上级汇报，再给您反馈。';
@@ -722,8 +723,8 @@ function isCustomerActivityProposalText(state: PreviewServerState, npcId: Previe
   }));
   return isCustomerActivityReplyContext(text, recentConversation);
 }
-function customerActivityReplyGuide(npcId: PreviewNpcId): string {
-  return customerActivityReplyInstruction(PREVIEW_NPCS[npcId].level);
+function customerActivityReplyGuide(npcId: PreviewNpcId, hospitality = false): string {
+  return customerActivityReplyInstruction(PREVIEW_NPCS[npcId].level, hospitality);
 }
 
 function npcSpeakerIdentityQualityGate<T extends { content: string }>(
@@ -735,14 +736,17 @@ function npcSpeakerIdentityQualityGate<T extends { content: string }>(
   reviewInvoker?: CustomerActivityReplySemanticInvoker,
 ): StructuredAiQualityGate<T> {
   const npc = PREVIEW_NPCS[npcId];
+  const hospitality = Boolean(reviewContext && isHospitalityCustomerActivityContext(
+    reviewContext.playerMessage, reviewContext.recentConversation,
+  ));
   return {
     check: (value) => !hasNpcSpeakerIdentityViolation(npcId, value.content)
       && (!activityProposal || !('appointment' in value && value.appointment)),
-    retryInstruction: `发言身份校验失败。NPC 回复校验失败。NPC 回复质量校验失败。当前你扮演的是 ${npc.name}（${npc.title}，人物 ID ${npcId}），正在通过 ${channel} 回复玩家。请以该 NPC 第一人称重写，不要称呼自己为“${npc.name}”或“${npc.name.slice(0, 1)}总”，不要自称供应商、乙方、销售、服务商或交付团队，也不要编造事实、承诺、姓名或安排。${activityProposal ? `${customerActivityReplyGuide(npcId)}本轮上下文涉及新提议或尚未确认活动的后续讨论/追问时，仍不得提前接受、确认时间或让销售联系第三人；应由本人按职责考虑/内部商量或向上级汇报，并后续反馈。仅玩家明确撤回、纯历史，或已转到无关话题时，不强迫继续汇报活动。` : ''}只输出符合原 JSON 契约的修正正文。`,
-    fallback: { content: safeNpcReplyFallback(npcId, channel, activityProposal) } as T,
+    retryInstruction: `发言身份校验失败。NPC 回复校验失败。NPC 回复质量校验失败。当前你扮演的是 ${npc.name}（${npc.title}，人物 ID ${npcId}），正在通过 ${channel} 回复玩家。请以该 NPC 第一人称重写，不要称呼自己为“${npc.name}”或“${npc.name.slice(0, 1)}总”，不要自称供应商、乙方、销售、服务商或交付团队，也不要编造事实、承诺、姓名或安排。${activityProposal ? `${customerActivityReplyGuide(npcId, hospitality)}本轮上下文涉及新提议或尚未确认活动的后续讨论/追问时，仍不得提前接受、确认时间或让销售联系第三人；${hospitality ? '由目标客户本人结合工作安排和边界考虑' : '应由本人按职责考虑/内部商量或向上级汇报'}，并后续反馈。仅玩家明确撤回、纯历史，或已转到无关话题时，不强迫继续处理活动。` : ''}只输出符合原 JSON 契约的修正正文。`,
+    fallback: { content: safeNpcReplyFallback(npcId, channel, activityProposal, hospitality) } as T,
     ...(activityProposal ? {
       semanticReview: async (value: T, attempt: number) => {
-        const signal = customerActivityReplySignals(value.content, npc.level)[0] ?? 'disposition';
+        const signal = customerActivityReplySignals(value.content, npc.level, hospitality)[0] ?? 'disposition';
         const context = reviewContext ?? { playerMessage: '' };
         return reviewCustomerActivityReplySemantically({
           id: npcId,
@@ -1833,7 +1837,7 @@ function completeAppointment(state: PreviewServerState, npcId: PreviewNpcId): Pr
   appointment.status = 'completed';
   return { ...appointment };
 }
-function messagePurpose(npcId: PreviewNpcId, channel: string, hasAttachment: boolean, allowReadNoReply: boolean, activityProposal = false): string {
+function messagePurpose(npcId: PreviewNpcId, channel: string, hasAttachment: boolean, allowReadNoReply: boolean, activityProposal = false, hospitality = false): string {
   const channelName = channel === 'email' ? '邮件' : channel === 'wechat' ? '工作微信' : '电话';
   const replyRule = '请通过' + channelName + '回复。输出 {content,invitationStatus,appointment?}。invitationStatus 只能是 none、accepted、rejected、later。'
     + '仅当玩家明确邀约且你接受时使用 accepted，并必须填写 appointment={timeWindow,location,agenda}；其他状态必须省略 appointment。';
@@ -1842,7 +1846,7 @@ function messagePurpose(npcId: PreviewNpcId, channel: string, hasAttachment: boo
       + '邮件和工作微信可选择已读不回。必须输出严格二选一 JSON：回复时 {"responseAction":"reply","content":"非空正文","invitationStatus":"none|accepted|rejected|later","appointment?":{...}}；已读不回时 {"responseAction":"read_no_reply","content":null,"invitationStatus":"none","reasonCode":"natural_closure|no_new_value|repeated_follow_up|not_responsible|current_priority_low|unwilling_to_advance","reasonEvidence":"基于已给上下文的简短证据"}。'
       + '只在自然收尾、无新增价值、重复追问、已明确非本人职责、当前优先级低或当前不愿推进时选择已读不回。职位、低支持度或消息短本身不足以沉默；具体有效新信息必须重新考虑。不得编造忙、开会、出差等事实。已读不回不得确认邀约、承诺、拒绝或披露新线索。涉及合规红线时必须回复明确拒绝，不能已读不回。'
     : replyRule)
-    + (activityProposal ? ` ${customerActivityReplyGuide(npcId)}不要输出 appointment，也不要把这类活动当作普通拜访邀约。` : '')
+    + (activityProposal ? ` ${customerActivityReplyGuide(npcId, hospitality)}不要输出 appointment，也不要把这类活动当作普通拜访邀约。` : '')
     + (hasAttachment ? '玩家附带了材料。若上下文说明未查看，只能知道已收到，不能假设或引用材料正文。' : '没有附件。');
 }
 
@@ -2037,7 +2041,12 @@ async function executeUnsafe(
       }
       const playerMessage = newMessage('player', channel, request.text, attachmentResult);
       const activityProposal = isCustomerActivityProposalText(state, npcId, request.text);
-      const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, channel, promptConfig), recentHistory: [...historyFor(state, npcId), { ...playerMessage, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : undefined }] }, npc: { id: npcId, name: npc.name, title: npc.title, level: npc.level }, channel, playerText: request.text, customerActivityProposal: activityProposal, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : null };
+      const recentActivityConversation = historyFor(state, npcId).slice(-8).map((message) => ({
+        speaker: message.role === 'player' ? 'sales' as const : 'customer' as const,
+        text: message.text,
+      }));
+      const hospitalityActivity = isHospitalityCustomerActivityContext(request.text, recentActivityConversation);
+      const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, channel, promptConfig), recentHistory: [...historyFor(state, npcId), { ...playerMessage, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : undefined }] }, npc: { id: npcId, name: npc.name, title: npc.title, level: npc.level }, channel, playerText: request.text, customerActivityProposal: activityProposal, customerActivityType: activityProposal ? (hospitalityActivity ? 'hospitality' : 'organization_activity') : null, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : null };
       const replyReviewOptions = activityProposal ? {
         context: customerActivityReplyContext(state, npcId, request.text),
         invoker,
@@ -2054,7 +2063,7 @@ async function executeUnsafe(
       let appointmentDraft: AppointmentDraft | undefined;
       if (decision.responseAction === 'reply' && !hardBlocker) {
         const messageOutput = await callStructuredAi(invoker,
-          layeredNpcPrompt(state, npcId, channel, messagePurpose(npcId, channel, Boolean(attachment), false, activityProposal) + ' 只输出正文及可选的预约具体安排，不得输出 responseAction 或 invitationStatus 等决定字段。', promptConfig, true),
+          layeredNpcPrompt(state, npcId, channel, messagePurpose(npcId, channel, Boolean(attachment), false, activityProposal, hospitalityActivity) + ' 只输出正文及可选的预约具体安排，不得输出 responseAction 或 invitationStatus 等决定字段。', promptConfig, true),
           promptPayload, narrativeContentAiOutputSchema, npcSpeakerIdentityQualityGate(
             npcId, channel, activityProposal, replyReviewOptions?.context, replyReviewOptions?.onDiagnostic, invoker,
           ));
@@ -2165,8 +2174,13 @@ async function executeUnsafe(
       }
       const remaining = npc.allowedTasks.filter((task) => !meeting.completedTasks.includes(task));
       const activityProposal = isCustomerActivityProposalText(state, npcId, request.text);
-      const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, 'visit', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npcId, name: npc.name, title: npc.title, level: npc.level }, playerText: request.text, customerActivityProposal: activityProposal, visit: { turn: nextTurn, completedTasks: meeting.completedTasks, remainingTasks: remaining } };
-      const activityGuidance = activityProposal ? ` ${customerActivityReplyGuide(npcId)}` : '';
+      const recentActivityConversation = historyFor(state, npcId).slice(-8).map((message) => ({
+        speaker: message.role === 'player' ? 'sales' as const : 'customer' as const,
+        text: message.text,
+      }));
+      const hospitalityActivity = isHospitalityCustomerActivityContext(request.text, recentActivityConversation);
+      const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, 'visit', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npcId, name: npc.name, title: npc.title, level: npc.level }, playerText: request.text, customerActivityProposal: activityProposal, customerActivityType: activityProposal ? (hospitalityActivity ? 'hospitality' : 'organization_activity') : null, visit: { turn: nextTurn, completedTasks: meeting.completedTasks, remainingTasks: remaining } };
+      const activityGuidance = activityProposal ? ` ${customerActivityReplyGuide(npcId, hospitalityActivity)}` : '';
       const replyReviewOptions = activityProposal ? {
         context: customerActivityReplyContext(state, npcId, request.text),
         invoker,

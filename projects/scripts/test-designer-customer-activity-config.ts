@@ -7,11 +7,12 @@ import {
   createActivityDecisionConfigRepository,
 } from '../src/lib/designer/customer-activity-config-repository';
 import {
-  CUSTOMER_ACTIVITY_TYPES,
+  HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD,
+  ORGANIZATION_CUSTOMER_ACTIVITY_TYPES,
   DEFAULT_ACTIVITY_DECISION_CONFIG,
   RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS,
-  type CustomerActivityType,
 } from '../src/lib/game/customer-activities';
+import type { ActivityDecisionConfig } from '../src/lib/game/customer-activities';
 
 type Row = {
   id: string;
@@ -54,10 +55,13 @@ function fakeDatabase(initial: Row | null = null, readError?: string) {
   return { client, getRow: () => row };
 }
 
-const validThresholds = Object.fromEntries(CUSTOMER_ACTIVITY_TYPES.map((type) => [
-  type,
-  { organization: structuredClone(RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS[type]) },
-])) as Record<CustomerActivityType, { organization: typeof RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS[CustomerActivityType] }>;
+const validThresholds = {
+  ...Object.fromEntries(ORGANIZATION_CUSTOMER_ACTIVITY_TYPES.map((type) => [
+    type,
+    { organization: structuredClone(RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS[type]) },
+  ])),
+  hospitality: { ...HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD },
+} as ActivityDecisionConfig['thresholds'];
 const legacyThresholds = {
   technical_meeting: { supportMin: 55, pleasantnessMin: 50 },
   case_site_visit: { supportMin: 60, pleasantnessMin: 55 },
@@ -113,7 +117,10 @@ async function main() {
   const legacyRow = await createActivityDecisionConfigRepository(() => legacyRowDb.client).load();
   assert.equal(legacyRow.config.mode, 'numeric');
   assert.equal(legacyRow.config.revision, 7);
-  assert.deepEqual(legacyRow.config.thresholds, legacyThresholds, 'old one-person numeric rows remain readable');
+  assert.deepEqual(legacyRow.config.thresholds, {
+    ...legacyThresholds,
+    hospitality: HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD,
+  }, 'old one-person numeric rows remain readable with default hospitality thresholds');
   const legacyRepository = createActivityDecisionConfigRepository(() => legacyRowDb.client);
   await assert.rejects(
     legacyRepository.loadForMatching(),
@@ -158,6 +165,8 @@ async function main() {
     { mode: 'ai', thresholds: { technical_meeting: { supportMin: -1 } } },
     { mode: 'ai', thresholds: { technical_meeting: { pleasantnessMin: 101 } } },
     { mode: 'ai', thresholds: { technical_meeting: { supportMin: 1.5 } } },
+    { mode: 'ai', thresholds: { hospitality: { supportMin: 50 } } },
+    { mode: 'ai', thresholds: { hospitality: { organization: RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS.technical_meeting } } },
     { mode: 'numeric', thresholds: { technical_meeting: { supportMin: 50, pleasantnessMin: 50 } } },
     { mode: 'numeric', thresholds: { ...validThresholds, company_visit: undefined } },
     { mode: 'numeric', thresholds: legacyThresholds },

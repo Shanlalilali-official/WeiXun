@@ -17,7 +17,7 @@ export const previewEndReasonSchema = z.enum([
 ]);
 export const previewNodeSchema = z.enum(['N1', 'N2', 'N3', 'N4', 'BLOCKED']);
 export const previewMessageResponseActionSchema = z.enum(['reply', 'read_no_reply']);
-export const previewCustomerActivityTypeSchema = z.enum(['technical_meeting', 'case_site_visit', 'company_visit']);
+export const previewCustomerActivityTypeSchema = z.enum(['technical_meeting', 'case_site_visit', 'company_visit', 'hospitality']);
 export const previewCustomerActivityStatusSchema = z.enum(['pending', 'planning', 'submitted']);
 export const previewReadNoReplyReasonCodeSchema = z.enum([
   'natural_closure', 'no_new_value', 'repeated_follow_up', 'not_responsible', 'current_priority_low', 'unwilling_to_advance',

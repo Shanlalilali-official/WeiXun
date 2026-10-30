@@ -41,7 +41,7 @@ export async function PUT(request: NextRequest) {
     const parsed = requestSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ error: '客户活动配置字段无效。', details: parsed.error.flatten() }, { status: 400 });
     const config = parseCustomerActivityDecisionConfigWrite(parsed.data.config);
-    if (!config) return NextResponse.json({ error: '客户活动配置无效；数值门槛模式必须完整设置三项活动的团队规则。' }, { status: 400 });
+    if (!config) return NextResponse.json({ error: '客户活动配置无效；请完整设置饭局的目标客户门槛，以及数值模式下三项团队活动的规则。' }, { status: 400 });
     const saved = await saveActivityDecisionConfig(config, parsed.data.expectedRevision, guard.session.userId);
     return NextResponse.json({ success: true, ...saved });
   } catch (error) {

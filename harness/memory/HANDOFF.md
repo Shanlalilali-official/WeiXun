@@ -1,5 +1,23 @@
 # 工作交接
 
+## 2026-10-30 全量项目交接入口
+
+先读 docs/handover/README.md、DELIVERY_REPORT.md、DATA_RESTORE.md及页面/API清单。本批保存此前未提交的客户活动与系统评测功能，增加无密钥备份/恢复/打包工具，不改业务规则。真实源数据已完整读取PostgREST发现的27表672行与1 bucket35对象，最终副本为仓库外 outputs/WeiXun-supabase-export-20261030-v2；首次失败副本不交付。35对象哈希核验、12专项、类型/完整lint/production build通过；未真实AI调用、未写原数据库、未恢复目标或部署。压缩包包含外部原始业务资料和当前非敏感配置模板，依赖/构建缓存/密钥不含；完整性与Git号以包内MANIFEST/git-metadata及包外receipt为准。
+
+## 2026-10-29 hospitality饭局事件（本地完成）
+
+core worker负责domain/AI及核心专项；UI worker负责后台/表单/契约/策划标签；integration worker负责邀约路由/回复及正式预览回归。主线程检查实际diff、整合最终验证及台账。新增默认单目标15/55，不更改已有三组织门槛；工作区先前系统评测等未提交改动须保留。
+
+最终ACTIVITY-013本地Resolved：全部worker实际diff已检查，核心、正式/预览端到端业务函数及配置六专项、七相关回归、最终类型/完整lint/build/harness通过，见hospitality-2026-10-29.md。新类型hospitality、全局AI仍numeric、旧三类保存配置缺字段补默认15/55；目标任一指标低拒绝、其他四人0/0不影响，客户主动需玩家确认。后台可调，UI仍5分钟策略/方案，原暂停/草稿/评价规则保持。未改真实对局/远程配置/服务或部署。附加旧test-legacy-ui-contracts首条竞品断言失败，HEAD同样冲突；TEST-LEGACY-001 Open，下轮独立核对预期后处理，勿为了测试删除竞品功能。
+
+## 2026-10-27 EVAL-002 本地修复交接
+
+用户实际5000原报告d64b6af4首轮正常结束后误发第二轮，已在service/contract/page/test修复并由根复核回归/tsc/lint/build。仅正常结束停止计划并继续评分，真实异常不伪通过。旧JSON在用户Downloads保留，未重发或刷新其浏览器。已核实旧5000 PID11312属于同应用后停止并更新；当前5000 exec11530、5010 exec93027，build T7r-Us29GPjNuVBAnX6R3，5000HTTP200/DB健康。用户刷新才加载新逻辑，再运行会产生正常AI费用；根未擅自重新评测。证据early-end-fix.md。
+
+## 2026-10-27 设计师系统链路评测（本地首版交接）
+
+入口 /designer → 测试 → 系统链路评测，或 /designer/system-evaluation。最终production http://127.0.0.1:5010，根启动exec60596（有出站网络），只替换本轮自建5010，不碰其它实例。新建状态/本人预览快照两来源；同五人预览业务服务，全部内存副本，不提交原session。support/pleasantness/effectiveContactCount/history/memory进入实际生成与评委，snapshot来源version与prompt/provider/decision版本均记录。新增test:system-evaluation / -judge / -ui命令；SDK0.9.23有pnpm持久化telemetry导出补丁及静态Sentry依赖，勿去掉补丁。根相关回归/类型/完整lint/最终build和独立Review通过，最终浏览器mock及实际HTTP鉴权/空本人列表/虚构snapshot404通过；DB只读核验通过。真实付费生成评分未运行，首次使用建议只一轮；正式/game持久化/多人/其它渠道/远程部署未覆盖。完整证据system-evaluation-2026-10-27/VERIFICATION.md，保留首轮sandbox503历史但以elevated最终200/404为当前。
+
 ## 2026-10-22 Git检查点提交交接
 
 用户要求汇总工作区未提交内容，当前准备本地checkpoint。私有原始JSON共14个仍在原路径，仅.git/info/exclude本地排除：visit-farewell目录JSON、repeat-visit/readback-before、npc-excel-sync/before-config、npc-zhang-latest与plan-steps12 snapshot、clock-popup JSON。Markdown验收和报告保留，5份PDF bundled pypdf检查无已知账号/credential命中。根8专项/full ESLint/tsc/production build/harness已通过；不扩大业务修改，不push。用户已授权关闭并已关闭5000 PID18176/5001 PID29632，现保留5002 PID23152且DB健康；不要继续用此前已停止的5001 exec30331。

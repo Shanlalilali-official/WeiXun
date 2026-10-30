@@ -25,7 +25,7 @@ import type { GameCommand } from '@/lib/contracts/game';
 import { getProjectOneNpc, type ContactChannel } from '@/lib/game/project-one';
 import { BID_RULES, getProcurementRuleAccess } from '@/lib/game/bid-rules';
 import { loadActivityDecisionConfigForMatching as loadActivityDecisionConfig } from '@/lib/designer/customer-activity-config-repository';
-import { isCustomerActivityReplyContext, isNaturalLanguageCustomerActivityInvitation, isNaturalLanguageInvitation } from '@/lib/game/invitation-intent';
+import { isCustomerActivityReplyContext, isHospitalityCustomerActivityContext, isNaturalLanguageCustomerActivityInvitation, isNaturalLanguageInvitation } from '@/lib/game/invitation-intent';
 import {
   commitGameCommand,
   appendGameEvent,
@@ -347,6 +347,7 @@ export async function POST(req: NextRequest) {
     text: item.content,
   }));
   const activityReplyContextActive = isCustomerActivityReplyContext(message, recentActivityConversation);
+  const hospitalityActivityContext = isHospitalityCustomerActivityContext(message, recentActivityConversation);
   const replyReviewDiagnostics: CustomerActivityReplyDiagnostic[] = [];
 
   // Natural-language invitations use the same deterministic command path as
@@ -636,7 +637,7 @@ export async function POST(req: NextRequest) {
     { role: 'system', content: `${promptConfig.liveCustomerPrompt || CUSTOMER_PROMPT()}\n\n## 当前人物角色提示\n${rolePrompt}` },
     { role: 'system', content: npcSpeakerIdentityInstruction(npc, channel) },
     ...(playerProposedCustomerActivity
-      ? [{ role: 'system' as const, content: customerActivityReplyInstruction(npc.category) }]
+      ? [{ role: 'system' as const, content: customerActivityReplyInstruction(npc.category, hospitalityActivityContext) }]
       : []),
     { role: 'user', content: CUSTOMER_CONTEXT(customerContext) },
     ...npcHistory,

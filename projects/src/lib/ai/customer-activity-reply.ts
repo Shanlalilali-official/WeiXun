@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { invokeLLM, type ChatMessage, type InvokeOptions } from '@/lib/ai/client';
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
+import { isHospitalityCustomerActivityContext } from '@/lib/game/invitation-intent';
 
 export type CustomerActivityReplyNpc = NpcSpeakerIdentity & {
   category: '高层' | '中层' | '一线';
@@ -58,12 +59,13 @@ const customerActivityReplySemanticReviewSchema = z.object({
 export function customerActivityReplySignals(
   reply: string,
   category: CustomerActivityReplyNpc['category'],
+  hospitality = false,
 ): CustomerActivityReplyDiagnostic['signal'][] {
   const signals: CustomerActivityReplyDiagnostic['signal'][] = [];
   if (hasCustomerActivityRefusal(reply)) signals.push('refusal');
   if (hasCustomerActivityReferral(reply)) signals.push('referral');
   if (hasPrematureActivityCommitment(reply)) signals.push('commitment');
-  if (!hasCustomerActivityDisposition(reply, category)) signals.push('disposition');
+  if (!hasCustomerActivityDisposition(reply, category, hospitality)) signals.push('disposition');
   return signals;
 }
 
@@ -115,7 +117,7 @@ export async function reviewCustomerActivityReplySemantically(
       {
         role: 'system',
         content: `你是客户活动回复的上下文语义复核器。只复核NPC刚写出的回复，不判断活动能否匹配。
-活动包括技术交流会、案例现场参观、客户参观我方公司。结合最近对话和当前玩家语句判断上下文是新提议、尚未确认活动的后续讨论/追问、明确撤回、纯历史/信息询问，还是无关话题。新提议以及尚未确认活动的后续讨论/追问均受活动边界约束：NPC应由本人考虑/按职责汇报，并承诺后续反馈；不得提前同意或确认时间，也不得让销售自行联系第三人。即使玩家只追问“那下周三呢”也不能把时间当成已定。高层本人考虑、必要时内部商量；中层/一线本人向上级汇报。之后再反馈，但不得保证一定批准。若玩家明确撤回提议、讨论过去活动/仅询问信息，或已转到无关话题，允许自然简短回应，无需强加汇报和后续反馈。
+活动包括技术交流会、案例现场参观、客户参观我方公司，以及吃饭/聚餐/喝酒邀约。结合最近对话和当前玩家语句判断活动类型、新提议、尚未确认活动的后续讨论/追问、明确撤回、纯历史/信息询问，还是无关话题。新提议以及尚未确认活动的后续讨论/追问均受活动边界约束：NPC应由本人考虑并承诺后续反馈；不得提前同意或确认时间，也不得让销售自行联系第三人。技术交流会与参观活动按职级判断后续动作：高层本人考虑、必要时内部商量；中层/一线本人向上级汇报。饭局/餐叙/饮酒邀约由目标NPC本人结合工作安排和边界考虑，之后向销售反馈，不自动要求向上级汇报。即使玩家只追问“那下周三呢”也不能把时间当成已定。不得保证一定批准。若玩家明确撤回提议、讨论过去活动/仅询问信息，或已转到无关话题，允许自然简短回应，无需强加汇报和后续反馈。
 判为 violation 的情况：ordinary_refusal（客户明确拒绝普通活动或推回流程）；premature_acceptance（已经接受、确认安排或承诺时间/人员）；player_referral（让销售本人去联系别人）；missing_disposition（对新提议或尚未确认活动的后续讨论，回复明显没有表达本人处理及稍后反馈）。仅表示时间/人员尚待确认，同时仍会考虑/汇报并反馈，不算拒绝。遵循角色要求的内部商量/汇报也不算把销售转交第三人。明确撤回、纯历史/信息询问或无关话题不要求补汇报。
 特别区分字面与句意：“您看能不能安排”是销售在询问，不是客户拒绝；“方便不方便”是询问；“不是不能安排”是否定中的双重否定；引用他人的拒绝不等于NPC拒绝；“这周定不了时间，但我先向上级汇报再答复”不能判为拒绝；“不用您联系其他人，我来内部汇报”不是转交。
 NPC以合规理由拒绝违法、泄密、行贿或明显越权请求，属于compliance_refusal并允许。
@@ -171,17 +173,23 @@ NPC以合规理由拒绝违法、泄密、行贿或明显越权请求，属于co
 }
 
 /** Applied after the configurable role prompt so customer-activity invitations cannot be mistaken for appointments. */
-export function customerActivityReplyInstruction(category: CustomerActivityReplyNpc['category']): string {
+export function customerActivityReplyInstruction(category: CustomerActivityReplyNpc['category'], hospitality = false): string {
   const responseShape = category === '高层'
     ? '以本人为主语，说明我会先记下建议、结合目前情况自行考虑，必要时在公司内部商量，再向对方反馈。'
     : '以本人为主语，说明我会先记下建议、按职责向上级汇报，再向对方反馈。';
+  const hospitalityShape = '以目标客户本人为主语，说明会结合工作安排和边界考虑饭局/餐叙/饮酒邀约，之后再向对方反馈；无需自动向上级汇报。';
+  const activeResponseShape = hospitality ? hospitalityShape : responseShape;
+  const activityHandling = hospitality
+    ? '饭局由目标客户本人结合工作安排和边界考虑，之后再向对方反馈，不自动要求向上级汇报。'
+    : '技术交流会、案例现场参观和客户参观我方公司仍按职级处理：高层本人考虑或内部商量；中层/一线本人向上级汇报。之后再反馈。';
   return `## 本轮客户活动提议边界（优先遵守）
-当前对话上下文涉及技术交流会、案例现场参观或来我方公司参观。结合最近对话区分新提议、尚未确认活动的后续讨论/追问、明确撤回、纯历史/信息询问或无关话题。只有明确撤回、纯历史/信息询问或已换到无关话题，才按原意自然回应而不强加汇报。
-- 对新提议及尚未确认活动的后续讨论/追问，给出含糊、审慎的回应：${responseShape}
-- 不得让客户/销售去找、联系、对接项目负责人、同事、领导或其他人；高层只说自己考虑或内部商量，中基层只说自己需要向上汇报。
+当前对话上下文可能涉及技术交流会、案例现场参观、客户参观我方公司，或饭局/餐叙/喝酒邀约。结合最近对话区分活动类型、新提议、尚未确认活动的后续讨论/追问、明确撤回、纯历史/信息询问或无关话题。只有明确撤回、纯历史/信息询问或已换到无关话题，才按原意自然回应而不强加汇报。
+- 对新提议及尚未确认活动的后续讨论/追问，给出含糊、审慎的回应：${activeResponseShape}
+- ${activityHandling}
+- 不得让客户/销售去找、联系、对接项目负责人、同事、领导或其他人。技术交流会与参观活动的后续动作按职级处理；饭局由目标客户本人考虑。
 - 不说“同意、可以安排、欢迎来、就这么定”等明确接受，不确认日期、人员、地点，不说已安排、已批准、已协调或已联系。
 - 不把普通活动提议直接拒绝；若请求同时涉及不合规利益、泄密或明显越权，仍按既有规则明确拒绝相应请求。
-- 不让对方“先按正常流程走”“先走流程”或等流程走完再说，也不把决定推给流程。不要承诺活动一定获批、落实或已有日期人员；可以说明本人会考虑/内部商量或向上级汇报，并再向对方反馈。
+- 不让对方“先按正常流程走”“先走流程”或等流程走完再说，也不把决定推给流程。不要承诺活动一定获批、落实或已有日期人员；根据活动类型由本人考虑，按职级需要时内部商量或向上级汇报，再向对方反馈。
 - 对确实提出的新活动，NPC 正文不判断活动能否开展，不提系统、指标或门槛；是否匹配留给对话结束后的活动匹配流程。`;
 }
 
@@ -260,17 +268,22 @@ export function hasCustomerActivityRefusal(reply: string): boolean {
 export function hasCustomerActivityDisposition(
   reply: string,
   category: CustomerActivityReplyNpc['category'],
+  hospitality = false,
 ): boolean {
   const normalized = reply.replace(/\s+/g, '');
   const followUp = /(?:再|随后|之后|过后|后续|等[^，。！？；]{0,8}后)[^，。！？；]{0,10}(?:反馈|回复|答复)|(?:反馈|回复|答复)[^，。！？；]{0,8}(?:您|对方)/u.test(normalized);
   if (!followUp) return false;
+  if (hospitality) {
+    return /(?:我|本人|我们)(?:这边)?.{0,30}(?:考虑|斟酌|结合.{0,8}(?:安排|情况)|看看|再想想|商量)/u.test(normalized);
+  }
   if (category === '高层') {
     return /(?:我|本人|我们)(?:这边)?.{0,30}(?:考虑|斟酌|内部.{0,8}(?:商量|沟通|讨论)|公司内部.{0,8}(?:商量|沟通|讨论))/u.test(normalized);
   }
   return /(?:我|本人|我们)(?:这边)?.{0,30}(?:向|跟|向着)(?:上(?:级)?|领导|主管|公司领导|单位领导).{0,8}(?:汇报|请示|报告)|(?:我|本人|我们)(?:这边)?.{0,30}(?:汇报|请示|报告).{0,8}(?:上级|领导|主管)/u.test(normalized);
 }
 
-export function safeAmbiguousCustomerActivityReply(category: CustomerActivityReplyNpc['category']): string {
+export function safeAmbiguousCustomerActivityReply(category: CustomerActivityReplyNpc['category'], hospitality = false): string {
+  if (hospitality) return '这个邀约我先记下了，会结合工作安排和相关边界考虑，再给您反馈。';
   return category === '高层'
     ? '这个建议我先记下了，会结合项目情况考虑，必要时和公司内部商量，再给您反馈。'
     : '这个建议我先记下了，会先向上级汇报，再给您反馈。';
@@ -283,7 +296,8 @@ export async function generateNpcReplyWithCustomerActivityGuard(
   generate: CustomerActivityReplyGenerator,
   options?: CustomerActivityReplyGuardOptions,
 ): Promise<NpcSpeakerIdentityGuardResult> {
-  const signalsFor = (reply: string) => customerActivityReplySignals(reply, npc.category);
+  const hospitality = isHospitalityCustomerActivityContext(options?.context?.playerMessage ?? '', options?.context?.recentConversation ?? []);
+  const signalsFor = (reply: string) => customerActivityReplySignals(reply, npc.category, hospitality);
   const review = async (reply: string, attempt: number): Promise<CustomerActivityReplySemanticReview> => {
     const signals = signalsFor(reply);
     const signal = signals[0] ?? 'disposition';
@@ -296,15 +310,15 @@ export async function generateNpcReplyWithCustomerActivityGuard(
   };
   const rewriteInstruction = (issue: CustomerActivityReplySemanticReview['issue']) => {
     const correction: Record<Exclude<CustomerActivityReplySemanticReview['issue'], 'none' | 'compliance_refusal'>, string> = {
-      ordinary_refusal: '不要拒绝或推回流程；改为本人按职责考虑/内部商量或汇报，并表示后续反馈。',
-      premature_acceptance: '不要表示已经同意、安排或确认；改为本人按职责考虑/汇报并表示后续反馈。',
+      ordinary_refusal: hospitality ? '不要拒绝或推回流程；改为目标客户本人结合工作安排和边界考虑，并表示后续反馈。' : '不要拒绝或推回流程；改为本人按职责考虑/内部商量或汇报，并表示后续反馈。',
+      premature_acceptance: hospitality ? '不要表示已经同意、安排或确认；改为目标客户本人结合工作安排和边界考虑，并表示后续反馈。' : '不要表示已经同意、安排或确认；改为本人按职责考虑/汇报并表示后续反馈。',
       player_referral: '不要让销售联系其他人；说明由客户本人内部商量或向上级汇报，并表示后续反馈。',
-      missing_disposition: '补充本人按职责考虑/内部商量或向上级汇报，并表示处理后再反馈。',
+      missing_disposition: hospitality ? '补充目标客户本人结合工作安排和边界考虑，并表示之后再反馈。' : '补充本人按职责考虑/内部商量或向上级汇报，并表示处理后再反馈。',
     };
     const instruction = issue === 'none' || issue === 'compliance_refusal'
       ? '按现有合规拒绝边界回应。'
       : correction[issue];
-    return `${customerActivityReplyInstruction(npc.category)}\n语义复核已确认需要修正：${instruction}`;
+    return `${customerActivityReplyInstruction(npc.category, hospitality)}\n语义复核已确认需要修正：${instruction}`;
   };
 
   let first = (await generate()).trim();
@@ -314,20 +328,20 @@ export async function generateNpcReplyWithCustomerActivityGuard(
     first = (await generate(npcSpeakerIdentityRetryInstruction(npc, channel))).trim();
     initialReplyWasRepaired = true;
     if (!first || hasNpcSpeakerIdentityViolation(npc, first)) {
-      return { reply: safeAmbiguousCustomerActivityReply(npc.category), source: 'fallback' };
+      return { reply: safeAmbiguousCustomerActivityReply(npc.category, hospitality), source: 'fallback' };
     }
   }
   const firstReview = await review(first, 0);
   if (firstReview.result === 'allowed') return { reply: first, source: initialReplyWasRepaired ? 'repaired' : 'generated' };
   if (firstReview.result !== 'violation') {
-    return { reply: safeAmbiguousCustomerActivityReply(npc.category), source: 'fallback' };
+    return { reply: safeAmbiguousCustomerActivityReply(npc.category, hospitality), source: 'fallback' };
   }
 
   const repaired = (await generate(rewriteInstruction(firstReview.issue))).trim();
   if (!repaired || hasNpcSpeakerIdentityViolation(npc, repaired)) {
-    return { reply: safeAmbiguousCustomerActivityReply(npc.category), source: 'fallback' };
+    return { reply: safeAmbiguousCustomerActivityReply(npc.category, hospitality), source: 'fallback' };
   }
   const repairedReview = await review(repaired, 1);
   if (repairedReview.result === 'allowed') return { reply: repaired, source: 'repaired' };
-  return { reply: safeAmbiguousCustomerActivityReply(npc.category), source: 'fallback' };
+  return { reply: safeAmbiguousCustomerActivityReply(npc.category, hospitality), source: 'fallback' };
 }

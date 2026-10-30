@@ -1061,6 +1061,18 @@ export default function DesignerPage() {
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">使用同一输入对比 DeepSeek Flash 与豆包的 NPC 回复、评估和状态变化。</p>
                 <div className="mt-5 text-xs font-medium text-violet-600">进入模型回复测试 →</div>
               </button>
+              <button
+                onClick={() => router.push('/designer/system-evaluation')}
+                className="group rounded-xl border border-border bg-card p-6 text-left transition-all hover:-translate-y-0.5 hover:border-emerald-400/60 hover:shadow-md"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-600"><TestTube2 className="h-6 w-6" /></span>
+                  <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[10px] font-medium text-emerald-600">新功能</span>
+                </div>
+                <h3 className="mt-4 text-sm font-semibold text-foreground">系统链路评测</h3>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">在五人预览的隔离副本中复用真实状态和提示词，并用 DeepEval 评测完整对话。</p>
+                <div className="mt-5 text-xs font-medium text-emerald-600">进入系统评测 →</div>
+              </button>
             </div>
           </div>
         )}

@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import {
   customerActivityReplyInstruction,
+  customerActivityReplySignals,
   generateNpcReplyWithCustomerActivityGuard,
+  hasCustomerActivityDisposition,
   hasCustomerActivityReferral,
   safeAmbiguousCustomerActivityReply,
 } from '../src/lib/ai/customer-activity-reply';
-import { isCustomerActivityReplyContext, isNaturalLanguageCustomerActivityInvitation, isNaturalLanguageInvitation } from '../src/lib/game/invitation-intent';
+import { isCustomerActivityReplyContext, isHospitalityCustomerActivityContext, isNaturalLanguageCustomerActivityInvitation, isNaturalLanguageInvitation } from '../src/lib/game/invitation-intent';
 
 const positiveExamples = [
   '您好，希望围绕一线流程安排一次正式沟通，方便和您见面吗？',
@@ -48,6 +50,30 @@ assert.equal(isNaturalLanguageCustomerActivityInvitation('不是不能安排技�
   'double negation stays an invitation signal rather than a cancellation');
 assert.equal(isNaturalLanguageCustomerActivityInvitation('方便不方便安排一次技术交流会？'), true,
   'a question using a negative form remains an invitation signal');
+for (const example of ['明晚一起吃个饭吧', '周末要不要喝酒？', '我想请您吃顿饭', '下周安排个饭局方便吗？']) {
+  assert.equal(isNaturalLanguageInvitation(example), true, `hospitality invitation is separated from ordinary appointments: ${example}`);
+  assert.equal(isNaturalLanguageCustomerActivityInvitation(example), true, example);
+  assert.equal(isCustomerActivityReplyContext(example), true, `${example} receives customer-activity reply guidance`);
+}
+assert.equal(isNaturalLanguageCustomerActivityInvitation('上次饭局聊得很愉快，材料我已发您。'), false,
+  'historical dinners remain ordinary conversation');
+assert.equal(isNaturalLanguageCustomerActivityInvitation('这次先不安排饭局了。'), false,
+  'a withdrawn dinner suggestion is not opened as a new event');
+assert.equal(isNaturalLanguageCustomerActivityInvitation('请您喝一杯茶吧。'), false,
+  'a tea invitation is not classified as the hospitality dinner/drinks activity');
+assert.equal(isCustomerActivityReplyContext('饭局已经办过了，挺愉快。'), false,
+  'historical dinner references do not invoke the activity reply guard');
+assert.equal(isHospitalityCustomerActivityContext('那下周三怎么样？', [
+  { speaker: 'sales', text: '明晚一起吃个饭吧。' },
+]), true, 'meal planning follow-ups retain hospitality context');
+assert.equal(isHospitalityCustomerActivityContext('那下周三怎么样？', [
+  { speaker: 'sales', text: '明晚一起吃个饭吧。' },
+  { speaker: 'customer', text: '谢谢，我想想。' },
+  { speaker: 'sales', text: '我们下周开个技术交流会吧。' },
+]), false, 'the latest open organization activity determines follow-up handling');
+assert.equal(isHospitalityCustomerActivityContext('我们下周开个技术交流会吧。', [
+  { speaker: 'sales', text: '明晚一起吃个饭吧。' },
+]), false, 'an explicit organization activity takes precedence over a prior dinner proposal');
 assert.equal(isCustomerActivityReplyContext('下周三？', [
   { speaker: 'sales', text: '要不下周开个技术交流会？' },
   { speaker: 'customer', text: '我先向上级汇报，再给您反馈。' },
@@ -66,6 +92,12 @@ async function testActivityReplyGuard() {
   assert.match(seniorInstruction, /不得让客户\/销售去找.*负责人/u);
   assert.doesNotMatch(seniorInstruction, /建议找具体项目负责人/u);
   assert.match(customerActivityReplyInstruction('中层'), /以本人为主语.*向上级汇报/u);
+  assert.match(customerActivityReplyInstruction('中层', true), /无需自动向上级汇报/u,
+    'hospitality reply guidance does not require an organizational referral');
+  assert.equal(customerActivityReplySignals('我先考虑一下，稍后再给您答复。', '中层', true).includes('disposition'), false,
+    'a target customer can consider a hospitality invite personally');
+  assert.equal(customerActivityReplySignals('我先考虑一下，稍后再给您答复。', '中层').includes('disposition'), true,
+    'organizational activities keep the middle-level upward-reporting requirement');
   assert.equal(hasCustomerActivityReferral('您先联系项目负责人确认一下。'), true);
   assert.equal(hasCustomerActivityReferral('建议您先和实际负责项目的同事沟通，确认后再答复您。'), true,
     'a player-directed referral through a discussion is recognized');
@@ -90,6 +122,23 @@ async function testActivityReplyGuard() {
     return JSON.stringify({ decision: 'allowed', issue: 'none' });
   };
   const guardOptions = { context: reviewContext, invoker: allowedReviewer };
+  const hospitalityContext = {
+    playerMessage: '那周末方便吗？',
+    recentConversation: [{ speaker: 'sales' as const, text: '明晚一起吃个饭吧。' }],
+  };
+  const politeHospitality = await generateNpcReplyWithCustomerActivityGuard({ ...highLevelNpc, category: '中层' }, 'email', async () => (
+    '我会先结合工作安排考虑，之后再给您答复。'
+  ), { context: hospitalityContext, invoker: async () => JSON.stringify({ decision: 'allowed', issue: 'none' }) });
+  assert.equal(politeHospitality.source, 'generated', 'middle-level hospitality replies may use personal consideration without upward reporting');
+  assert.equal(customerActivityReplySignals(politeHospitality.reply, '中层', true).includes('disposition'), false);
+
+  const hospitalityFallback = await generateNpcReplyWithCustomerActivityGuard({ ...highLevelNpc, category: '中层' }, 'email', async () => (
+    '我会先考虑，再给您反馈。'
+  ), { context: hospitalityContext, invoker: async () => { throw new Error('mock reviewer unavailable'); } });
+  assert.equal(hospitalityFallback.source, 'fallback');
+  assert.doesNotMatch(hospitalityFallback.reply, /向上级汇报/u,
+    'a review failure uses a hospitality-safe fallback at every NPC level');
+
   const reviewerSequence = (...answers: Array<Record<string, string>>) => {
     let index = 0;
     return async () => JSON.stringify(answers[Math.min(index++, answers.length - 1)]);
@@ -199,6 +248,8 @@ async function testActivityReplyGuard() {
 
   const midLevelNpc = { id: 'P1-002', name: '李明辉', title: '项目经理', category: '中层' as const };
   assert.equal(safeAmbiguousCustomerActivityReply(midLevelNpc.category), '这个建议我先记下了，会先向上级汇报，再给您反馈。');
+  assert.match(safeAmbiguousCustomerActivityReply(midLevelNpc.category, true), /本人|我先记下了/u);
+  assert.equal(hasCustomerActivityDisposition('我先考虑一下，稍后再给您答复。', '中层', true), true);
 }
 
 void testActivityReplyGuard().then(() => {

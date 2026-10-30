@@ -1,5 +1,29 @@
 # 调查发现
 
+## 2026-10-29 附加旧UI契约回归失败
+
+test-legacy-ui-contracts.ts首条doesNotMatch(showCompetitors等)与当前game/page.tsx冲突。git show HEAD:projects/src/app/game/page.tsx也含showCompetitors及“查看竞争对手资料”按钮，且本批未改该文件，证明该旧断言不兼容已有入口，非本次饭局新增引入。登记TEST-LEGACY-001，不自动修改竞品功能或测试预期。恢复UI与预览AI专项均另行通过。
+
+## 2026-10-29 饭局邀约扩展的实际缺口
+
+实查现有代码仅technical_meeting/case_site_visit/company_visit；共享状态支持任意已知活动复用结束检测、5分钟策划和幂等结算，无需新表或迁移。新增hospitality须同步扩展domain/preview契约、检测提示词、两端UI及设计师配置；单纯增加关键词会被旧appointment捷径吸收。原决策记录要求mode与全局配置相等，须允许饭局在全局AI配置下仍记录numeric，且冻结快照重新校验门槛，防止只放宽AI入口后记录失败。原三组织规则继续保持；旧三类保存配置缺失饭局字段时在读取规范化补15/55，未写入真实数据库。
+
+## 2026-10-27 张建国技术交流匹配真实证据
+
+用户提供“张总，我想组织一个技术交流会，您觉得怎么样？”的当前本人会话2ca1e658 v31，原提议被deterministic_sales_proposal识别并有语义fallback响应1候选，结束后numeric configRevision3明确reject。冻结张49/79，其余0/50，符合整体门槛拒绝；无任务/无待重试。先前尝试查询最近4会话被auto-review拒绝（当时归属未明），未执行；后用户明确说全部属于自己，根仍通过设计师页面确认当前UUID后仅查此1会话。无跨账号原始数据落盘。
+
+## 2026-10-27 Supabase NETWORK_ERROR 实际链路对照
+
+NET-001：已捕获真实TLS前ECONNRESET而非泛化“网络不好”。相同配置只读health查询A直连0/16、B子进程本地7897代理16/16、A直连0/16。代理首包6309ms、后续约292–704ms；不能仅凭一次之前成功推断一直可用。当前系统代理disabled，本地7897监听；Node进程未设proxy env，显式NODE_USE_ENV_PROXY能切换其fetch路线。本次没有修改环境文件/系统代理或启动服务。脚本将SDK details中的底层错误压成SUPABASE_NETWORK_ERROR，导致用户看不到ECONNRESET；若后续改诊断，只提取白名单code，不输出details原文/keys/URL。
+
+## 2026-10-27 EVAL-002 实际报告
+
+用户截图仅显示未评分；根通过当前Chrome5000页面展开首轮状态并下载报告d64b6af4，独立解析确认round1.before.ended=false，after.ended=true/endReason=npc_time_constraint；round2在before已ended时仍调用visit_turn，触发NO_ACTIVE_VISIT_FOR_NPC，phase partial、judgeRequests=0。NPC/DeepSeek首轮实际生成成功，不是连接错误或DeepEval分数过低。根未替用户重跑模型。完整下载保留用户Downloads，不复制入Git。
+
+## 2026-10-27 系统评测接入事实
+
+实际检查`project-one-preview-ai.ts`、正式`chat/stream`、`prompt-test.ts`及设计师API：正式与预览状态均有support/pleasantness/effectiveContactCount、历史和workingMemory，但没有独立numeric familiarity；既有prompt-test的“熟悉度中”是固定夹具，不代表系统统一数值。五人预览service已有可注入invoker/store的执行路径，可在不调用持久化commit的前提下复用生成、解码、规则/指标更新；原session repository.load按user_id+id过滤，适合读取本人快照。现有测试中心只有实际预览/双轨回复测试，缺少DeepEval质量报告入口。远程数据库现存会话/配置和实际AI尚未在本轮实查，不能把本地源码推断当实际配置结论。
+
 ## 2026-10-22 活动历史提交时间可能覆盖测试调时锚点
 
 用户随后确认没调时间，不能把测试调时复现当作本次唯一根因。此前repeat-visit只读Chrome记录第一活动pending未开始时就已00:00；该任务创建14:01而开始14:39，超过20分钟预算。现有预览只planning到deadline暂停，匹配前等待/评估/结果均继续计时，故提交后才看见0不代表提交扣时。当前修复需独立UI暂停理由覆盖阻塞弹窗，不能只修旧任务marker。

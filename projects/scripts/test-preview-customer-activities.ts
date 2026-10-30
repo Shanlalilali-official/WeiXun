@@ -16,6 +16,7 @@ import { detectCustomerActivityProposals } from '../src/lib/ai/customer-activiti
 import {
   CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS,
   DEFAULT_ACTIVITY_DECISION_CONFIG,
+  type CustomerActivityType,
   type CustomerActivityConversationMessage,
   type ActivityDecisionConfig,
 } from '../src/lib/game/customer-activities';
@@ -100,11 +101,11 @@ function messagesFromDetectionPrompt(content: string) {
 
 function modelCandidate(
   messages: Array<{ messageId: string; speaker: 'sales' | 'customer'; text: string }>,
-  type: 'technical_meeting' | 'case_site_visit' | 'company_visit',
+  type: CustomerActivityType,
 ) {
   const proposalIndex = messages.findIndex((message) => message.speaker === 'sales'
-    ? /技术交流会|技术研讨|案例现场参观|项目现场参观|公司参观/.test(message.text)
-    : /技术交流会|技术研讨|案例现场参观|项目现场参观|公司参观/.test(message.text));
+    ? /技术交流会|技术研讨|案例现场参观|项目现场参观|公司参观|吃饭|用餐|聚餐|饭局|喝酒|喝一杯|小酌/.test(message.text)
+    : /技术交流会|技术研讨|案例现场参观|项目现场参观|公司参观|吃饭|用餐|聚餐|饭局|喝酒|喝一杯|小酌/.test(message.text));
   if (proposalIndex < 0) return { activities: [] };
   const proposal = messages[proposalIndex];
   const response = messages.slice(proposalIndex + 1).find((message) => message.speaker !== proposal.speaker);
@@ -223,6 +224,101 @@ async function testCustomerConfirmationAndPlanning() {
   const persisted = toPersistedPreviewServerState(current);
   const restored = fromPersistedPreviewServerState(persisted, userId, state.previewSessionId, current.version);
   assert.deepEqual(restored.customerActivities, current.customerActivities, 'task, decision, and one-time evaluation markers survive JSON persistence');
+}
+
+async function testHospitalityPreviewServiceFlow() {
+  const config: ActivityDecisionConfig = { revision: 19, mode: 'ai', thresholds: {} };
+  const planEvaluation = {
+    supportDelta: 1,
+    pleasureDelta: 2,
+    dimensionDeltas: { decisionAnalysis: 1, relationshipBuilding: 2, valuePresentation: 0, objectionHandling: 0, informationDiscovery: 1 },
+    overallEvaluation: '方案尊重客户边界，并说明了合适场合、时间安排和会后跟进。',
+  };
+  const createHospitalityService = (store: PreviewSessionStore) => createPreviewAiService({
+    store,
+    invoker: async (messages) => {
+      if (messages[0]?.content.includes('活动提议语义识别器')) {
+        return json(modelCandidate(messagesFromDetectionPrompt(messages.at(-1)?.content ?? ''), 'hospitality'));
+      }
+      if (messages[0]?.content.includes('销售活动策划的复盘评价器')) return json(planEvaluation);
+      throw new Error('unexpected prose model request');
+    },
+    jevInvoker: async () => { throw new Error('hospitality must apply its target-customer numeric gate under global AI mode'); },
+  });
+  const runConversation = async (
+    userId: string,
+    messages: Array<{ messageId: string; speaker: 'sales' | 'customer'; text: string }>,
+    targetMetrics: TestOrganizationMetrics,
+  ) => {
+    const store = new PreviewSessionStore();
+    const service = createHospitalityService(store);
+    const state = store.create(userId);
+    setOrganizationMetrics(state, Object.fromEntries(CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS.map((npcId) => [
+      npcId,
+      npcId === 'P1-002' ? targetMetrics : { support: 0, pleasantness: 0 },
+    ])) as Record<TestNpcId, TestOrganizationMetrics>);
+    seedEmailConversation(state, messages, 'P1-002');
+    const response = await execute(service, userId, state.previewSessionId, 0,
+      { action: 'customer_activity_end_conversation', npcId: 'P1-002', channel: 'email' }, config);
+    return { store, service, state, response, current: store.get(userId, state.previewSessionId)! };
+  };
+
+  const salesProposal = [
+    { messageId: 'hospitality-sales', speaker: 'sales' as const, text: '赵老师，周末要不要喝酒？我也想听听您对项目安排的想法。' },
+    { messageId: 'hospitality-customer', speaker: 'customer' as const, text: '我先结合工作安排考虑一下，之后再给您反馈。' },
+  ];
+  const allowed = await runConversation('preview-hospitality-allowed', salesProposal, { support: 15, pleasantness: 55 });
+  assert.equal(allowed.current.customerActivities.tasks.length, 1,
+    'target scores at the inclusive 15/55 boundary create the hospitality task although every other NPC is at 0/0');
+  const task = allowed.current.customerActivities.tasks[0];
+  assert.equal(task.type, 'hospitality');
+  assert.equal(task.npcId, 'P1-002');
+  assert.equal(task.decisionMode, 'numeric', 'the hospitality task stays numeric even when the frozen config uses global AI mode');
+  assert.equal(allowed.current.customerActivities.decisions[0]?.mode, 'numeric');
+  assert.equal(allowed.current.customerActivities.decisions[0]?.decision, 'allow');
+  assert.equal(allowed.response.customerActivities?.tasks[0]?.type, 'hospitality');
+
+  let response = await execute(allowed.service, 'preview-hospitality-allowed', allowed.state.previewSessionId, allowed.response.version,
+    { action: 'customer_activity_start', taskId: task.id });
+  response = await execute(allowed.service, 'preview-hospitality-allowed', allowed.state.previewSessionId, response.version,
+    { action: 'customer_activity_save', taskId: task.id, draft: '先确认客户愿意参加及饮酒偏好，选择安静、合规的用餐场合，控制时长并围绕项目问题交流；不劝酒，不作采购承诺，会后发送简要纪要并确认下一步。' });
+  response = await execute(allowed.service, 'preview-hospitality-allowed', allowed.state.previewSessionId, response.version,
+    { action: 'customer_activity_submit', taskId: task.id, draft: '先确认客户愿意参加及饮酒偏好，选择安静、合规的用餐场合，控制时长并围绕项目问题交流；不劝酒，不作采购承诺，会后发送简要纪要并确认下一步。' });
+  let current = allowed.store.get('preview-hospitality-allowed', allowed.state.previewSessionId)!;
+  assert.equal(current.customerActivities.tasks[0]?.status, 'submitted');
+  assert.match(current.customerActivities.tasks[0]?.draft ?? '', /不劝酒.*不作采购承诺/u);
+  assert.equal(current.customerActivities.tasks[0]?.evaluation?.overallEvaluation, planEvaluation.overallEvaluation);
+  const supportAfterEvaluation = current.npcStates['P1-002'].support;
+  const recovery = toPreviewRecoveryDto(current);
+  assert.equal(JSON.stringify(recovery).includes('relationshipSnapshot'), false,
+    'player recovery does not expose the frozen numeric relationship snapshot');
+  assert.equal(JSON.stringify(allowed.response).includes('supportMin'), false,
+    'player action responses do not expose internal numeric thresholds');
+
+  response = await execute(allowed.service, 'preview-hospitality-allowed', allowed.state.previewSessionId, response.version,
+    { action: 'customer_activity_sync' });
+  current = allowed.store.get('preview-hospitality-allowed', allowed.state.previewSessionId)!;
+  assert.equal(current.npcStates['P1-002'].support, supportAfterEvaluation,
+    'recovery sync does not apply the plan evaluation more than once');
+  assert.equal(current.customerActivities.tasks[0]?.evaluation?.overallEvaluation, planEvaluation.overallEvaluation);
+
+  const belowSupport = await runConversation('preview-hospitality-low-support', salesProposal, { support: 14, pleasantness: 55 });
+  assert.equal(belowSupport.current.customerActivities.tasks.length, 0, 'support below threshold rejects the hospitality proposal');
+  assert.equal(belowSupport.current.customerActivities.decisions[0]?.decision, 'reject');
+  const belowPleasantness = await runConversation('preview-hospitality-low-pleasantness', salesProposal, { support: 15, pleasantness: 54 });
+  assert.equal(belowPleasantness.current.customerActivities.tasks.length, 0, 'pleasantness below threshold rejects the hospitality proposal');
+  assert.equal(belowPleasantness.current.customerActivities.decisions[0]?.decision, 'reject');
+
+  const customerProposal = await runConversation('preview-hospitality-customer-proposal', [
+    { messageId: 'hospitality-customer-proposal', speaker: 'customer' as const, text: '我们周五项目组聚餐，您要不要一起吃个饭？' },
+    { messageId: 'hospitality-sales-confirmation', speaker: 'sales' as const, text: '可以，我愿意一起吃饭。' },
+  ], { support: 15, pleasantness: 55 });
+  assert.equal(customerProposal.current.customerActivities.tasks.length, 1,
+    'a customer-initiated dinner proposal becomes an event after sales confirms');
+  assert.equal(customerProposal.current.customerActivities.tasks[0]?.initiator, 'customer');
+  assert.equal(customerProposal.current.customerActivities.tasks[0]?.responseKind, 'explicit_acceptance');
+  assert.equal(customerProposal.current.customerActivities.tasks[0]?.decisionMode, 'numeric',
+    'customer confirmation does not bypass the target-customer numeric gate');
 }
 
 async function testFrozenNumericGateAndDuplicateDecision() {
@@ -1007,6 +1103,7 @@ async function testProposalMergeAndLowConfidenceFiltering() {
 
 async function main() {
   await testCustomerConfirmationAndPlanning();
+  await testHospitalityPreviewServiceFlow();
   await testFrozenNumericGateAndDuplicateDecision();
   await testOrganizationNumericGateAndLegacyQueue();
   await testServerAuthoritativeTimeout();

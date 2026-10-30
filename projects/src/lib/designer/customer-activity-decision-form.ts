@@ -1,7 +1,8 @@
 import {
   activityDecisionConfigSchema,
   CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS,
-  CUSTOMER_ACTIVITY_TYPES,
+  HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD,
+  ORGANIZATION_CUSTOMER_ACTIVITY_TYPES,
   organizationActivityThresholdSchema,
   type ActivityDecisionConfig,
   type CustomerActivityOrganizationNpcId,
@@ -25,6 +26,11 @@ export type OrganizationPathForm = {
 export type OrganizationActivityThresholdForm = {
   minimumPleasantness: string;
   paths: OrganizationPathForm[];
+};
+
+export type SingleCustomerActivityThresholdForm = {
+  supportMin: string;
+  pleasantnessMin: string;
 };
 
 export type CustomerActivityDecisionConfigWrite = Pick<ActivityDecisionConfig, 'mode' | 'thresholds'>;
@@ -82,7 +88,16 @@ export function buildOrganizationActivityThreshold(
   return parsed.data;
 }
 
-/** Uses the core config schema for all field rules, then disallows legacy single-person numeric writes. */
+export function buildSingleCustomerActivityThreshold(
+  form: SingleCustomerActivityThresholdForm,
+): { supportMin: number; pleasantnessMin: number } | null {
+  const supportMin = parseRequiredThreshold(form.supportMin);
+  const pleasantnessMin = parseRequiredThreshold(form.pleasantnessMin);
+  if (supportMin === null || pleasantnessMin === null) return null;
+  return { supportMin, pleasantnessMin };
+}
+
+/** Uses the core config schema and keeps hospitality's single-customer rule independent from organization mode. */
 export function parseCustomerActivityDecisionConfigWrite(value: unknown): CustomerActivityDecisionConfigWrite | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const input = value as Record<string, unknown>;
@@ -91,12 +106,19 @@ export function parseCustomerActivityDecisionConfigWrite(value: unknown): Custom
     || !Object.hasOwn(input, 'thresholds')) return null;
   const parsed = activityDecisionConfigSchema.safeParse({ revision: 0, ...input });
   if (!parsed.success) return null;
-  for (const type of CUSTOMER_ACTIVITY_TYPES) {
+  for (const type of ORGANIZATION_CUSTOMER_ACTIVITY_TYPES) {
     const organization = parsed.data.thresholds[type]?.organization;
     if (organization?.paths.some((path) => (
       new Set(path.conditions.flatMap((condition) => condition.npcIds)).size < 2
     ))) return null;
   }
-  if (parsed.data.mode === 'numeric' && CUSTOMER_ACTIVITY_TYPES.some((type) => !parsed.data.thresholds[type]?.organization)) return null;
-  return { mode: parsed.data.mode, thresholds: parsed.data.thresholds };
+  if (parsed.data.mode === 'numeric' && ORGANIZATION_CUSTOMER_ACTIVITY_TYPES.some((type) => !parsed.data.thresholds[type]?.organization)) return null;
+  if (parsed.data.thresholds.hospitality?.organization) return null;
+  return {
+    mode: parsed.data.mode,
+    thresholds: {
+      ...parsed.data.thresholds,
+      hospitality: parsed.data.thresholds.hospitality ?? HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD,
+    },
+  };
 }

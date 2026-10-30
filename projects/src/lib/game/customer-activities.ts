@@ -4,7 +4,19 @@ export const CUSTOMER_ACTIVITY_TYPES = [
   'technical_meeting',
   'case_site_visit',
   'company_visit',
+  'hospitality',
 ] as const;
+
+export const ORGANIZATION_CUSTOMER_ACTIVITY_TYPES = [
+  'technical_meeting',
+  'case_site_visit',
+  'company_visit',
+] as const;
+
+export const HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD = {
+  supportMin: 15,
+  pleasantnessMin: 55,
+} as const;
 
 export type CustomerActivityType = (typeof CUSTOMER_ACTIVITY_TYPES)[number];
 export type CustomerActivitySpeaker = 'sales' | 'customer';
@@ -99,10 +111,21 @@ export const activityDecisionConfigSchema = z.object({
     technical_meeting: customerActivityThresholdSchema.optional(),
     case_site_visit: customerActivityThresholdSchema.optional(),
     company_visit: customerActivityThresholdSchema.optional(),
+    hospitality: customerActivityThresholdSchema.optional(),
   }).strict(),
 }).strict().superRefine((config, context) => {
+  const hospitality = config.thresholds.hospitality;
+  if (hospitality && (hospitality.organization
+    || hospitality.supportMin === undefined
+    || hospitality.pleasantnessMin === undefined)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['thresholds', 'hospitality'],
+      message: 'hospitality requires paired single-customer support and pleasantness thresholds',
+    });
+  }
   if (config.mode !== 'numeric') return;
-  for (const type of CUSTOMER_ACTIVITY_TYPES) {
+  for (const type of ORGANIZATION_CUSTOMER_ACTIVITY_TYPES) {
     const threshold = config.thresholds[type];
     if (!threshold?.organization && (threshold?.supportMin === undefined || threshold.pleasantnessMin === undefined)) {
       context.addIssue({ code: z.ZodIssueCode.custom, path: ['thresholds', type], message: 'numeric mode requires organization thresholds or both legacy thresholds for every activity type' });
@@ -131,7 +154,7 @@ export type CustomerActivityFeasibilityOutcome = 'allow' | 'reject' | 'need_more
 
 const allOrganizationNpcIds: CustomerActivityOrganizationNpcId[] = [...CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS];
 
-export const RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS: Record<CustomerActivityType, OrganizationActivityThreshold> = {
+export const RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS: Record<typeof ORGANIZATION_CUSTOMER_ACTIVITY_TYPES[number], OrganizationActivityThreshold> = {
   technical_meeting: {
     minimumPleasantness: 20,
     paths: [
@@ -193,6 +216,7 @@ export const DEFAULT_ACTIVITY_DECISION_CONFIG: ActivityDecisionConfig = {
     technical_meeting: { organization: RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS.technical_meeting },
     case_site_visit: { organization: RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS.case_site_visit },
     company_visit: { organization: RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS.company_visit },
+    hospitality: { ...HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD },
   },
 };
 
@@ -238,11 +262,31 @@ export function decideOrganizationActivityThreshold(
 
 export function parseActivityDecisionConfig(value: unknown): ActivityDecisionConfig | null {
   const parsed = activityDecisionConfigSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
+  if (!parsed.success) return null;
+  return {
+    ...parsed.data,
+    thresholds: {
+      ...parsed.data.thresholds,
+      hospitality: parsed.data.thresholds.hospitality ?? { ...HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD },
+    },
+  };
 }
 
 export function isActivityDecisionConfig(value: unknown): value is ActivityDecisionConfig {
-  return activityDecisionConfigSchema.safeParse(value).success;
+  return parseActivityDecisionConfig(value) !== null;
+}
+
+function hospitalityThreshold(config?: ActivityDecisionConfig): CustomerActivityThreshold {
+  return config?.thresholds.hospitality ?? { ...HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD };
+}
+
+function meetsHospitalityThreshold(
+  snapshot: CustomerActivityRelationshipSnapshot | undefined,
+  config: ActivityDecisionConfig | undefined,
+): boolean {
+  if (!snapshot) return false;
+  const threshold = hospitalityThreshold(config);
+  return snapshot.support >= threshold.supportMin! && snapshot.pleasantness >= threshold.pleasantnessMin!;
 }
 
 export const CUSTOMER_ACTIVITY_PLANNING_MS = 5 * 60 * 1000;
@@ -351,12 +395,29 @@ export const customerActivityAgreementSchema = z.object({
   if (agreement.decisionConfig && agreement.decisionRevision !== undefined && agreement.decisionConfig.revision !== agreement.decisionRevision) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['decisionRevision'], message: 'decision revision must match frozen config' });
   }
+  if (agreement.type === 'hospitality'
+    && (agreement.decisionMode !== 'numeric'
+      || !agreement.decisionConfig
+      || !meetsHospitalityThreshold(agreement.relationshipSnapshot, agreement.decisionConfig))) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['decisionMode'], message: 'hospitality agreements require a qualifying numeric decision for the contacted customer' });
+  }
 });
 
 export type CustomerActivityEvidence = z.infer<typeof customerActivityEvidenceSchema>;
 export type CustomerActivityConversationMessage = z.infer<typeof customerActivityConversationMessageSchema>;
 export type CustomerActivityEvaluation = z.infer<typeof customerActivityEvaluationSchema>;
 export type CustomerActivityAgreement = z.infer<typeof customerActivityAgreementSchema>;
+
+function requiresNumericCustomerActivityDecision(config: ActivityDecisionConfig, type: CustomerActivityType): boolean {
+  return config.mode === 'numeric' || type === 'hospitality';
+}
+
+function thresholdForActivity(config: ActivityDecisionConfig, type: CustomerActivityType): CustomerActivityThreshold | undefined {
+  if (type === 'hospitality') {
+    return config.thresholds.hospitality ?? { ...HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD };
+  }
+  return config.thresholds[type];
+}
 
 export const customerActivityTaskSchema = z.object({
   id: z.string().trim().min(1).max(512),
@@ -415,6 +476,12 @@ export const customerActivityTaskSchema = z.object({
   if (task.decisionConfig && task.decisionRevision !== undefined && task.decisionConfig.revision !== task.decisionRevision) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['decisionRevision'], message: 'decision revision must match frozen config' });
   }
+  if (task.type === 'hospitality'
+    && (task.decisionMode !== 'numeric'
+      || !task.decisionConfig
+      || !meetsHospitalityThreshold(task.relationshipSnapshot, task.decisionConfig))) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['decisionMode'], message: 'hospitality tasks require a qualifying numeric decision for the contacted customer' });
+  }
 });
 
 export const customerActivityDecisionRecordSchema = z.object({
@@ -442,7 +509,15 @@ export const customerActivityDecisionRecordSchema = z.object({
   if (record.mode === 'customer_confirmed' && record.initiator !== 'customer') {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['mode'], message: 'only customer-initiated proposals can use direct confirmation' });
   }
-  if (record.mode !== 'customer_confirmed' && record.decisionConfig.mode !== record.mode) {
+  if (record.type === 'hospitality') {
+    const expectedDecision = meetsHospitalityThreshold(record.relationshipSnapshot, record.decisionConfig) ? 'allow' : 'reject';
+    if (record.mode !== 'numeric' || record.decision !== expectedDecision) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ['mode'], message: 'hospitality decisions must match the contacted customer numeric threshold' });
+    }
+  }
+  if (record.mode !== 'customer_confirmed'
+    && record.decisionConfig.mode !== record.mode
+    && !(record.type === 'hospitality' && record.mode === 'numeric')) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['mode'], message: 'decision mode must match frozen config' });
   }
 });
@@ -619,12 +694,13 @@ export function createResolvedCustomerActivityAgreement(
   const decision = customerActivityFeasibilityDecisionSchema.safeParse(decisionInput);
   if (!candidate || !snapshot.success || !config || !decision.success || decision.data.decision !== 'allow') return null;
   if (snapshot.data.npcId !== candidate.npcId || decision.data.configRevision !== config.revision) return null;
-  const expectedMode: CustomerActivityDecisionMode = config.mode === 'numeric'
+  const numericDecisionRequired = requiresNumericCustomerActivityDecision(config, candidate.type);
+  const expectedMode: CustomerActivityDecisionMode = numericDecisionRequired
     ? 'numeric'
     : candidate.requiresFeasibility ? config.mode : 'customer_confirmed';
   if (decision.data.mode !== expectedMode) return null;
-  if (config.mode === 'numeric') {
-    const threshold = config.thresholds[candidate.type];
+  if (numericDecisionRequired) {
+    const threshold = thresholdForActivity(config, candidate.type);
     if (!threshold) return null;
     if (threshold.organization) {
       if (decideOrganizationActivityThreshold(snapshot.data, threshold.organization).decision !== decision.data.decision) return null;
@@ -732,13 +808,14 @@ export function recordCustomerActivityProposalDecision(
     return { state, recorded: false };
   }
   if (snapshot.data.npcId !== candidate.npcId || decision.data.configRevision !== config.revision) return { state, recorded: false };
-  const expectedMode: CustomerActivityDecisionMode = config.mode === 'numeric'
+  const numericDecisionRequired = requiresNumericCustomerActivityDecision(config, candidate.type);
+  const expectedMode: CustomerActivityDecisionMode = numericDecisionRequired
     ? 'numeric'
     : candidate.requiresFeasibility ? config.mode : 'customer_confirmed';
   if (decision.data.mode !== expectedMode) return { state, recorded: false };
-  if (!candidate.requiresFeasibility && config.mode !== 'numeric' && decision.data.decision !== 'allow') return { state, recorded: false };
-  if (config.mode === 'numeric') {
-    const threshold = config.thresholds[candidate.type];
+  if (!candidate.requiresFeasibility && !numericDecisionRequired && decision.data.decision !== 'allow') return { state, recorded: false };
+  if (numericDecisionRequired) {
+    const threshold = thresholdForActivity(config, candidate.type);
     if (!threshold) return { state, recorded: false };
     const expected = threshold.organization
       ? decideOrganizationActivityThreshold(snapshot.data, threshold.organization).decision

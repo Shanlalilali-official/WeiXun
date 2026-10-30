@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   CUSTOMER_ACTIVITY_PLANNING_MS,
   CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS,
+  HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD,
   createResolvedCustomerActivityAgreement,
   createCustomerActivityTasks,
   createEmptyCustomerActivityState,
@@ -336,6 +337,9 @@ async function main() {
   const activityDirections: Array<[string, string, CustomerActivityProposalCandidate['type']]> = [
     ['我们可以安排案例现场参观，看看已经落地的项目。', '案例现场参观', 'case_site_visit'],
     ['欢迎您下周来我们公司参观。', '来我们公司参观', 'company_visit'],
+    ['赵老师，我想请您吃饭，顺便聊聊项目安排。', '请您吃饭', 'hospitality'],
+    ['赵老师，不是不可以请您吃饭，我们改天约时间。', '请您吃饭', 'hospitality'],
+    ['赵老师，周末要不要喝酒？', '喝酒', 'hospitality'],
   ];
   for (const [index, [salesText, quote, expectedType]] of activityDirections.entries()) {
     const candidates = await detectCustomerActivityProposals({
@@ -346,6 +350,39 @@ async function main() {
     assert.equal(candidates[0].type, expectedType, 'activity directions map to the correct type');
     assert.equal(candidates[0].evidence[0].quote, quote);
   }
+
+  const excludedHospitalityMentions = await detectCustomerActivityProposals({
+    conversationEnded: true, conversationId: 'hospitality-exclusions', npcId: 'P1-002',
+    messages: [
+      { messageId: 'excluded-meal', speaker: 'sales', text: '我不想请您吃饭。' },
+      { messageId: 'excluded-tea', speaker: 'sales', text: '平时我会请客户喝杯茶，但今天聊下项目。' },
+      { messageId: 'excluded-water', speaker: 'sales', text: '我们可以一起喝杯水，先把项目问题说清楚。' },
+      { messageId: 'excluded-history', speaker: 'sales', text: '我们上周参加过饭局，今天先聊下项目进度。' },
+    ],
+  }, { invoker: async (messages) => messages[0]?.content.includes('语义复核器')
+    ? JSON.stringify({ reviews: [{
+      proposalMessageId: 'excluded-meal', type: 'hospitality', classification: 'not_proposed',
+      proposalEvidence: { messageId: 'excluded-meal', quote: '我不想请您吃饭。' },
+    }] })
+    : JSON.stringify({ activities: [] }) });
+  assert.deepEqual(excludedHospitalityMentions, [], 'a negative, historical meal, tea, or water mention is not a hospitality proposal');
+
+  const customerHospitalityConversation = [
+    { messageId: 'customer-meal-proposal', speaker: 'customer' as const, text: '要不下周我们一起吃个饭，聊一下项目进展？' },
+    { messageId: 'sales-meal-confirmation', speaker: 'sales' as const, text: '好，我来安排，之后和您确认。' },
+  ];
+  const customerHospitalityCandidates = await detectCustomerActivityProposals({
+    conversationEnded: true, conversationId: 'customer-hospitality-confirmed', npcId: 'P1-002',
+    messages: customerHospitalityConversation,
+  }, { invoker: async () => JSON.stringify({ activities: [{
+    type: 'hospitality', initiator: 'customer',
+    proposal: { messageId: 'customer-meal-proposal', quote: '我们一起吃个饭' },
+    response: { messageId: 'sales-meal-confirmation', quote: '好，我来安排', kind: 'explicit_acceptance' },
+    finalStatus: 'active', finalOutcome: { messageId: 'sales-meal-confirmation', quote: '之后和您确认' }, confidence: 0.99,
+  }] }) });
+  assert.equal(customerHospitalityCandidates.length, 1, 'a customer hospitality proposal becomes a candidate only after sales confirmation');
+  assert.equal(customerHospitalityCandidates[0].initiator, 'customer');
+  assert.equal(customerHospitalityCandidates[0].requiresFeasibility, false);
 
   const notOurCompany = await detectCustomerActivityProposals({
     conversationEnded: true, conversationId: 'sales-visits-customer-company', npcId: 'P1-002',
@@ -816,6 +853,59 @@ async function main() {
   assert.equal(customerConfirmation.decision, 'allow');
   assert.ok(createResolvedCustomerActivityAgreement(customerInitiates[0], decisionSnapshot, aiConfig, customerConfirmation));
 
+  assert.deepEqual(HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD, { supportMin: 15, pleasantnessMin: 55 });
+  const hospitalityBoundarySnapshot: CustomerActivityRelationshipSnapshot = {
+    ...decisionSnapshot,
+    support: 15,
+    pleasantness: 55,
+    organization: {
+      members: CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS.map((npcId) => ({
+        npcId,
+        support: npcId === 'P1-002' ? 15 : 0,
+        pleasantness: npcId === 'P1-002' ? 55 : 0,
+      })),
+    },
+  };
+  let hospitalityJevCalls = 0;
+  const hospitalityAtBoundary = await decideCustomerActivityFeasibility(
+    customerHospitalityCandidates[0], hospitalityBoundarySnapshot, aiConfig,
+    { jevInvoker: async () => { hospitalityJevCalls += 1; throw new Error('hospitality always uses its numeric gate'); } },
+  );
+  assert.equal(hospitalityAtBoundary.decision, 'allow', 'hospitality thresholds pass inclusively at 15/55');
+  assert.equal(hospitalityAtBoundary.mode, 'numeric', 'customer confirmation does not bypass the hospitality threshold');
+  assert.equal(hospitalityJevCalls, 0, 'global AI mode does not call Jev for hospitality');
+  const hospitalityAgreement = createResolvedCustomerActivityAgreement(customerHospitalityCandidates[0],
+    hospitalityBoundarySnapshot, aiConfig, hospitalityAtBoundary);
+  assert.equal(hospitalityAgreement?.type, 'hospitality',
+    'the verified hospitality decision creates an ordinary activity agreement');
+  const hospitalityTaskState = createCustomerActivityTasks(
+    createEmptyCustomerActivityState(), hospitalityAgreement ? [hospitalityAgreement] : [], 22_000,
+  );
+  assert.equal(hospitalityTaskState.tasks[0]?.decisionMode, 'numeric', 'hospitality task schema retains its numeric gate mode');
+  assert.equal(readCustomerActivityState(JSON.parse(JSON.stringify(hospitalityTaskState))).tasks[0]?.type, 'hospitality',
+    'hospitality tasks and frozen snapshots survive persisted-state readback');
+  const hospitalityRecorded = recordCustomerActivityProposalDecision(
+    createEmptyCustomerActivityState(), customerHospitalityCandidates[0], hospitalityBoundarySnapshot,
+    aiConfig, hospitalityAtBoundary, 23_000,
+  );
+  assert.equal(hospitalityRecorded.recorded, true, 'hospitality numeric decisions persist under the normal record schema');
+  assert.equal(readCustomerActivityState(JSON.parse(JSON.stringify(hospitalityRecorded.state))).decisions[0]?.mode, 'numeric',
+    'hospitality numeric decision records survive persisted-state readback');
+  const forgedHospitalityState = {
+    ...hospitalityRecorded.state,
+    decisions: [{ ...hospitalityRecorded.state.decisions[0], mode: 'ai' }],
+  };
+  assert.equal(isCustomerActivityState(forgedHospitalityState), false,
+    'state schema rejects an AI-mode hospitality decision that bypasses its numeric gate');
+  const hospitalityBelowSupport = await decideCustomerActivityFeasibility(
+    customerHospitalityCandidates[0], { ...hospitalityBoundarySnapshot, support: 14 }, aiConfig,
+  );
+  const hospitalityBelowPleasantness = await decideCustomerActivityFeasibility(
+    customerHospitalityCandidates[0], { ...hospitalityBoundarySnapshot, pleasantness: 54 }, aiConfig,
+  );
+  assert.equal(hospitalityBelowSupport.decision, 'reject', 'support below the hospitality threshold blocks the proposal');
+  assert.equal(hospitalityBelowPleasantness.decision, 'reject', 'pleasantness below the hospitality threshold blocks the proposal');
+
   assert.equal(parseActivityDecisionConfig({ revision: 1, mode: 'numeric', thresholds: {} }), null,
     'numeric mode cannot be enabled before every activity threshold is configured');
   assert.ok(parseActivityDecisionConfig({ revision: 1, mode: 'ai', thresholds: { company_visit: { supportMin: 30 } } }),
@@ -997,6 +1087,16 @@ async function main() {
   const legacyCustomerDecision = await decideCustomerActivityFeasibility(customerInitiates[0], decisionSnapshot, legacyNumericConfig, organizationJev);
   assert.equal(legacyCustomerDecision.decision, 'allow', 'legacy snapshots and paired thresholds retain historical behavior');
   assert.equal(legacyCustomerDecision.mode, 'numeric', 'legacy customer proposals still pass the stored numeric gate');
+  assert.deepEqual(parseActivityDecisionConfig(legacyNumericConfig)?.thresholds.hospitality,
+    HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD, 'legacy configs receive the hospitality default threshold when loaded');
+  const legacyHospitalityDecision = await decideCustomerActivityFeasibility(
+    customerHospitalityCandidates[0], hospitalityBoundarySnapshot, legacyNumericConfig, organizationJev,
+  );
+  assert.equal(legacyHospitalityDecision.decision, 'allow', 'legacy configs still apply the default hospitality gate');
+  assert.equal(legacyHospitalityDecision.mode, 'numeric');
+  assert.equal(parseActivityDecisionConfig({
+    revision: 11, mode: 'ai', thresholds: { hospitality: { supportMin: 20 } },
+  }), null, 'hospitality thresholds must always be a complete support/pleasantness pair');
 
   await assert.rejects(decideCustomerActivityFeasibility(detectedProposals[0], decisionSnapshot, aiConfig, {
     jevInvoker: async () => { throw new Error('Jev unavailable'); },

@@ -1,5 +1,9 @@
 # 政企销售 AI 竞标实训游戏
 
+## 2026-10-30 工作交接
+
+完整说明和日常操作请读 [交接与操作手册](docs/handover/README.md)，数据迁移请读 [恢复手册](docs/handover/DATA_RESTORE.md)，本次数据/验证范围请读 [交接核验记录](docs/handover/DELIVERY_REPORT.md)。页面/API清单、架构、配置、已知问题和故障排查均在同目录。
+
 ## Windows 一键启动
 
 双击项目根目录的 `start-project.bat`。脚本会检查环境与构建产物、启动 `http://127.0.0.1:5000/` 并自动打开浏览器。运行期间不要关闭命令行窗口；按 `Ctrl+C` 或关闭窗口即可停止服务。
