@@ -2,6 +2,8 @@
 
 ## 2026-10-30 Git 检查点与工作交接
 
+最终ZIP独立校验发现Windows默认文件名编码问题，已登记HANDOVER-002并改为显式UTF-8；中文fixture独立.NET读取通过，完整包继续以外部receipt为交付依据。此前未通过校验的副本不作为最终交付。
+
 用户授权提交推送全部未提交改动，并打包除 API key 外的完整项目、页面、数据和详细操作说明。本批不修改业务规则，保留原客户活动/系统评测实现；新增 docs/handover 手册与导出/恢复/打包工具。主线程复核实际 diff；12 专项、tsc、完整 ESLint、Next+tsup build、新脚本语法/lint和数据verify-only通过。已只读导出权威源27表672行、1 bucket35对象，计数/哈希核对无错误；首次Windows冒号路径失败由哈希本地文件名修复并完整重导出。见 docs/handover/DELIVERY_REPORT.md。备份非事务整库镜像，私有schema/平台配置/浏览器未保存数据不在副本；未执行目标恢复或远程部署。最终Git号与ZIP验证查包内git-metadata及包外receipt。
 
 ## 2026-10-29 吃饭/喝酒邀约事件（本地完成）

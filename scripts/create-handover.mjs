@@ -306,7 +306,7 @@ function createZip(packageDir, zipPath) {
   return new Promise((resolve, reject) => {
     // Windows' built-in bsdtar streams file data, sets UTF-8 ZIP name flags, and
     // writes ZIP64 records when required. Paths are supplied as argv values.
-    const child = spawn('tar.exe', ['-a', '-c', '-f', zipPath, '-C', packageDir, '.'], {
+    const child = spawn('tar.exe', ['--options', 'zip:hdrcharset=UTF-8', '-a', '-c', '-f', zipPath, '-C', packageDir, '.'], {
       windowsHide: true,
       stdio: ['ignore', 'ignore', 'pipe'],
     });

@@ -1,5 +1,11 @@
 # 动态问题台账
 
+## HANDOVER-002 ZIP 中文文件名编码
+
+- 状态：Resolved（打包工具修复）；最后检查：2026-10-30。
+- 首轮完整ZIP以Windows tar默认编码写中文名，独立.NET ZIP核验读出替换字符并发现重名，阻止交付该包。
+- scripts/create-handover.mjs显式指定zip:hdrcharset=UTF-8；中文文件名fixture经.NET独立读取正确。最终完整包仅在逐文件清单/哈希与路由完整性核验通过后交付，结果见包外DELIVERY_RECEIPT.json。
+
 ## HANDOVER-001 Windows Storage 备份路径兼容
 
 - 状态：Resolved；最后检查：2026-10-30；仅交接导出工具缺陷。
