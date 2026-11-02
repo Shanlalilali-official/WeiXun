@@ -761,6 +761,13 @@ let customerActivityAutosaveInterval=null;
 let customerActivityFinalFlushTimer=null;
 let customerActivityClockTimer=null;
 let customerActivityLastTimeoutSubmitId=null;
+let customerActivityLastTimeoutQuizId=null;
+let customerActivityEvaluationStartedAtByTask=new Map();
+const CUSTOMER_ACTIVITY_EVALUATION_MINIMUM_MS=900;
+let customerActivityQuizProgressTaskId=null;
+let customerActivityQuizIndex=0;
+let customerActivityQuizPendingAnswer=null;
+let customerActivityQuizCompletionPending=false;
 let customerActivityLastSyncAt=0;
 let customerActivityGeneration=0;
 function apiErrorMessage(status,message){
@@ -835,6 +842,7 @@ async function apiCall(action,payload={},options={}){
   const controller=new AbortController();activeRequestController=controller;activeRequestAction=action;
  state.aiRetry={action,commandId,payload,kind:options.retryKind||action,meta:options.retryMeta||null};
  requestBusy=true;
+ syncCustomerActivityQuizControls();
  state.aiStatus='AI 思考中…';state.aiError='';state.aiErrorCanRefresh=false;save();
  if(options.renderPending!==false)render();
  try{
@@ -871,11 +879,11 @@ async function apiCall(action,payload={},options={}){
   return data;
  }catch(error){
   if(!requestContextIsCurrent(context))return INVALIDATED_REQUEST;
-  const message=apiErrorMessage(error?.status,error?.message);
+  const message=action.startsWith('customer_activity_')&&error?.status===503?(error?.message||apiErrorMessage(error?.status,error?.message)):apiErrorMessage(error?.status,error?.message);
   if([404,409,410].includes(error?.status)){previewRecoveredKey=null;previewRecoveryError=error?.status===409?'预览会话版本已变化，请同步后继续。':previewRecoveryErrorMessage(error?.status,error?.message)}
   state.aiError=message;state.aiErrorCanRefresh=error?.status===409;toast(message,'error');return null;
  }finally{
-   if(requestContextIsCurrent(context)){requestBusy=false;activeRequestController=null;activeRequestAction='';state.aiStatus='';save();if(options.renderPending===false&&state.aiErrorCanRefresh&&state.screen==='projects')render()}
+   if(requestContextIsCurrent(context)){requestBusy=false;activeRequestController=null;activeRequestAction='';state.aiStatus='';save();syncCustomerActivityQuizControls();if(options.renderPending===false&&state.aiErrorCanRefresh&&state.screen==='projects')render()}
  }
 }
 
@@ -1017,7 +1025,7 @@ async function refreshPreview(){
  function loadCustomerActivitySeen(){try{const value=JSON.parse(sessionStorage.getItem(customerActivitySeenKey())||'[]');customerActivitySeenIds=new Set(Array.isArray(value)?value.filter(item=>typeof item==='string'):[])}catch{customerActivitySeenIds=new Set()}}
  function saveCustomerActivitySeen(){try{sessionStorage.setItem(customerActivitySeenKey(),JSON.stringify([...customerActivitySeenIds]))}catch{}}
  function resetCustomerActivityComposerForContext(){
-  customerActivityGeneration++;customerActivityDraft='';customerActivityDirty=false;customerActivitySaved=true;customerActivitySaveRequested=false;customerActivitySaveBusy=false;customerActivitySavePromise=null;customerActivitySyncBusy=false;customerActivityAction='';customerActivityError='';customerActivityLastTimeoutSubmitId=null;customerActivityLastSyncAt=0;customerActivityServerOffset=0;customerActivityEndQueue=[];customerActivityModalLocked=false;customerActivityRenderedTaskKey='';
+  customerActivityGeneration++;customerActivityDraft='';customerActivityDirty=false;customerActivitySaved=true;customerActivitySaveRequested=false;customerActivitySaveBusy=false;customerActivitySavePromise=null;customerActivitySyncBusy=false;customerActivityAction='';customerActivityError='';customerActivityLastTimeoutSubmitId=null;customerActivityLastTimeoutQuizId=null;customerActivityEvaluationStartedAtByTask.clear();customerActivityQuizProgressTaskId=null;customerActivityQuizIndex=0;customerActivityQuizPendingAnswer=null;customerActivityQuizCompletionPending=false;customerActivityLastSyncAt=0;customerActivityServerOffset=0;customerActivityEndQueue=[];customerActivityModalLocked=false;customerActivityRenderedTaskKey='';
   if(customerActivitySaveTimer){clearTimeout(customerActivitySaveTimer);customerActivitySaveTimer=null}
   if(customerActivityFinalFlushTimer){clearTimeout(customerActivityFinalFlushTimer);customerActivityFinalFlushTimer=null}
   if(customerActivityEndTimer){clearTimeout(customerActivityEndTimer);customerActivityEndTimer=null}
@@ -1025,6 +1033,17 @@ async function refreshPreview(){
   loadCustomerActivitySeen();
  }
  function currentCustomerActivity(tasks=customerActivityTasks()){const ordered=[...tasks].sort((left,right)=>(customerActivityEpoch(left.createdAt)||0)-(customerActivityEpoch(right.createdAt)||0));return ordered.find(task=>task.status!=='submitted'||!customerActivitySeenIds.has(task.id))||null}
+ function syncCustomerActivityQuizControls(task=currentCustomerActivity()){
+  if(!task||task.status!=='submitted'||task.quiz?.status!=='answering')return;
+  const questions=Array.isArray(task.quiz.questions)?task.quiz.questions:[],index=customerActivityQuizIndexFor(task),question=questions[index],pending=customerActivityQuizPendingAnswer?.taskId===task.id&&customerActivityQuizPendingAnswer.questionId===question?.id,answer=pending?customerActivityQuizPendingAnswer.optionId:task.quiz.answers?.[question?.id],answerSaved=Boolean(question&&typeof answer==='string'&&task.quiz.answers?.[question.id]===answer&&!pending),timedOut=customerActivityRemaining({deadlineAt:task.quiz.deadlineAt})<=0,busy=Boolean(customerActivityAction||requestBusy||customerActivitySyncBusy);
+  const fieldset=modalRoot?.querySelector('fieldset');if(fieldset)fieldset.disabled=busy||timedOut;
+  for(const [optionIndex] of (question?.options||[]).entries()){const option=document.getElementById(`customer-activity-option-${optionIndex}`);if(option)option.disabled=busy||timedOut||Boolean(pending)}
+  const previous=document.getElementById('customer-activity-quiz-previous');if(previous)previous.disabled=index===0||busy||timedOut||Boolean(pending);
+  const skip=document.getElementById('customer-activity-quiz-skip');if(skip)skip.disabled=busy||timedOut||Boolean(pending);
+  const next=document.getElementById('customer-activity-quiz-next');if(next)next.disabled=!answerSaved||busy||timedOut||Boolean(pending);
+  const finish=document.getElementById('customer-activity-quiz-finish');if(finish)finish.disabled=busy||timedOut||customerActivityQuizCompletionPending;
+  const retry=document.getElementById('customer-activity-quiz-retry');if(retry)retry.disabled=busy;
+ }
 function customerActivityPauseAnchor(task){
  const createdAt=customerActivityLocalTime(task?.createdAt),checkpoint=state.timer?.lastResumedAt;
  const anchor=typeof createdAt==='number'&&typeof checkpoint==='number'&&Number.isFinite(checkpoint)?Math.max(createdAt,checkpoint):typeof createdAt==='number'?createdAt:typeof checkpoint==='number'&&Number.isFinite(checkpoint)?checkpoint:Date.now();
@@ -1056,35 +1075,63 @@ function resumeCountdownAfterCustomerActivity(){
   state.customerActivities={version,tasks:envelope.tasks};reconcileCustomerActivityTimer(envelope.tasks);save();presentCustomerActivityPlanner();return true;
  }
  async function customerActivityRequest(action,payload={}){
-  if(requestBusy)return null;
-  if(!state.previewSessionId){customerActivityError='尚未建立预览会话，活动状态将在下一次同步时恢复。';presentCustomerActivityPlanner();return null}
+  if(requestBusy)throw new Error('当前有其他操作正在处理中，请稍后重试。');
+  if(!state.previewSessionId)throw new Error('尚未建立预览会话，活动状态将在下一次同步时恢复。')
   const requestGeneration=customerActivityGeneration;
+  const previousRetry=state.aiRetry;
   const response=await accountScopedApiCall(action,payload,{renderPending:false,retryKind:'customer_activity'});
   if(requestGeneration!==customerActivityGeneration)return INVALIDATED_REQUEST;
-  if(response===INVALIDATED_REQUEST||!response)return response;
+  if(response===INVALIDATED_REQUEST)return response;
+  if(!response){
+   const requestWasSent=state.aiRetry!==previousRetry&&state.aiRetry?.action===action;
+   const message=requestWasSent?(state.aiError||'活动操作暂时未能完成，请重试。'):requestBusy?'当前有其他操作正在处理中，请稍后重试。':previewRecoveryError||'预览会话尚未同步，请重试。';
+   const error=new Error(message);
+   if(requestWasSent&&state.aiErrorCanRefresh)error.status=409;
+   throw error;
+  }
   if(!response.customerActivities||!Array.isArray(response.customerActivities.tasks))throw new Error('活动响应缺少任务队列，请重试同步。');
   applyPreviewCustomerActivities(response.customerActivities,response.serverNow);return response;
  }
  async function refreshCustomerActivityQueue(){
   if(customerActivitySyncBusy||requestBusy)return false;customerActivitySyncBusy=true;
   const requestGeneration=customerActivityGeneration;
-  try{const response=await customerActivityRequest('customer_activity_sync');if(!response||response===INVALIDATED_REQUEST)throw new Error('活动状态同步失败。');customerActivityError='';return true}
-  catch(error){if(requestGeneration===customerActivityGeneration){customerActivityError=error instanceof Error?error.message:'活动状态同步失败。';presentCustomerActivityPlanner(true)}return false}
+  try{const response=await customerActivityRequest('customer_activity_sync');if(response===INVALIDATED_REQUEST)return false;if(!response)throw new Error('活动状态同步暂时不可用，请重试。');customerActivityError='';return true}
+  catch(error){
+   if(error===INVALIDATED_REQUEST)return false;
+   if(requestGeneration!==customerActivityGeneration)return false;
+   let message=error instanceof Error?error.message:'活动状态同步暂时不可用，请重试。';
+   if(error?.status===409&&state.previewSessionId&&!requestBusy){
+    const recovered=await recoverPreviewSession({force:true});
+    if(requestGeneration!==customerActivityGeneration||recovered===INVALIDATED_REQUEST)return false;
+    if(recovered===true){customerActivityError='';return true}
+    message=previewRecoveryError||message;
+   }
+   if(requestGeneration===customerActivityGeneration){customerActivityError=message;presentCustomerActivityPlanner(true)}
+   return false
+  }
   finally{if(requestGeneration===customerActivityGeneration){customerActivitySyncBusy=false;presentCustomerActivityPlanner()}}
  }
  function customerActivitySetStatus(text){const element=document.getElementById('customer-activity-save-status');if(element)element.textContent=text}
- function customerActivityTaskKey(task){return task?`${task.id}:${task.status}:${task.evaluation?.overallEvaluation||''}`:''}
+ function customerActivityTaskKey(task){return task?`${task.id}:${task.status}:${task.quiz?.status||''}:${JSON.stringify(task.quiz?.answers||{})}:${task.evaluation?'evaluated':''}`:''}
  function customerActivityRemaining(task){const deadline=customerActivityEpoch(task?.deadlineAt);return deadline===null?CUSTOMER_ACTIVITY_PLANNING_MS:deadline-customerActivityServerNow()}
  function customerActivityUpdateClock(){
   const task=currentCustomerActivity();
-  if(task?.status==='planning'){
+  if(task?.status==='submitted'&&task.evaluation){
+   const startedAt=customerActivityEvaluationStartedAtByTask.get(task.id);
+   if(Number.isFinite(startedAt)&&Date.now()-startedAt>=CUSTOMER_ACTIVITY_EVALUATION_MINIMUM_MS){customerActivityEvaluationStartedAtByTask.delete(task.id);customerActivityRenderedTaskKey='';presentCustomerActivityPlanner(true)}
+  }else if(task?.status==='planning'){
    const remaining=customerActivityRemaining(task),seconds=Math.max(0,Math.ceil(remaining/1000)),timer=document.getElementById('customer-activity-countdown');
    if(timer)timer.textContent=`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;
    if(remaining<=0&&customerActivityLastTimeoutSubmitId!==task.id&&customerActivityAction===''&&!customerActivitySaveBusy&&!requestBusy)void customerActivitySubmit(task,false);
+  }else if(task?.status==='submitted'&&task.quiz?.status==='answering'){
+   const remaining=customerActivityRemaining({deadlineAt:task.quiz.deadlineAt}),seconds=Math.max(0,Math.ceil(remaining/1000)),timer=document.getElementById('customer-activity-quiz-countdown');
+   if(timer)timer.textContent=`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;
+   if(remaining<=0&&customerActivityLastTimeoutQuizId!==task.id&&customerActivityAction===''&&!requestBusy)void customerActivityCompleteQuiz(task,true);
+   else if(!requestBusy&&Date.now()-customerActivityLastSyncAt>=2500){customerActivityLastSyncAt=Date.now();void refreshCustomerActivityQueue()}
   }else if(task?.status==='submitted'&&!task.evaluation&&!requestBusy&&Date.now()-customerActivityLastSyncAt>=2500){customerActivityLastSyncAt=Date.now();void refreshCustomerActivityQueue()}
  }
  async function customerActivityStart(task){
-  if(!task||task.status!=='pending'||requestBusy||customerActivityAction)return;
+  if(!task||task.status!=='pending'||requestBusy||customerActivityAction||previewRecoveryIsBlocking())return;
   const requestGeneration=customerActivityGeneration;
   customerActivityAction='start';customerActivityError='';presentCustomerActivityPlanner(true);
   try{const response=await customerActivityRequest('customer_activity_start',{taskId:task.id});if(!response||response===INVALIDATED_REQUEST)throw new Error('暂时无法开始活动策划，请重试同步。')}
@@ -1133,36 +1180,104 @@ function resumeCountdownAfterCustomerActivity(){
   }catch(error){if(requestGeneration===customerActivityGeneration){customerActivityError=error instanceof Error?error.message:'提交失败，方案仍保留，请重试。';if(timedOut){customerActivityLastTimeoutSubmitId=task.id;setTimeout(()=>{if(requestGeneration===customerActivityGeneration){customerActivityLastTimeoutSubmitId=null;void refreshCustomerActivityQueue()}},1000)}}}
   finally{if(requestGeneration===customerActivityGeneration){customerActivityAction='';presentCustomerActivityPlanner(true)}}
  }
+ function customerActivityQuizIndexFor(task){
+  const questions=Array.isArray(task?.quiz?.questions)?task.quiz.questions:[];
+  if(customerActivityQuizProgressTaskId!==task?.id){
+   customerActivityQuizProgressTaskId=task?.id||null;
+   const firstUnanswered=questions.findIndex(question=>task.quiz.answers?.[question.id]==null);
+   customerActivityQuizIndex=firstUnanswered>=0?firstUnanswered:Math.max(0,questions.length-1);
+  }
+  return Math.max(0,Math.min(customerActivityQuizIndex,Math.max(0,questions.length-1)));
+ }
+ async function customerActivitySaveQuizAnswer(task,questionId,optionId){
+  if(!task||task.status!=='submitted'||task.quiz?.status!=='answering'||customerActivityAction||requestBusy)return false;
+  const requestGeneration=customerActivityGeneration;
+  customerActivityQuizPendingAnswer={taskId:task.id,questionId,optionId};customerActivityAction='answer';customerActivityError='';presentCustomerActivityPlanner(true);
+  try{
+   const response=await customerActivityRequest('customer_activity_answer',{taskId:task.id,questionId,optionId});
+   if(!response||response===INVALIDATED_REQUEST)throw new Error('答案未能保存，请重试。');
+   if(requestGeneration!==customerActivityGeneration)return false;
+   if(customerActivityTasks().find(item=>item.id===task.id)?.quiz?.answers?.[questionId]!==optionId)throw new Error('服务端尚未确认答案保存，请重试。');
+   customerActivityQuizPendingAnswer=null;customerActivityError='';return true;
+  }catch(error){
+   if(requestGeneration===customerActivityGeneration){customerActivityError=error instanceof Error?error.message:'答案保存失败，请重试。';presentCustomerActivityPlanner(true)}
+   return false;
+  }finally{if(requestGeneration===customerActivityGeneration){customerActivityAction='';presentCustomerActivityPlanner(true)}}
+ }
+ async function customerActivityCompleteQuiz(task,deadlineTriggered=false){
+  if(!task||task.status!=='submitted'||task.quiz?.status!=='answering'||customerActivityAction||requestBusy)return false;
+  const requestGeneration=customerActivityGeneration;
+  if(!deadlineTriggered){
+   const index=customerActivityQuizIndexFor(task),question=task.quiz.questions[index];
+   if(question){
+    const pending=customerActivityQuizPendingAnswer?.taskId===task.id&&customerActivityQuizPendingAnswer.questionId===question.id?customerActivityQuizPendingAnswer:null;
+    const answer=pending?pending.optionId:task.quiz.answers?.[question.id]??null;
+    const saved=Object.prototype.hasOwnProperty.call(task.quiz.answers||{},question.id)&&task.quiz.answers[question.id]===answer;
+    if(pending||!saved){const answerSaved=await customerActivitySaveQuizAnswer(task,question.id,answer);if(!answerSaved)return false}
+   }
+  }
+  if(customerActivityAction||requestBusy)return false;
+  customerActivityEvaluationStartedAtByTask.set(task.id,Date.now());
+  customerActivityQuizCompletionPending=true;customerActivityAction='complete_quiz';customerActivityError='';presentCustomerActivityPlanner(true);
+  try{
+   const response=await customerActivityRequest('customer_activity_complete_quiz',{taskId:task.id});
+   if(!response||response===INVALIDATED_REQUEST)throw new Error('情境推演尚未提交，请重试。');
+   if(requestGeneration!==customerActivityGeneration)return false;
+   if(customerActivityTasks().find(item=>item.id===task.id)?.quiz?.status!=='completed')throw new Error('服务端尚未确认情境推演完成，请重试同步。');
+   customerActivityQuizCompletionPending=false;customerActivityError='';customerActivityLastTimeoutQuizId=null;return true;
+  }catch(error){
+   if(requestGeneration===customerActivityGeneration){
+    customerActivityError=error instanceof Error?error.message:'情境推演提交失败，请重试。';
+    if(deadlineTriggered){customerActivityLastTimeoutQuizId=task.id;setTimeout(()=>{if(requestGeneration===customerActivityGeneration){customerActivityLastTimeoutQuizId=null;void refreshCustomerActivityQueue()}},1000)}
+    presentCustomerActivityPlanner(true);
+   }
+   return false;
+  }finally{if(requestGeneration===customerActivityGeneration){customerActivityAction='';presentCustomerActivityPlanner(true)}}
+ }
  async function retryCustomerActivity(task){
   if(!task||customerActivityAction||requestBusy)return;customerActivityError='';
   if(task.status==='planning'&&customerActivityRemaining(task)<=0)return customerActivitySubmit(task,false);
+  if(task.status==='submitted'&&task.quiz?.status==='answering'){
+   if(customerActivityQuizPendingAnswer){const pending=customerActivityQuizPendingAnswer;const saved=await customerActivitySaveQuizAnswer(task,pending.questionId,pending.optionId);if(!saved)return}
+   if(customerActivityQuizCompletionPending||customerActivityRemaining({deadlineAt:task.quiz.deadlineAt})<=0){await customerActivityCompleteQuiz(task,customerActivityRemaining({deadlineAt:task.quiz.deadlineAt})<=0);return}
+   await refreshCustomerActivityQueue();return;
+  }
   await refreshCustomerActivityQueue();
  }
  function continueCustomerActivity(task){
-  customerActivitySeenIds.add(task.id);saveCustomerActivitySeen();reconcileCustomerActivityTimer();customerActivityModalLocked=false;customerActivityRenderedTaskKey='';modalRoot.innerHTML='';customerActivityDraft='';customerActivityDirty=false;customerActivityError='';setTimeout(()=>presentCustomerActivityPlanner(true),0)
+  customerActivitySeenIds.add(task.id);saveCustomerActivitySeen();customerActivityEvaluationStartedAtByTask.delete(task.id);reconcileCustomerActivityTimer();customerActivityModalLocked=false;customerActivityRenderedTaskKey='';modalRoot.innerHTML='';customerActivityDraft='';customerActivityDirty=false;customerActivityError='';setTimeout(()=>presentCustomerActivityPlanner(true),0)
  }
  function presentCustomerActivityPlanner(force=false){
   if(!modalRoot)return;
   const task=currentCustomerActivity();
   if(!task){if(customerActivityModalLocked){customerActivityModalLocked=false;customerActivityRenderedTaskKey='';modalRoot.innerHTML=''}return}
   if(!customerActivityModalLocked&&modalRoot.innerHTML.trim())return;
-  const key=customerActivityTaskKey(task);
-  if(customerActivityModalLocked&&!force&&customerActivityRenderedTaskKey===key){customerActivityUpdateClock();customerActivitySetStatus(customerActivityAction==='save'?'草稿保存中…':customerActivitySaved?'草稿已保存':'草稿保存中…');const start=document.getElementById('customer-activity-start'),submit=document.getElementById('customer-activity-submit');if(start){start.disabled=Boolean(customerActivityAction||requestBusy);start.textContent=customerActivityAction==='start'?'正在开始…':'开始策划 · 5:00'}if(submit){submit.disabled=customerActivityAction==='start'||customerActivityAction==='submit'||requestBusy;submit.textContent=customerActivityAction==='submit'?'正在提交…':'提前提交方案'}return}
+  const answeringQuiz=task.status==='submitted'&&task.quiz?.status==='answering'&&customerActivityAction!=='complete_quiz';
+  if(answeringQuiz)customerActivityQuizIndexFor(task);
+  const key=`${customerActivityTaskKey(task)}:${customerActivityError}`;
+  if(customerActivityModalLocked&&!force&&customerActivityRenderedTaskKey===key){syncCustomerActivityQuizControls(task);customerActivitySetStatus(customerActivityAction==='save'?'草稿保存中…':customerActivitySaved?'草稿已保存':'草稿保存中…');const start=document.getElementById('customer-activity-start'),submit=document.getElementById('customer-activity-submit');if(start){start.disabled=Boolean(customerActivityAction||requestBusy||previewRecoveryIsBlocking());start.textContent=customerActivityAction==='start'?'正在开始…':'开始策划 · 5:00'}if(submit){submit.disabled=customerActivityAction==='start'||customerActivityAction==='submit'||requestBusy||previewRecoveryIsBlocking();submit.textContent=customerActivityAction==='submit'?'正在提交…':'提前提交方案'}const retrySync=document.getElementById('customer-activity-retry-sync');if(retrySync)retrySync.disabled=Boolean(customerActivityAction||requestBusy||customerActivitySyncBusy);const retry=document.getElementById('customer-activity-retry');if(retry)retry.disabled=Boolean(customerActivityAction||requestBusy||customerActivitySyncBusy);const quizRetry=document.getElementById('customer-activity-quiz-retry');if(quizRetry)quizRetry.disabled=Boolean(customerActivityAction||requestBusy||customerActivitySyncBusy);return}
   customerActivityModalLocked=true;customerActivityRenderedTaskKey=key;
-  const label=CUSTOMER_ACTIVITY_LABELS[task.type]||'客户活动',isHospitality=task.type==='hospitality',waiting=task.status==='submitted'&&!task.evaluation;
+  const label=CUSTOMER_ACTIVITY_LABELS[task.type]||'客户活动',isHospitality=task.type==='hospitality',waiting=task.status!=='pending'&&task.status!=='planning'&&!task.evaluation&&!answeringQuiz;
+  if(waiting&&!customerActivityEvaluationStartedAtByTask.has(task.id))customerActivityEvaluationStartedAtByTask.set(task.id,Date.now());
+  const evaluationStartedAt=customerActivityEvaluationStartedAtByTask.get(task.id),evaluationTransition=Boolean(task.evaluation&&Number.isFinite(evaluationStartedAt)&&Date.now()-evaluationStartedAt<CUSTOMER_ACTIVITY_EVALUATION_MINIMUM_MS),evaluating=waiting||evaluationTransition;
   if(task.status==='planning'&&!customerActivityDraft)customerActivityDraft=task.draft||'';
   const seconds=Math.max(0,Math.ceil(customerActivityRemaining(task)/1000));
-  const stageTitle=task.status==='pending'?'活动提议已匹配':task.status==='planning'?'活动策划':waiting?'正在处理方案':'活动结果';
+  const stageTitle=task.status==='pending'?'活动提议已匹配':task.status==='planning'?'活动策划':answeringQuiz?'情境推演':evaluating?'正在评估':'评估已结束';
   let body='';
   if(task.status==='pending'){
-   body=`<div class="info-block"><strong>活动提议</strong><div class="small muted" style="margin-top:6px;line-height:1.7">${esc(task.summary||'客户提出了这项活动。')}</div></div><div class="tiny muted" style="margin-top:9px">开始后有 5 分钟${isHospitality?'整理邀约策略和方案':'整理方案'}；活动策划不扣游戏时间和行动点。</div>${customerActivityError?`<div class="notice amber" role="alert" style="margin-top:10px">${esc(customerActivityError)}</div>`:''}<div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="customer-activity-start" class="btn btn-primary" ${customerActivityAction||requestBusy?'disabled':''}>${customerActivityAction==='start'?'正在开始…':'开始策划 · 5:00'}</button></div>`;
+   body=`<div class="info-block"><strong>活动提议</strong><div class="small muted" style="margin-top:6px;line-height:1.7">${esc(task.summary||'客户提出了这项活动。')}</div></div><div class="tiny muted" style="margin-top:9px">开始后有 5 分钟${isHospitality?'整理邀约策略和方案':'整理方案'}；活动策划不扣游戏时间和行动点。</div>${customerActivityError?`<div class="notice amber" role="alert" style="margin-top:10px">${esc(customerActivityError)}<div style="margin-top:8px"><button id="customer-activity-retry-sync" class="btn" ${customerActivityAction||requestBusy||customerActivitySyncBusy?'disabled':''}>重试同步</button></div></div>`:''}<div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="customer-activity-start" class="btn btn-primary" ${customerActivityAction||requestBusy||previewRecoveryIsBlocking()?'disabled':''}>${customerActivityAction==='start'?'正在开始…':'开始策划 · 5:00'}</button></div>`;
   }else if(task.status==='planning'){
-   body=`<div class="notice amber" style="display:flex;justify-content:space-between;align-items:center"><span>剩余时间 · 刷新或关闭页面不会暂停</span><strong id="customer-activity-countdown" style="font:700 24px ui-monospace,monospace">${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}</strong></div><label class="tiny" for="customer-activity-draft" style="display:block;margin-top:14px;font-weight:800">${isHospitality?'邀约策略 / 方案':'活动方案'}</label><textarea id="customer-activity-draft" maxlength="12000" rows="8" style="display:block;box-sizing:border-box;width:100%;margin-top:6px;padding:12px;border:1px solid #cbd5e1;border-radius:10px;resize:vertical;font:14px/1.6 inherit" placeholder="${isHospitality?'结合客户偏好，说明邀约目的、餐叙或小酌场合、地点与时间的备选安排、预算与礼貌边界、如何尊重对方选择，以及活动后的业务跟进；未确认事项写明商量方式。':'结合客户表达的需求，描述活动目标、参与人员、议程或参观安排、准备材料以及活动后的跟进。'}">${esc(customerActivityDraft||task.draft||'')}</textarea><div class="tiny muted" style="display:flex;justify-content:space-between;margin-top:5px"><span id="customer-activity-save-status">${customerActivitySaved?'草稿已保存':'草稿保存中…'}</span><span id="customer-activity-char-count">${(customerActivityDraft||task.draft||'').length}/12,000</span></div>${customerActivityError?`<div class="notice red" role="alert" style="margin-top:10px">${esc(customerActivityError)}</div>`:''}<div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="customer-activity-submit" class="btn btn-primary" ${customerActivityAction==='submit'||customerActivityAction==='start'||requestBusy?'disabled':''}>${customerActivityAction==='submit'?'正在提交…':'提前提交方案'}</button></div>`;
-  }else if(waiting){
-   body=`<div class="notice amber">正在处理方案</div>${customerActivityError?`<div class="notice red" role="alert" style="margin-top:10px">${esc(customerActivityError)}</div>`:''}<div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="customer-activity-retry" class="btn">重试获取结果</button></div>`;
+   body=`<div class="notice amber" style="display:flex;justify-content:space-between;align-items:center"><span>剩余时间 · 刷新或关闭页面不会暂停</span><strong id="customer-activity-countdown" style="font:700 24px ui-monospace,monospace">${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}</strong></div><label class="tiny" for="customer-activity-draft" style="display:block;margin-top:14px;font-weight:800">${isHospitality?'邀约策略 / 方案':'活动方案'}</label><textarea id="customer-activity-draft" maxlength="12000" rows="8" style="display:block;box-sizing:border-box;width:100%;margin-top:6px;padding:12px;border:1px solid #cbd5e1;border-radius:10px;resize:vertical;font:14px/1.6 inherit" placeholder="${isHospitality?'结合客户偏好，说明邀约目的、餐叙或小酌场合、地点与时间的备选安排、预算与礼貌边界、如何尊重对方选择，以及活动后的业务跟进；未确认事项写明商量方式。':'结合客户表达的需求，描述活动目标、参与人员、议程或参观安排、准备材料以及活动后的跟进。'}">${esc(customerActivityDraft||task.draft||'')}</textarea><div class="tiny muted" style="display:flex;justify-content:space-between;margin-top:5px"><span id="customer-activity-save-status">${customerActivitySaved?'草稿已保存':'草稿保存中…'}</span><span id="customer-activity-char-count">${(customerActivityDraft||task.draft||'').length}/12,000</span></div>${customerActivityError?`<div class="notice red" role="alert" style="margin-top:10px">${esc(customerActivityError)}<div style="margin-top:8px"><button id="customer-activity-retry-sync" class="btn" ${customerActivityAction||requestBusy||customerActivitySyncBusy?'disabled':''}>重试同步</button></div></div>`:''}<div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="customer-activity-submit" class="btn btn-primary" ${customerActivityAction==='submit'||customerActivityAction==='start'||requestBusy||previewRecoveryIsBlocking()?'disabled':''}>${customerActivityAction==='submit'?'正在提交…':'提交方案，进入情境问答'}</button></div>`;
+  }else if(answeringQuiz){
+   const quiz=task.quiz,questions=Array.isArray(quiz.questions)?quiz.questions:[],index=customerActivityQuizIndexFor(task),question=questions[index],remaining=customerActivityRemaining({deadlineAt:quiz.deadlineAt}),quizSeconds=Math.max(0,Math.ceil(remaining/1000)),pending=customerActivityQuizPendingAnswer?.taskId===task.id&&customerActivityQuizPendingAnswer.questionId===question?.id?customerActivityQuizPendingAnswer:null,answer=pending?pending.optionId:quiz.answers?.[question?.id]??null,answerSaved=Boolean(question&&typeof answer==='string'&&Object.prototype.hasOwnProperty.call(quiz.answers||{},question.id)&&quiz.answers[question.id]===answer&&!pending),timedOut=remaining<=0,answerPending=Boolean(pending);
+   const answeredCount=questions.filter(item=>typeof quiz.answers?.[item.id]==='string'&&quiz.answers[item.id]).length;
+   const optionsHtml=(question?.options||[]).map((option,optionIndex)=>{const selected=answer===option.id;return `<button type="button" id="customer-activity-option-${optionIndex}" role="radio" aria-checked="${selected}" class="btn" style="display:flex;width:100%;justify-content:flex-start;text-align:left;margin-top:8px;border:1px solid ${selected?'#2563eb':'#cbd5e1'};background:${selected?'#eff6ff':'#fff'};color:${selected?'#1e3a8a':'#334155'};white-space:normal;line-height:1.55" ${customerActivityAction||requestBusy||timedOut||answerPending?'disabled':''}><strong style="margin-right:10px;flex:none">${String.fromCharCode(65+optionIndex)}</strong><span>${esc(option.text)}</span></button>`}).join('');
+   const quizDurationSeconds=Math.max(0,Math.ceil((quiz.deadlineAt-quiz.startedAt)/1000)),quizDurationMinutes=Math.floor(quizDurationSeconds/60),quizDurationRemainder=quizDurationSeconds%60,quizDurationLabel=quizDurationRemainder?`${quizDurationMinutes?`${quizDurationMinutes} 分 `:''}${quizDurationRemainder} 秒`:`${quizDurationMinutes} 分钟`;
+   body=`<div class="notice amber" style="display:flex;justify-content:space-between;align-items:center"><span>情境推演限时 ${quizDurationLabel}<br><small>刷新后继续剩余时间，按服务端截止时间结算</small></span><strong id="customer-activity-quiz-countdown" style="font:700 24px ui-monospace,monospace">${Math.floor(quizSeconds/60)}:${String(quizSeconds%60).padStart(2,'0')}</strong></div><div class="tiny muted" style="display:flex;justify-content:space-between;margin-top:12px"><span>第 ${index+1} / ${questions.length} 题</span><span>已选择 ${answeredCount} / ${questions.length} 题</span></div><div class="info-block" style="margin-top:10px"><strong>情境假设</strong><div class="small muted" style="margin-top:6px;line-height:1.7">以下均为假设情境，不代表客户真实表达。请选择你认为合适的应对方式；可跳过单题。</div></div><fieldset style="margin:14px 0 0;padding:0;border:0" ${customerActivityAction||requestBusy||timedOut?'disabled':''}><legend style="font-weight:800;line-height:1.6">${esc(question?.title||'当前情境题暂不可用')}</legend>${optionsHtml}</fieldset><div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:14px"><button id="customer-activity-quiz-previous" class="btn" ${index===0||customerActivityAction||requestBusy||timedOut?'disabled':''}>上一题</button><div style="display:flex;justify-content:flex-end;gap:8px"><button id="customer-activity-quiz-skip" class="btn" ${customerActivityAction||requestBusy||timedOut?'disabled':''}>跳过本题</button>${index<questions.length-1?`<button id="customer-activity-quiz-next" class="btn btn-primary" ${!answerSaved||customerActivityAction||requestBusy||timedOut?'disabled':''}>下一题</button>`:`<button id="customer-activity-quiz-finish" class="btn btn-primary" ${customerActivityAction==='complete_quiz'||customerActivityQuizCompletionPending?'disabled':''}>${customerActivityAction==='complete_quiz'?'正在提交…':'提交并查看结果'}</button>`}</div></div>${customerActivityAction==='answer'?'<div class="tiny muted" role="status" style="margin-top:8px">正在保存选择…</div>':''}${customerActivityError?`<div class="notice red" role="alert" style="margin-top:10px">${esc(customerActivityError)}<div style="margin-top:8px"><button id="customer-activity-quiz-retry" class="btn" ${customerActivityAction||requestBusy?'disabled':''}>重试保存或提交</button></div></div>`:''}`;
+  }else if(evaluating){
+   body=`<style>.customer-activity-evaluation{display:flex;align-items:center;gap:18px;padding:18px;border:1px solid #bfdbfe;border-radius:14px;background:#eff6ff;color:#1e3a8a}.customer-activity-evaluation-spinner{position:relative;width:58px;height:58px;flex:none}.customer-activity-evaluation-ring{position:absolute;border:3px solid transparent;border-top-color:#2563eb;border-left-color:#60a5fa;border-radius:50%;animation:customer-activity-spin 1.1s linear infinite}.customer-activity-evaluation-ring-one{inset:0}.customer-activity-evaluation-ring-two{inset:8px;border-top-color:#7c3aed;border-left-color:#c4b5fd;animation-duration:1.5s;animation-direction:reverse}.customer-activity-evaluation-ring-three{inset:16px;border-top-color:#0ea5e9;border-left-color:#7dd3fc;animation-duration:.9s}.customer-activity-evaluation-steps{margin:8px 0 0;padding:0 0 0 18px;color:#475569;font-size:13px;line-height:1.8}.customer-activity-evaluation-steps li{animation:customer-activity-evaluation-pulse 1.8s ease-in-out infinite}.customer-activity-evaluation-steps li:nth-child(2){animation-delay:.3s}.customer-activity-evaluation-steps li:nth-child(3){animation-delay:.6s}@keyframes customer-activity-spin{to{transform:rotate(360deg)}}@keyframes customer-activity-evaluation-pulse{0%,100%{opacity:.48}50%{opacity:1}}@media(prefers-reduced-motion:reduce){.customer-activity-evaluation-ring,.customer-activity-evaluation-steps li{animation:none}}</style><div class="customer-activity-evaluation" role="status" aria-live="polite" aria-busy="true"><div class="customer-activity-evaluation-spinner" aria-hidden="true"><span class="customer-activity-evaluation-ring customer-activity-evaluation-ring-one"></span><span class="customer-activity-evaluation-ring customer-activity-evaluation-ring-two"></span><span class="customer-activity-evaluation-ring customer-activity-evaluation-ring-three"></span></div><div><strong>正在评估</strong><ol class="customer-activity-evaluation-steps"><li>整理方案内容</li><li>汇总情境作答</li><li>准备评估结论</li></ol></div></div>${customerActivityError?`<div class="notice red" role="alert" style="margin-top:10px">${esc(customerActivityError)}</div>`:''}${!task.evaluation?`<div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="customer-activity-retry" class="btn" ${customerActivityAction||requestBusy||customerActivitySyncBusy?'disabled':''}>重试获取结果</button></div>`:''}`;
   }else{
-   const hasNext=customerActivityTasks().some(item=>item.id!==task.id&&(item.status!=='submitted'||!customerActivitySeenIds.has(item.id)));
-   body=`<div class="notice ${task.draft?.trim()?'green':'amber'}">${esc(task.evaluation?.overallEvaluation||'')}</div><div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="customer-activity-continue" class="btn btn-primary">${hasNext?'继续下一项活动':'完成活动策划'}</button></div>`;
+   body=`<div role="status" style="padding:12px 14px;border:1px solid #cbd5e1;border-radius:10px;background:#f8fafc;color:#334155">评估已结束，请您继续开展您的销售工作</div><div style="display:flex;justify-content:flex-end;margin-top:12px"><button id="customer-activity-continue" class="btn btn-primary">继续销售工作</button></div>`;
   }
   modalRoot.innerHTML=`<div class="modal-backdrop" style="z-index:2000;position:fixed;inset:0;background:rgba(15,23,42,.68);display:flex;align-items:center;justify-content:center;padding:16px"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="customer-activity-title" style="width:min(640px,100%);max-height:92vh;overflow:auto;background:white;border-radius:18px;padding:22px;box-shadow:0 24px 60px rgba(0,0,0,.3)"><div class="eyebrow" style="color:#2563eb;font-size:10px;font-weight:800;letter-spacing:.16em">客户活动策划 · ${customerActivityTasks().filter(item=>(customerActivityEpoch(item.createdAt)||0)<=(customerActivityEpoch(task.createdAt)||0)).length} / ${customerActivityTasks().length}</div><h2 id="customer-activity-title" style="margin:8px 0;font-size:21px;color:#0f172a">${stageTitle}：「${esc(label)}」</h2><div style="margin-top:12px">${body}</div></section></div>`;
   const backdrop=modalRoot.querySelector('.modal-backdrop');backdrop?.addEventListener('click',event=>{if(event.target===backdrop)event.preventDefault()});
@@ -1171,7 +1286,19 @@ function resumeCountdownAfterCustomerActivity(){
   if(customerActivityFinalFlushTimer){clearTimeout(customerActivityFinalFlushTimer);customerActivityFinalFlushTimer=null}
   if(task.status==='planning'){const delay=Math.max(0,customerActivityRemaining(task)-1800);customerActivityFinalFlushTimer=setTimeout(()=>{customerActivityFinalFlushTimer=null;const active=currentCustomerActivity();if(active?.id===task.id&&customerActivityDirty&&customerActivityRemaining(active)>0)void saveCustomerActivityDraft(task.id)},delay)}
   document.getElementById('customer-activity-start')?.addEventListener('click',()=>void customerActivityStart(task));
+  document.getElementById('customer-activity-retry-sync')?.addEventListener('click',()=>void refreshCustomerActivityQueue());
   document.getElementById('customer-activity-submit')?.addEventListener('click',()=>void customerActivitySubmit(task,true));
+  if(answeringQuiz){
+   const quiz=task.quiz,questions=Array.isArray(quiz.questions)?quiz.questions:[],index=customerActivityQuizIndexFor(task),question=questions[index],pending=customerActivityQuizPendingAnswer?.taskId===task.id&&customerActivityQuizPendingAnswer.questionId===question?.id;
+   if(pending)for(const id of ['customer-activity-quiz-previous','customer-activity-quiz-skip','customer-activity-quiz-next','customer-activity-quiz-finish']){const button=document.getElementById(id);if(button)button.disabled=true}
+   for(const [optionIndex,option] of (question?.options||[]).entries())document.getElementById(`customer-activity-option-${optionIndex}`)?.addEventListener('click',()=>void customerActivitySaveQuizAnswer(task,question.id,option.id));
+   document.getElementById('customer-activity-quiz-previous')?.addEventListener('click',()=>{customerActivityQuizIndex=Math.max(0,index-1);presentCustomerActivityPlanner(true)});
+   document.getElementById('customer-activity-quiz-skip')?.addEventListener('click',async()=>{if(!question)return;const saved=await customerActivitySaveQuizAnswer(task,question.id,null);if(saved&&index<questions.length-1){customerActivityQuizIndex=index+1;presentCustomerActivityPlanner(true)}});
+   document.getElementById('customer-activity-quiz-next')?.addEventListener('click',()=>{const answer=customerActivityQuizPendingAnswer?.taskId===task.id&&customerActivityQuizPendingAnswer.questionId===question?.id?customerActivityQuizPendingAnswer.optionId:quiz.answers?.[question?.id];if(typeof answer==='string'&&index<questions.length-1){customerActivityQuizIndex=index+1;presentCustomerActivityPlanner(true)}});
+   document.getElementById('customer-activity-quiz-finish')?.addEventListener('click',()=>void customerActivityCompleteQuiz(task,false));
+   document.getElementById('customer-activity-quiz-retry')?.addEventListener('click',()=>void retryCustomerActivity(task));
+   syncCustomerActivityQuizControls(task);
+  }
   document.getElementById('customer-activity-retry')?.addEventListener('click',()=>void retryCustomerActivity(task));
   document.getElementById('customer-activity-continue')?.addEventListener('click',()=>continueCustomerActivity(task));
  }

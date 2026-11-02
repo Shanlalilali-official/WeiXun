@@ -6,15 +6,20 @@ import {
 import {
   CUSTOMER_ACTIVITY_PLANNING_MS,
   CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS,
+  CUSTOMER_ACTIVITY_EVALUATION_COMPLETED_MESSAGE,
   DEFAULT_ACTIVITY_DECISION_CONFIG,
   RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS,
   decideOrganizationActivityThreshold,
   createEmptyCustomerActivityState,
   finalizeExpiredCustomerActivities,
+  completeCustomerActivityQuiz,
+  finishCustomerActivityPlanningOnRoomEnd,
+  isCustomerActivityReadyForEvaluation,
   getPublicCustomerActivityOutcome,
   parseCustomerActivityState,
   recordCustomerActivityProposalDecision,
   saveCustomerActivityDraft,
+  saveCustomerActivityQuizAnswer,
   startCustomerActivityPlanning,
   submitCustomerActivityPlan,
   toPublicCustomerActivityTask,
@@ -26,8 +31,11 @@ import {
   type ActivityDecisionConfig,
   type OrganizationActivityThreshold,
 } from '../src/lib/game/customer-activities';
-import { CustomerActivityDecisionError, CustomerActivityDetectionError, decideCustomerActivityFeasibility, detectCustomerActivityProposals } from '../src/lib/ai/customer-activities';
-import { processPendingCustomerActivityDetections } from '../src/lib/game/repository';
+import { CUSTOMER_ACTIVITY_QUIZ_MS } from '../src/lib/game/customer-activity-quiz';
+import { DEFAULT_ACTIVITY_EXECUTION_CONFIG } from '../src/lib/game/customer-activity-execution-config';
+import { CustomerActivityDecisionError, CustomerActivityDetectionError, decideCustomerActivityFeasibility, detectCustomerActivityProposals, evaluateCustomerActivityPlan } from '../src/lib/ai/customer-activities';
+import type { JevInvoker, JevRequest } from '../src/lib/ai/jev-client';
+import { hasCustomerActivityWindowToClose, processPendingCustomerActivityDetections, processSubmittedCustomerActivityEvaluations } from '../src/lib/game/repository';
 import {
   applyCustomerActivityEvaluation,
   appendCustomerActivityDiagnostic,
@@ -110,6 +118,43 @@ const evaluation = {
   overallEvaluation: '议题与客户关切相符，建议补齐参会岗位、讨论范围和会后责任人。',
 };
 
+const activityPlanEvaluationKeys = [
+  'supportDelta',
+  'pleasureDelta',
+  'decisionAnalysis',
+  'relationshipBuilding',
+  'valuePresentation',
+  'objectionHandling',
+  'informationDiscovery',
+] as const;
+
+function activityPlanJevInvoker(
+  deltas: Record<(typeof activityPlanEvaluationKeys)[number], number>,
+  onRequest?: (request: JevRequest) => void,
+): JevInvoker {
+  return async (request) => {
+    onRequest?.(request);
+    assert.deepEqual(Object.keys(request.questions), activityPlanEvaluationKeys,
+      'the activity evaluator asks seven independent questions with stable metric keys');
+    const answers = Object.fromEntries(activityPlanEvaluationKeys.map((key) => {
+      const question = request.questions[key];
+      assert.ok(question && question.type === 'choice', `${key} is an integer-choice question`);
+      const choice = String(deltas[key]);
+      const criteria = Object.keys(question.criteria);
+      assert.ok(criteria.every((item) => Number.isInteger(Number(item)) && String(Number(item)) === item),
+        `${key} options are canonical integer strings`);
+      assert.ok(criteria.includes(choice), `${key} result is present in its frozen allowed range`);
+      return [key, {
+        type: 'choice' as const,
+        choice,
+        probabilities: Object.fromEntries(criteria.map((item) => [item, item === choice ? 1 : 0])),
+        confidence: 1,
+      }];
+    }));
+    return { model: 'test-activity-plan', answers, usage: { input_tokens: 1, output_tokens: 1 } };
+  };
+}
+
 const secondCandidate: CustomerActivityProposalCandidate = {
   ...candidate,
   type: 'case_site_visit',
@@ -128,7 +173,7 @@ const secondCandidate: CustomerActivityProposalCandidate = {
   summary: '参观一个过往项目现场',
 };
 
-function stateWithAllowedTask() {
+function stateWithAllowedTask(decisionConfig: ActivityDecisionConfig = DEFAULT_ACTIVITY_DECISION_CONFIG) {
   const initialState = createProjectOneState();
   const allowedTeamNpcIds = ['P1-002', 'P1-004'];
   const state = {
@@ -143,7 +188,7 @@ function stateWithAllowedTask() {
     npcId: candidate.npcId,
     messages,
     relationshipSnapshot: snapshot,
-    decisionConfig: DEFAULT_ACTIVITY_DECISION_CONFIG,
+    decisionConfig,
   });
   const queuedSnapshot = queued.customerActivityDetectionQueue[0].relationshipSnapshot;
   const recorded = completeCustomerActivityProposalDetection(queued, candidate.conversationId, [
@@ -753,17 +798,31 @@ function testServerClockDeadlineAndNoFreeProjectTime() {
   assert.equal(stillPaused.projectTimer.elapsedMs, 30_000, 'a closed browser does not let the paused project clock advance');
   assert.equal(stillPaused.actionPoints, paused.actionPoints, 'no AP recovers during the activity-planning window');
 
-  const timedOut = finalizeExpiredCustomerActivities(saved.state, planning.deadlineAt! + 120_000);
+  const timedOut = finalizeExpiredCustomerActivities(saved.state, planning.deadlineAt!);
   const submitted = timedOut.tasks[0];
   assert.equal(submitted.status, 'submitted');
   assert.equal(submitted.submitReason, 'timeout');
   assert.equal(submitted.submittedAt, planning.deadlineAt, 'timeout is anchored to the original server deadline');
   assert.equal(submitted.draft, '明确议题、参会角色、案例材料和会后责任人。', 'timeout submits the last server-saved draft');
+  assert.equal(submitted.quiz?.status, 'answering', 'a timeout submission begins its separate quiz window');
+  assert.equal(submitted.quiz?.startedAt, planning.deadlineAt);
+  assert.equal(submitted.quiz?.deadlineAt, planning.deadlineAt! + CUSTOMER_ACTIVITY_QUIZ_MS);
+  assert.equal(isCustomerActivityReadyForEvaluation(submitted), false,
+    'plan submission is not ready for evaluation until its quiz is completed');
 
-  const resumed = resumeProjectTimerAfterCustomerActivity({ ...paused, customerActivities: timedOut }, planning.deadlineAt!);
-  const afterDeadline = synchronizeProjectTimer(resumed, planning.deadlineAt! + 20_000, true);
-  assert.equal(afterDeadline.projectTimer.elapsedMs, 50_000, 'only time after the exact activity deadline counts');
-  assert.equal(afterDeadline.actionPoints, paused.actionPoints, 'short post-deadline time does not create an AP recovery');
+  const duringQuiz = synchronizeProjectTimer({ ...paused, customerActivities: timedOut }, submitted.quiz!.deadlineAt - 1, true);
+  assert.equal(duringQuiz.projectTimer.elapsedMs, 30_000, 'the separate quiz window does not consume project time');
+  assert.equal(duringQuiz.actionPoints, paused.actionPoints, 'answering the separate quiz does not recover AP');
+  const reloaded = parseCustomerActivityState(JSON.parse(JSON.stringify(timedOut)));
+  assert.deepEqual(reloaded.tasks[0]?.quiz, submitted.quiz, 'quiz questions, answers, and deadline survive persisted-state reload');
+  const offlineBothExpired = finalizeExpiredCustomerActivities(saved.state, submitted.quiz!.deadlineAt + 1);
+  const quizExpired = offlineBothExpired;
+  assert.equal(quizExpired.tasks[0]?.quiz?.status, 'completed', 'server deadline completes an unanswered quiz');
+  assert.equal(quizExpired.tasks[0]?.quiz?.completedAt, submitted.quiz!.deadlineAt);
+  const resumed = resumeProjectTimerAfterCustomerActivity({ ...paused, customerActivities: quizExpired }, submitted.quiz!.deadlineAt);
+  const afterDeadline = synchronizeProjectTimer(resumed, submitted.quiz!.deadlineAt + 20_000, true);
+  assert.equal(afterDeadline.projectTimer.elapsedMs, 50_000, 'only time after the quiz deadline resumes the project timer');
+  assert.equal(afterDeadline.actionPoints, paused.actionPoints, 'short post-quiz time does not create an AP recovery');
 
   const submittedEarly = submitCustomerActivityPlan(saved.state, task.id, startedAt + 90_000);
   assert.equal(submittedEarly.tasks[0].submitReason, 'manual');
@@ -796,36 +855,64 @@ function testEvaluationOnceAndPublicProjection() {
     elapsedMs: beforeEvaluation.projectTimer.elapsedMs,
   };
 
-  const evaluated = applyCustomerActivityEvaluation(beforeEvaluation, task.id, evaluation, now + 11_000);
-  assert.equal(evaluated.npcAttitudes[candidate.npcId].support, before.support + evaluation.supportDelta);
-  assert.equal(evaluated.npcAttitudes[candidate.npcId].pleasantness, before.pleasantness + evaluation.pleasureDelta);
+  const stillAnswering = applyCustomerActivityEvaluation(beforeEvaluation, task.id, evaluation, now + 11_000);
+  assert.deepEqual(stillAnswering, beforeEvaluation, 'AI evaluation cannot be recorded or applied while the quiz is active');
+  assert.equal(stillAnswering.customerActivities.tasks[0]?.evaluation, undefined);
+  let answered = saveCustomerActivityQuizAnswer(submitted, task.id, 'technical-preparation', 'option-1', now + 11_500);
+  assert.equal(answered.accepted, true);
+  answered = saveCustomerActivityQuizAnswer(answered.state, task.id, 'technical-discussion', 'option-2', now + 12_000);
+  assert.equal(answered.accepted, true);
+  answered = saveCustomerActivityQuizAnswer(answered.state, task.id, 'technical-follow-up', 'option-4', now + 12_500);
+  assert.equal(answered.accepted, true);
+  const selectedQuizDelta = answered.state.tasks[0]!.quiz!.questions.reduce((sum, question) => {
+    const option = question.options.find((choice) => choice.id === answered.state.tasks[0]!.quiz!.answers[question.id]);
+    return { supportDelta: sum.supportDelta + (option?.supportDelta ?? 0), pleasureDelta: sum.pleasureDelta + (option?.pleasureDelta ?? 0) };
+  }, { supportDelta: 0, pleasureDelta: 0 });
+  const completedQuiz = completeCustomerActivityQuiz(answered.state, task.id, now + 13_000);
+  assert.equal(isCustomerActivityReadyForEvaluation(completedQuiz.tasks[0]!), true);
+  const readyForEvaluation = { ...beforeEvaluation, customerActivities: completedQuiz };
+  const evaluated = applyCustomerActivityEvaluation(readyForEvaluation, task.id, evaluation, now + 14_000);
+  const finalEvaluation = evaluated.customerActivities.tasks[0]!.evaluation!;
+  assert.equal(finalEvaluation.supportDelta, evaluation.supportDelta + selectedQuizDelta.supportDelta);
+  assert.equal(finalEvaluation.pleasureDelta, evaluation.pleasureDelta + selectedQuizDelta.pleasureDelta);
+  assert.equal(evaluated.npcAttitudes[candidate.npcId].support,
+    Math.max(0, Math.min(100, before.support + finalEvaluation.supportDelta)),
+    'formal NPC support combines the independent AI plan score with the quiz score once');
+  assert.equal(evaluated.npcAttitudes[candidate.npcId].pleasantness,
+    Math.max(0, Math.min(100, before.pleasantness + finalEvaluation.pleasureDelta)),
+    'formal NPC pleasantness combines the independent AI plan score with the quiz score once');
   assert.equal(evaluated.dimensions.valuePresentation, before.dimensions.valuePresentation + 2);
   assert.equal(evaluated.actionPoints, before.actionPoints, 'activity scoring does not grant AP');
   assert.equal(evaluated.projectTimer.elapsedMs, before.elapsedMs, 'activity scoring does not add game time');
-  assert.deepEqual(applyCustomerActivityEvaluation(evaluated, task.id, evaluation, now + 12_000), evaluated,
+  assert.deepEqual(applyCustomerActivityEvaluation(evaluated, task.id, evaluation, now + 15_000), evaluated,
     'the evaluation marker and metric changes are idempotent');
 
   const publicTask = toPublicCustomerActivityTask(evaluated.customerActivities.tasks[0]);
   assert.deepEqual(Object.keys(publicTask.evaluation ?? {}), ['overallEvaluation']);
-  assert.equal(publicTask.evaluation?.overallEvaluation, '本次方案有助于推进后续活动沟通。');
+  assert.equal(publicTask.evaluation?.overallEvaluation, CUSTOMER_ACTIVITY_EVALUATION_COMPLETED_MESSAGE);
   assert.notEqual(publicTask.evaluation?.overallEvaluation, evaluation.overallEvaluation,
     'the player projection does not expose model-generated commentary');
-  assert.deepEqual(evaluated.customerActivities.tasks[0].evaluation, evaluation,
-    'the original internal evaluation remains stored unchanged');
-  assert.equal(getPublicCustomerActivityOutcome('方案内容', { supportDelta: -1, pleasureDelta: 0 }),
-    '本次方案未能推动后续活动沟通。');
-  assert.equal(getPublicCustomerActivityOutcome('方案内容', { supportDelta: 0, pleasureDelta: 0 }),
-    '本次方案暂未带来进一步推进。');
-  assert.equal(getPublicCustomerActivityOutcome('方案内容', { supportDelta: 1, pleasureDelta: -1 }),
-    '本次方案对后续活动沟通的推动作用有限。');
-  assert.equal(getPublicCustomerActivityOutcome('  \n ', { supportDelta: 3, pleasureDelta: 4 }),
-    '活动准备不充分，本次未能推进。');
-  assert.equal(getPublicCustomerActivityOutcome('', { supportDelta: 3, pleasureDelta: 4 }),
-    '活动准备不充分，本次未能推进。');
+  assert.deepEqual(evaluated.customerActivities.tasks[0].evaluationBreakdown?.aiPlan, evaluation,
+    'the original AI evaluation remains in the private breakdown');
+  assert.deepEqual(evaluated.customerActivities.tasks[0].evaluationBreakdown?.quiz, selectedQuizDelta,
+    'the private breakdown records the deterministic quiz contribution separately');
+  for (const [draft, result] of [
+    ['方案内容', { supportDelta: 3, pleasureDelta: 2 }],
+    ['方案内容', { supportDelta: -2, pleasureDelta: -3 }],
+    ['方案内容', { supportDelta: 0, pleasureDelta: 0 }],
+    ['方案内容', { supportDelta: 1, pleasureDelta: -1 }],
+    ['', { supportDelta: 3, pleasureDelta: 4 }],
+    ['  \n ', { supportDelta: -3, pleasureDelta: -4 }],
+  ] as const) {
+    assert.equal(getPublicCustomerActivityOutcome(draft, result), CUSTOMER_ACTIVITY_EVALUATION_COMPLETED_MESSAGE,
+      'plan wording and private score direction never change the public completion message');
+  }
   assert.equal(/support|pleasure|支持度|愉悦度|\d/u.test(publicTask.evaluation?.overallEvaluation ?? ''), false,
     'the public result reveals neither metric labels nor numeric values');
   assert.equal('evidence' in publicTask, false);
   assert.equal('sourceConversation' in publicTask, false);
+  assert.equal(JSON.stringify(publicTask).includes('supportDelta'), false, 'public activity quiz and evaluation omit private score deltas');
+  assert.equal(JSON.stringify(publicTask).includes('pleasureDelta'), false, 'public activity quiz omits scoring metadata');
   const publicState = toPlayerVisibleGameState(evaluated);
   assert.equal(Array.isArray(publicState.customerActivities), true);
   assert.equal('customerActivityDetectionQueue' in publicState, false);
@@ -856,7 +943,9 @@ function testEvaluationOnceAndPublicProjection() {
     },
     overallEvaluation: '活动准备不充分，本次未能推进。',
   };
-  const blankEvaluated = applyCustomerActivityEvaluation(blankBeforeEvaluation, blankTask.id, blankEvaluation, now + 11_000);
+  const blankComplete = completeCustomerActivityQuiz(blankSubmitted, blankTask.id, now + 10_500);
+  const blankReady = { ...blankBeforeEvaluation, customerActivities: blankComplete };
+  const blankEvaluated = applyCustomerActivityEvaluation(blankReady, blankTask.id, blankEvaluation, now + 11_000);
   assert.equal(blankEvaluated.npcAttitudes[candidate.npcId].support, 0, 'negative support effect clamps at its lower bound');
   assert.equal(blankEvaluated.npcAttitudes[candidate.npcId].pleasantness, 0, 'negative pleasure effect clamps at its lower bound');
   assert.equal(blankEvaluated.dimensions.decisionAnalysis, 0, 'negative dimension effect clamps at its lower bound');
@@ -866,7 +955,7 @@ function testEvaluationOnceAndPublicProjection() {
   assert.deepEqual(applyCustomerActivityEvaluation(blankEvaluated, blankTask.id, blankEvaluation, now + 12_000), blankEvaluated,
     'an empty-plan penalty is applied once even if evaluation recovery is replayed');
   const blankPublicTask = toPublicCustomerActivityTask(blankEvaluated.customerActivities.tasks[0]);
-  assert.equal(blankPublicTask.evaluation?.overallEvaluation, '活动准备不充分，本次未能推进。');
+  assert.equal(blankPublicTask.evaluation?.overallEvaluation, CUSTOMER_ACTIVITY_EVALUATION_COMPLETED_MESSAGE);
 
   const unresolved = {
     ...state,
@@ -882,6 +971,503 @@ function testEvaluationOnceAndPublicProjection() {
     type: 'research_public_info',
     payload: { npcId: 'P1-004' },
   }), /CUSTOMER_ACTIVITY_EVALUATION_PENDING/u);
+}
+
+async function testFormalEvaluationReadinessAndLegacyTasks() {
+  const { state, task } = stateWithAllowedTask();
+  const now = Date.now();
+  const startedActivities = startCustomerActivityPlanning(state.customerActivities, task.id, now);
+  const pausedState = pauseProjectTimerForCustomerActivity({ ...state, customerActivities: startedActivities }, now);
+  const saved = saveCustomerActivityDraft(pausedState.customerActivities, task.id,
+    '按客户确认的关注点安排交流议题、人员和后续核验事项。', now + 1_000);
+  const submittedActivities = submitCustomerActivityPlan(saved.state, task.id, now + 2_000);
+  let storedState = { ...pausedState, customerActivities: submittedActivities };
+  const beforeMetrics = {
+    support: storedState.npcAttitudes[task.npcId].support,
+    pleasantness: storedState.npcAttitudes[task.npcId].pleasantness,
+    dimensions: { ...storedState.dimensions },
+    actionPoints: storedState.actionPoints,
+    elapsedMs: storedState.projectTimer.elapsedMs,
+  };
+  let evaluatorCalls = 0;
+  let commits = 0;
+  const dependencies = {
+    load: async () => ({ id: 'quiz-test-session', userId: 'quiz-test-user', state: storedState }),
+    evaluate: async () => {
+      evaluatorCalls += 1;
+      return evaluation;
+    },
+    commit: async (args: Parameters<typeof import('../src/lib/game/repository').commitGameCommand>[0]) => {
+      commits += 1;
+      storedState = { ...args.state, version: storedState.version + 1 };
+      return { state: storedState, result: args.result ?? {}, replayed: false };
+    },
+    now: () => now + 20_000,
+  };
+
+  const beforeQuizResult = await processSubmittedCustomerActivityEvaluations(
+    'quiz-test-session', 'quiz-test-user', dependencies,
+  );
+  assert.equal(beforeQuizResult.state.customerActivities.tasks[0]?.evaluation, undefined);
+  assert.equal(evaluatorCalls, 0, 'formal service does not invoke AI while a submitted task quiz is answering');
+  assert.equal(commits, 0, 'formal service does not persist an evaluation before quiz completion');
+  assert.equal(storedState.npcAttitudes[task.npcId].support, beforeMetrics.support);
+  assert.equal(storedState.npcAttitudes[task.npcId].pleasantness, beforeMetrics.pleasantness);
+  assert.deepEqual(storedState.dimensions, beforeMetrics.dimensions);
+  assert.equal(storedState.actionPoints, beforeMetrics.actionPoints);
+  assert.equal(storedState.projectTimer.elapsedMs, beforeMetrics.elapsedMs);
+
+  let answered = saveCustomerActivityQuizAnswer(storedState.customerActivities, task.id,
+    'technical-preparation', 'option-1', now + 3_000);
+  answered = saveCustomerActivityQuizAnswer(answered.state, task.id,
+    'technical-discussion', 'option-1', now + 4_000);
+  answered = saveCustomerActivityQuizAnswer(answered.state, task.id,
+    'technical-follow-up', 'option-1', now + 5_000);
+  const answers = answered.state.tasks[0]!.quiz!;
+  const quizDelta = answers.questions.reduce((total, question) => {
+    const option = question.options.find((item) => item.id === answers.answers[question.id]);
+    return { supportDelta: total.supportDelta + (option?.supportDelta ?? 0), pleasureDelta: total.pleasureDelta + (option?.pleasureDelta ?? 0) };
+  }, { supportDelta: 0, pleasureDelta: 0 });
+  const completed = completeCustomerActivityQuiz(answered.state, task.id, now + 6_000);
+  storedState = {
+    ...resumeProjectTimerAfterCustomerActivity({ ...storedState, customerActivities: completed }, now + 6_000),
+    version: storedState.version + 1,
+  };
+  const result = await processSubmittedCustomerActivityEvaluations(
+    'quiz-test-session', 'quiz-test-user', dependencies,
+  );
+  const evaluatedTask = result.state.customerActivities.tasks[0]!;
+  assert.equal(evaluatorCalls, 1, 'formal AI evaluation starts once after the quiz is completed');
+  assert.equal(commits, 1);
+  assert.deepEqual(evaluatedTask.evaluationBreakdown?.aiPlan, evaluation);
+  assert.deepEqual(evaluatedTask.evaluationBreakdown?.quiz, quizDelta);
+  assert.equal(evaluatedTask.evaluation?.supportDelta,
+    Math.min(4, Math.max(-5, evaluation.supportDelta + quizDelta.supportDelta)));
+  assert.equal(evaluatedTask.evaluation?.pleasureDelta,
+    Math.min(6, Math.max(-8, evaluation.pleasureDelta + quizDelta.pleasureDelta)));
+  assert.equal(result.state.npcAttitudes[task.npcId].support,
+    Math.max(0, Math.min(100, beforeMetrics.support + evaluatedTask.evaluation!.supportDelta)));
+  assert.equal(result.state.npcAttitudes[task.npcId].pleasantness,
+    Math.max(0, Math.min(100, beforeMetrics.pleasantness + evaluatedTask.evaluation!.pleasureDelta)));
+  assert.equal(result.state.actionPoints, beforeMetrics.actionPoints, 'formal settlement does not charge or grant AP');
+  const settledMetrics = { support: result.state.npcAttitudes[task.npcId].support, pleasantness: result.state.npcAttitudes[task.npcId].pleasantness };
+  const repeated = await processSubmittedCustomerActivityEvaluations('quiz-test-session', 'quiz-test-user', dependencies);
+  assert.equal(evaluatorCalls, 1, 'settled tasks are not sent to AI again');
+  assert.equal(commits, 1, 'settled task evaluation is persisted once');
+  assert.deepEqual({
+    support: repeated.state.npcAttitudes[task.npcId].support,
+    pleasantness: repeated.state.npcAttitudes[task.npcId].pleasantness,
+  }, settledMetrics, 'recovery does not apply the combined score twice');
+
+  const legacyFixture = stateWithAllowedTask();
+  const legacyTask = { ...legacyFixture.task };
+  delete legacyTask.quizEnabled;
+  const legacyActivities = { ...legacyFixture.state.customerActivities, tasks: [legacyTask] };
+  const legacyStart = {
+    ...legacyActivities,
+    tasks: legacyActivities.tasks.map((item) => item.id === legacyTask.id
+      ? { ...item, status: 'planning' as const, startedAt: now, deadlineAt: now + CUSTOMER_ACTIVITY_PLANNING_MS }
+      : item),
+  };
+  const legacySubmitted = submitCustomerActivityPlan(legacyStart, legacyTask.id, now + 1_000);
+  assert.equal(legacySubmitted.tasks[0]?.quiz, undefined, 'legacy task schema retains its old no-quiz behavior');
+  let legacyStoredState = { ...legacyFixture.state, customerActivities: legacySubmitted };
+  let legacyEvaluationCalls = 0;
+  const legacyResult = await processSubmittedCustomerActivityEvaluations('legacy-test-session', 'legacy-test-user', {
+    load: async () => ({ id: 'legacy-test-session', userId: 'legacy-test-user', state: legacyStoredState }),
+    evaluate: async () => {
+      legacyEvaluationCalls += 1;
+      return evaluation;
+    },
+    commit: async (args) => {
+      legacyStoredState = { ...args.state, version: legacyStoredState.version + 1 };
+      return { state: legacyStoredState, result: args.result ?? {}, replayed: false };
+    },
+    now: () => now + 2_000,
+  });
+  assert.equal(legacyEvaluationCalls, 1, 'legacy submitted tasks still follow the former immediate evaluation path');
+  assert.equal(legacyResult.state.customerActivities.tasks[0]?.evaluation?.overallEvaluation, evaluation.overallEvaluation);
+}
+
+async function testFrozenExecutionConfigAffectsFormalService() {
+  const execution = structuredClone(DEFAULT_ACTIVITY_EXECUTION_CONFIG);
+  execution.quizDurationSeconds = 90;
+  execution.questionBanks.technical_meeting[0].title = '情境推演（假设）：冻结配置里的正式服务题？';
+  execution.aiInstructions = '正式服务冻结规则：只评价当前任务创建时的方案要求。';
+  execution.weights = { plan: 0.5, quiz: 0.5 };
+  execution.limits.supportMax = 1;
+  execution.limits.pleasureMax = 1;
+  execution.limits.dimensionMax = 0;
+  const decisionConfig: ActivityDecisionConfig = { ...DEFAULT_ACTIVITY_DECISION_CONFIG, execution };
+  const frozenExecution = structuredClone(execution);
+  const { state, task } = stateWithAllowedTask(decisionConfig);
+  const now = Date.now();
+  const started = startCustomerActivityPlanning(state.customerActivities, task.id, now);
+  const saved = saveCustomerActivityDraft(started, task.id, '确认议题、参会角色和会后核验责任人。', now + 500);
+  const submitted = submitCustomerActivityPlan(saved.state, task.id, now + 1_000);
+  const submittedTask = submitted.tasks[0]!;
+  assert.ok(submittedTask.quiz, 'a new formal submission snapshots an activity quiz');
+  assert.equal(submittedTask.quiz.deadlineAt - submittedTask.quiz.startedAt, 90_000,
+    'formal submission snapshots the configured quiz duration');
+  assert.equal(submittedTask.quiz?.questions[0]?.title, '情境推演（假设）：冻结配置里的正式服务题？',
+    'formal submission snapshots the configured question bank');
+
+  execution.quizDurationSeconds = 30;
+  execution.questionBanks.technical_meeting[0].title = '后台后来修改的题';
+  execution.aiInstructions = '后台后来修改的提示词';
+  let answered = submitted;
+  for (const question of submittedTask.quiz!.questions) {
+    const bestOption = question.options.reduce((best, option) =>
+      option.supportDelta + option.pleasureDelta > best.supportDelta + best.pleasureDelta ? option : best);
+    answered = saveCustomerActivityQuizAnswer(answered, task.id, question.id, bestOption.id, now + 2_000).state;
+  }
+  const completed = completeCustomerActivityQuiz(answered, task.id, now + 3_000);
+  let storedState = { ...state, customerActivities: completed };
+  let evaluatedExecution: unknown;
+  const result = await processSubmittedCustomerActivityEvaluations('frozen-formal-session', 'test-user', {
+    load: async () => ({ id: 'frozen-formal-session', userId: 'test-user', state: storedState }),
+    evaluate: async (args) => {
+      evaluatedExecution = args.executionConfig;
+      return evaluation;
+    },
+    commit: async (args) => {
+      storedState = { ...args.state, version: storedState.version + 1 };
+      return { state: storedState, result: args.result ?? {}, replayed: false };
+    },
+    now: () => now + 4_000,
+  });
+  const settledTask = result.state.customerActivities.tasks[0]!;
+  assert.deepEqual(evaluatedExecution, frozenExecution,
+    'formal AI evaluation receives the frozen execution rubric after the designer config changes');
+  assert.equal(settledTask.evaluation?.supportDelta, 1,
+    'formal service combines weighted plan and quiz contributions within the frozen support cap');
+  assert.equal(settledTask.evaluation?.pleasureDelta, 1,
+    'formal service combines weighted plan and quiz contributions within the frozen pleasure cap');
+  assert.equal(result.state.npcAttitudes[task.npcId].support, state.npcAttitudes[task.npcId].support + 1,
+    'the custom weighted and capped evaluation changes the target NPC support');
+  assert.equal(result.state.npcAttitudes[task.npcId].pleasantness, state.npcAttitudes[task.npcId].pleasantness + 1,
+    'the custom weighted and capped evaluation changes the target NPC experience');
+  const publicTask = toPublicCustomerActivityTask(settledTask);
+  const publicJson = JSON.stringify(publicTask);
+  assert.equal(publicJson.includes('execution'), false, 'the public task DTO hides execution settings');
+  assert.equal(publicJson.includes('aiInstructions'), false, 'the public task DTO hides the private AI rubric');
+  assert.equal(publicJson.includes('supportDelta'), false, 'the public task DTO hides option and evaluation scoring');
+  assert.equal(publicJson.includes('evaluationBreakdown'), false, 'the public task DTO hides private score details');
+}
+
+async function testActivityEvaluationProviderSettlement() {
+  const planDeltas = {
+    supportDelta: 2,
+    pleasureDelta: 2,
+    decisionAnalysis: 1,
+    relationshipBuilding: -1,
+    valuePresentation: 2,
+    objectionHandling: 0,
+    informationDiscovery: 1,
+  };
+  const makeReadyTask = (decisionConfig: ActivityDecisionConfig, now: number) => {
+    const fixture = stateWithAllowedTask(decisionConfig);
+    const planning = startCustomerActivityPlanning(fixture.state.customerActivities, fixture.task.id, now);
+    const saved = saveCustomerActivityDraft(planning, fixture.task.id,
+      '先核对客户关注点和参会角色，准备接口议题、待确认事项及会后责任人。', now + 100);
+    const submitted = submitCustomerActivityPlan(saved.state, fixture.task.id, now + 200);
+    return { ...fixture, activities: submitted, now };
+  };
+  const completeBestAnswerQuiz = (activities: ReturnType<typeof createEmptyCustomerActivityState>, taskId: string, now: number) => {
+    let answered = activities;
+    const task = activities.tasks.find((item) => item.id === taskId);
+    for (const question of task?.quiz?.questions ?? []) {
+      const result = saveCustomerActivityQuizAnswer(answered, taskId, question.id, 'option-1', now);
+      assert.equal(result.accepted, true);
+      answered = result.state;
+    }
+    return completeCustomerActivityQuiz(answered, taskId, now + 1);
+  };
+
+  const execution = structuredClone(DEFAULT_ACTIVITY_EXECUTION_CONFIG);
+  execution.evaluationProvider = 'jev';
+  execution.weights = { plan: 0.5, quiz: 0.5 };
+  const decisionConfig: ActivityDecisionConfig = { ...DEFAULT_ACTIVITY_DECISION_CONFIG, execution };
+  const fixture = makeReadyTask(decisionConfig, 60_000);
+  assert.equal(fixture.task.decisionConfig?.execution?.evaluationProvider, 'jev',
+    'a new formal task snapshots the Jev plan-evaluation provider');
+  const initial = { ...fixture.state, customerActivities: fixture.activities };
+  let storedState = initial;
+  const beforeTarget = { ...storedState.npcAttitudes[fixture.task.npcId] };
+  const beforeOther = { ...storedState.npcAttitudes['P1-002'] };
+  const beforeDimensions = { ...storedState.dimensions };
+  let jevCalls = 0;
+  let llmEvaluationCalls = 0;
+  let commits = 0;
+  const jevInvoker = activityPlanJevInvoker(planDeltas, () => { jevCalls += 1; });
+  const dependencies = {
+    load: async () => ({ id: 'formal-jev-session', userId: 'test-user', state: storedState }),
+    evaluate: (args: Parameters<typeof evaluateCustomerActivityPlan>[0]) => evaluateCustomerActivityPlan(args, {
+      invoker: async () => {
+        llmEvaluationCalls += 1;
+        return JSON.stringify(evaluation);
+      },
+      jevInvoker,
+    }),
+    commit: async (args: Parameters<typeof import('../src/lib/game/repository').commitGameCommand>[0]) => {
+      commits += 1;
+      storedState = { ...args.state, version: storedState.version + 1 };
+      return { state: storedState, result: args.result ?? {}, replayed: false };
+    },
+    now: () => fixture.now + 1_000,
+  };
+
+  const beforeQuiz = await processSubmittedCustomerActivityEvaluations('formal-jev-session', 'test-user', dependencies);
+  assert.equal(beforeQuiz.state.customerActivities.tasks[0]?.evaluation, undefined);
+  assert.equal(jevCalls, 0, 'formal service does not call Jev before the submitted plan quiz is complete');
+  assert.equal(llmEvaluationCalls, 0, 'formal service does not call LLM before the submitted plan quiz is complete');
+  assert.equal(commits, 0, 'no evaluation is persisted before quiz completion');
+  assert.equal(storedState.npcAttitudes[fixture.task.npcId].support, beforeTarget.support);
+  assert.equal(storedState.npcAttitudes[fixture.task.npcId].pleasantness, beforeTarget.pleasantness);
+  assert.deepEqual(storedState.dimensions, beforeDimensions);
+
+  let answered = storedState.customerActivities;
+  for (const question of fixture.activities.tasks[0]!.quiz!.questions) {
+    const result = saveCustomerActivityQuizAnswer(answered, fixture.task.id, question.id, 'option-1', fixture.now + 300);
+    assert.equal(result.accepted, true);
+    answered = result.state;
+  }
+  storedState = {
+    ...storedState,
+    customerActivities: completeCustomerActivityQuiz(answered, fixture.task.id, fixture.now + 400),
+  };
+  // A later designer setting must not mutate the already-created task's provider snapshot.
+  execution.evaluationProvider = 'llm';
+  assert.equal(storedState.customerActivities.tasks[0]?.decisionConfig?.execution?.evaluationProvider, 'jev');
+
+  const settled = await processSubmittedCustomerActivityEvaluations('formal-jev-session', 'test-user', dependencies);
+  const settledTask = settled.state.customerActivities.tasks[0]!;
+  assert.equal(jevCalls, 1, 'formal Jev evaluation runs once after quiz completion');
+  assert.equal(llmEvaluationCalls, 0, 'Jev evaluation does not fall through to LLM');
+  assert.equal(commits, 1, 'plan and quiz effects are committed together once');
+  assert.deepEqual(settledTask.evaluationBreakdown?.aiPlan, {
+    supportDelta: 2,
+    pleasureDelta: 2,
+    dimensionDeltas: {
+      decisionAnalysis: 1,
+      relationshipBuilding: -1,
+      valuePresentation: 2,
+      objectionHandling: 0,
+      informationDiscovery: 1,
+    },
+    overallEvaluation: CUSTOMER_ACTIVITY_EVALUATION_COMPLETED_MESSAGE,
+  });
+  assert.equal(settledTask.evaluation?.supportDelta, 3,
+    'the Jev plan support result is combined with the weighted three-answer quiz result');
+  assert.equal(settledTask.evaluation?.pleasureDelta, 3,
+    'the Jev plan pleasure result is combined with the weighted three-answer quiz result');
+  assert.deepEqual(settledTask.evaluation?.dimensionDeltas, {
+    decisionAnalysis: 1,
+    relationshipBuilding: -1,
+    valuePresentation: 1,
+    objectionHandling: 0,
+    informationDiscovery: 1,
+  }, 'the five Jev integer choices produce weighted ability changes');
+  assert.equal(settled.state.npcAttitudes[fixture.task.npcId].support,
+    Math.max(0, Math.min(100, beforeTarget.support + 3)), 'the combined result changes the target NPC support');
+  assert.equal(settled.state.npcAttitudes[fixture.task.npcId].pleasantness,
+    Math.max(0, Math.min(100, beforeTarget.pleasantness + 3)), 'the combined result changes the target NPC experience');
+  assert.deepEqual(settled.state.npcAttitudes['P1-002'], beforeOther,
+    'formal settlement does not change another NPC');
+  assert.deepEqual(settled.state.dimensions, {
+    decisionAnalysis: beforeDimensions.decisionAnalysis + 1,
+    relationshipBuilding: beforeDimensions.relationshipBuilding - 1,
+    valuePresentation: beforeDimensions.valuePresentation + 1,
+    objectionHandling: beforeDimensions.objectionHandling,
+    informationDiscovery: beforeDimensions.informationDiscovery + 1,
+  }, 'the five Jev answers update the existing player dimensions');
+  const settledMetrics = {
+    support: settled.state.npcAttitudes[fixture.task.npcId].support,
+    pleasantness: settled.state.npcAttitudes[fixture.task.npcId].pleasantness,
+  };
+  await processSubmittedCustomerActivityEvaluations('formal-jev-session', 'test-user', dependencies);
+  assert.equal(jevCalls, 1, 'a settled task is not evaluated by Jev a second time');
+  assert.equal(llmEvaluationCalls, 0);
+  assert.equal(commits, 1, 'a settled task is committed only once');
+  assert.deepEqual({
+    support: storedState.npcAttitudes[fixture.task.npcId].support,
+    pleasantness: storedState.npcAttitudes[fixture.task.npcId].pleasantness,
+  }, settledMetrics, 'recovery does not apply target relationship changes twice');
+
+  const failureFixture = makeReadyTask({
+    ...DEFAULT_ACTIVITY_DECISION_CONFIG,
+    execution: { ...DEFAULT_ACTIVITY_EXECUTION_CONFIG, evaluationProvider: 'jev' },
+  }, 70_000);
+  let failureState = {
+    ...failureFixture.state,
+    customerActivities: completeBestAnswerQuiz(failureFixture.activities, failureFixture.task.id, failureFixture.now + 300),
+  };
+  const failureSupport = failureState.npcAttitudes[failureFixture.task.npcId].support;
+  let failedJevCalls = 0;
+  let fallbackLlmCalls = 0;
+  let failureCommits = 0;
+  const failureDependencies = {
+    load: async () => ({ id: 'formal-jev-failure-session', userId: 'test-user', state: failureState }),
+    evaluate: (args: Parameters<typeof evaluateCustomerActivityPlan>[0]) => evaluateCustomerActivityPlan(args, {
+      invoker: async () => { fallbackLlmCalls += 1; return JSON.stringify(evaluation); },
+      jevInvoker: async () => { failedJevCalls += 1; throw new Error('Jev unavailable'); },
+    }),
+    commit: async (args: Parameters<typeof import('../src/lib/game/repository').commitGameCommand>[0]) => {
+      failureCommits += 1;
+      failureState = { ...args.state, version: failureState.version + 1 };
+      return { state: failureState, result: args.result ?? {}, replayed: false };
+    },
+    now: () => failureFixture.now + 1_000,
+  };
+  const failed = await processSubmittedCustomerActivityEvaluations('formal-jev-failure-session', 'test-user', failureDependencies);
+  assert.equal(failed.state.customerActivities.tasks[0]?.evaluation, undefined,
+    'a Jev failure leaves the formal activity task retryable');
+  assert.equal(failedJevCalls, 1);
+  assert.equal(fallbackLlmCalls, 0, 'a failed formal Jev evaluation never falls back to LLM');
+  assert.equal(failureCommits, 0, 'a failed Jev evaluation does not commit an evaluation marker');
+  assert.equal(failed.state.npcAttitudes[failureFixture.task.npcId].support, failureSupport,
+    'a failed Jev evaluation does not change the target NPC');
+
+  const legacyFixture = makeReadyTask(DEFAULT_ACTIVITY_DECISION_CONFIG, 80_000);
+  const legacyTask = legacyFixture.activities.tasks[0]!;
+  const legacyExecution = legacyTask.decisionConfig?.execution as unknown as Record<string, unknown>;
+  delete legacyExecution.evaluationProvider;
+  let legacyState = {
+    ...legacyFixture.state,
+    customerActivities: completeBestAnswerQuiz(legacyFixture.activities, legacyFixture.task.id, legacyFixture.now + 300),
+  };
+  let legacyLlmCalls = 0;
+  let legacyJevCalls = 0;
+  const legacyResult = await processSubmittedCustomerActivityEvaluations('formal-legacy-provider-session', 'test-user', {
+    load: async () => ({ id: 'formal-legacy-provider-session', userId: 'test-user', state: legacyState }),
+    evaluate: (args: Parameters<typeof evaluateCustomerActivityPlan>[0]) => evaluateCustomerActivityPlan(args, {
+      invoker: async () => { legacyLlmCalls += 1; return JSON.stringify(evaluation); },
+      jevInvoker: async () => { legacyJevCalls += 1; throw new Error('legacy task must retain LLM'); },
+    }),
+    commit: async (args) => {
+      legacyState = { ...args.state, version: legacyState.version + 1 };
+      return { state: legacyState, result: args.result ?? {}, replayed: false };
+    },
+    now: () => legacyFixture.now + 1_000,
+  });
+  assert.ok(legacyResult.state.customerActivities.tasks[0]?.evaluation,
+    'an old formal task without evaluationProvider still settles through LLM');
+  assert.equal(legacyLlmCalls, 1);
+  assert.equal(legacyJevCalls, 0);
+}
+
+function testTerminalRoomEndSqlQuizRecovery() {
+  const { state, task } = stateWithAllowedTask();
+  const submittedAt = 120_000;
+  const execution = structuredClone(DEFAULT_ACTIVITY_EXECUTION_CONFIG);
+  execution.quizDurationSeconds = 75;
+  execution.questionBanks.technical_meeting[0].title = '终局恢复配置题';
+  const terminalDecisionConfig: ActivityDecisionConfig = { ...DEFAULT_ACTIVITY_DECISION_CONFIG, execution };
+  const sqlTask = {
+    ...task,
+    decisionConfig: terminalDecisionConfig,
+    status: 'submitted' as const,
+    startedAt: 100_000,
+    deadlineAt: 400_000,
+    submittedAt,
+    submitReason: 'room_ended' as const,
+    quizEnabled: true,
+  };
+  const { quiz: _missingQuiz, ...sqlTaskWithoutQuiz } = sqlTask;
+  const sqlTerminalState = {
+    ...state,
+    gameMode: 'multiplayer' as const,
+    status: 'lost' as const,
+    lastAction: 'multiplayer_room_ended',
+    customerActivities: { ...state.customerActivities, tasks: [sqlTaskWithoutQuiz] },
+  };
+
+  const normalized = normalizeProjectOneState(sqlTerminalState);
+  const recoveredTask = normalized.customerActivities.tasks[0]!;
+  assert.equal(recoveredTask.status, 'submitted');
+  assert.equal(recoveredTask.quiz?.status, 'completed', 'terminal multiplayer SQL submission recovers as a completed quiz');
+  assert.equal(recoveredTask.quiz?.startedAt, submittedAt, 'recovered quiz uses the SQL submission time as its start');
+  assert.equal(recoveredTask.quiz?.deadlineAt, submittedAt + 75_000,
+    'terminal SQL recovery respects the task’s frozen configured quiz duration');
+  assert.equal(recoveredTask.quiz?.questions[0]?.title, '终局恢复配置题',
+    'terminal SQL recovery rebuilds questions from the task snapshot');
+  assert.equal(recoveredTask.quiz?.completedAt, submittedAt, 'SQL room closure has no remaining answer window');
+  assert.deepEqual(Object.values(recoveredTask.quiz?.answers ?? {}), [null, null, null],
+    'the recovered room-end quiz records unanswered questions as null');
+  assert.equal(recoveredTask.evaluation, undefined);
+
+  const restored = normalizeProjectOneState(JSON.parse(JSON.stringify(normalized)));
+  assert.deepEqual(restored.customerActivities.tasks[0]?.quiz, recoveredTask.quiz,
+    'the reconstructed quiz survives persisted-state reload without being regenerated');
+
+  const evaluated = applyCustomerActivityEvaluation(normalized, task.id, evaluation, submittedAt + 10);
+  const finalEvaluation = evaluated.customerActivities.tasks[0]?.evaluation;
+  assert.ok(finalEvaluation, 'the recovered terminal task is ready for one AI evaluation');
+  assert.deepEqual(evaluated.customerActivities.tasks[0]?.evaluationBreakdown?.quiz,
+    { supportDelta: 0, pleasureDelta: 0 }, 'unanswered room-end questions have no quiz score');
+  assert.equal(evaluated.npcAttitudes[task.npcId].support,
+    Math.max(0, Math.min(100, normalized.npcAttitudes[task.npcId].support + finalEvaluation.supportDelta)));
+  assert.equal(evaluated.npcAttitudes[task.npcId].pleasantness,
+    Math.max(0, Math.min(100, normalized.npcAttitudes[task.npcId].pleasantness + finalEvaluation.pleasureDelta)));
+  assert.deepEqual(applyCustomerActivityEvaluation(evaluated, task.id, evaluation, submittedAt + 20), evaluated,
+    'terminal SQL recovery and scoring remain idempotent');
+
+  const legacySqlTask = { ...sqlTaskWithoutQuiz };
+  Reflect.deleteProperty(legacySqlTask, 'quizEnabled');
+  const legacyTerminalState = {
+    ...sqlTerminalState,
+    customerActivities: { ...sqlTerminalState.customerActivities, tasks: [legacySqlTask] },
+  };
+  assert.equal(normalizeProjectOneState(legacyTerminalState).customerActivities.tasks[0]?.quiz, undefined,
+    'a terminal legacy task without quizEnabled keeps its old schema and is not backfilled');
+
+  const legacyExecutionTask = { ...sqlTaskWithoutQuiz, decisionConfig: { ...DEFAULT_ACTIVITY_DECISION_CONFIG } };
+  delete (legacyExecutionTask.decisionConfig as Partial<ActivityDecisionConfig>).execution;
+  const legacyExecutionState = {
+    ...sqlTerminalState,
+    customerActivities: { ...sqlTerminalState.customerActivities, tasks: [legacyExecutionTask] },
+  };
+  assert.equal(normalizeProjectOneState(legacyExecutionState).customerActivities.tasks[0]?.quiz?.deadlineAt,
+    submittedAt + CUSTOMER_ACTIVITY_QUIZ_MS,
+    'legacy valid decision snapshots without execution settings recover with default quiz settings');
+
+  const invalidExecutionState = {
+    ...sqlTerminalState,
+    customerActivities: {
+      ...sqlTerminalState.customerActivities,
+      tasks: [{ ...sqlTaskWithoutQuiz, decisionConfig: { ...terminalDecisionConfig, execution: { ...execution, quizDurationSeconds: 10 } } }],
+    },
+  };
+  assert.throws(() => normalizeProjectOneState(invalidExecutionState), /INVALID_CUSTOMER_ACTIVITY_STATE/u,
+    'terminal recovery does not silently replace an invalid frozen execution snapshot with defaults');
+
+  const ordinaryPlayingState = {
+    ...sqlTerminalState,
+    status: 'playing' as const,
+    lastAction: null,
+  };
+  assert.throws(() => normalizeProjectOneState(ordinaryPlayingState), /INVALID_CUSTOMER_ACTIVITY_STATE/u,
+    'an ordinary playing state with the same missing quiz still fails strict validation');
+}
+
+function testRoomClosureFinalizesActiveActivityOnlyOnce() {
+  const { state, task } = stateWithAllowedTask();
+  const startedAt = Date.now();
+  const planning = startCustomerActivityPlanning(state.customerActivities, task.id, startedAt);
+  const submitted = submitCustomerActivityPlan(planning, task.id, startedAt + 1_000);
+  assert.equal(submitted.tasks[0]?.quiz?.status, 'answering');
+  assert.equal(hasCustomerActivityWindowToClose({ ...state, customerActivities: submitted }), true);
+  const roomEnded = finishCustomerActivityPlanningOnRoomEnd(submitted, startedAt + 10_000);
+  assert.equal(roomEnded.tasks[0]?.status, 'submitted');
+  assert.equal(roomEnded.tasks[0]?.submitReason, 'manual', 'room closure preserves the already committed plan submission reason');
+  assert.equal(roomEnded.tasks[0]?.quiz?.status, 'completed', 'room closure skips the remaining quiz countdown');
+  assert.equal(roomEnded.tasks[0]?.quiz?.completedAt, startedAt + 10_000);
+  assert.equal(hasCustomerActivityWindowToClose({ ...state, customerActivities: roomEnded }), false,
+    'a finalized room activity no longer appears as pending room-end work');
+  const repeatedClose = finishCustomerActivityPlanningOnRoomEnd(roomEnded, startedAt + 20_000);
+  assert.deepEqual(repeatedClose, roomEnded, 'repeated room-end polling does not change the activity state again');
+  assert.equal(hasCustomerActivityWindowToClose({ ...state, customerActivities: repeatedClose }), false);
+  assert.equal(hasCustomerActivityWindowToClose(state), false, 'a finished room without an active activity does not need a write');
 }
 
 async function testRoleAwareActivityReplyGuard() {
@@ -995,8 +1581,13 @@ async function testHospitalityFormalServiceFlow() {
   const submitted = submitCustomerActivityPlan(saved.state, task.id, 313_000);
   assert.equal(submitted.tasks[0]?.status, 'submitted');
   assert.equal(submitted.tasks[0]?.draft, plan);
+  assert.equal(submitted.tasks[0]?.quiz?.status, 'answering');
   const beforeEvaluation = { ...allowed.state, customerActivities: submitted };
-  const evaluated = applyCustomerActivityEvaluation(beforeEvaluation, task.id, evaluation, 314_000);
+  const completed = completeCustomerActivityQuiz(submitted, task.id, 313_500);
+  const readyForEvaluation = { ...allowed.state, customerActivities: completed };
+  assert.deepEqual(applyCustomerActivityEvaluation(beforeEvaluation, task.id, evaluation, 313_700), beforeEvaluation,
+    'the hospitality plan has no numerical effect before its quiz is complete');
+  const evaluated = applyCustomerActivityEvaluation(readyForEvaluation, task.id, evaluation, 314_000);
   assert.equal(evaluated.customerActivities.tasks[0]?.evaluation?.overallEvaluation, evaluation.overallEvaluation);
   assert.deepEqual(applyCustomerActivityEvaluation(evaluated, task.id, evaluation, 315_000), evaluated,
     'formal activity settlement is idempotent');
@@ -1037,6 +1628,11 @@ async function main() {
   await testSalesOnlyDetectionDiagnostics();
   testServerClockDeadlineAndNoFreeProjectTime();
   testEvaluationOnceAndPublicProjection();
+  await testFormalEvaluationReadinessAndLegacyTasks();
+  await testFrozenExecutionConfigAffectsFormalService();
+  await testActivityEvaluationProviderSettlement();
+  testTerminalRoomEndSqlQuizRecovery();
+  testRoomClosureFinalizesActiveActivityOnlyOnce();
   await testRoleAwareActivityReplyGuard();
   await testHospitalityFormalServiceFlow();
   console.log('Formal customer activity queue, snapshot gating, planning timer, settlement idempotency and privacy tests passed.');

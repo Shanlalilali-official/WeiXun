@@ -13,6 +13,7 @@ import {
   RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS,
 } from '../src/lib/game/customer-activities';
 import type { ActivityDecisionConfig } from '../src/lib/game/customer-activities';
+import { DEFAULT_ACTIVITY_EXECUTION_CONFIG } from '../src/lib/game/customer-activity-execution-config';
 
 type Row = {
   id: string;
@@ -136,11 +137,52 @@ async function main() {
   });
   assert.equal((await createActivityDecisionConfigRepository(() => legacyAiDb.client).loadForMatching()).config.mode, 'ai', 'AI mode remains available while legacy numeric rows are upgraded');
 
+  const oldExecution = structuredClone(DEFAULT_ACTIVITY_EXECUTION_CONFIG) as unknown as Record<string, unknown>;
+  delete oldExecution.evaluationProvider;
+  const oldExecutionDb = fakeDatabase({
+    id: CUSTOMER_ACTIVITY_DECISION_CONFIG_ID,
+    config: { mode: 'ai', thresholds: validThresholds, execution: oldExecution },
+    revision: 10, updated_by: 'legacy-execution-config', updated_at: '2026-11-01T00:00:00.000Z',
+  });
+  const loadedOldExecution = await createActivityDecisionConfigRepository(() => oldExecutionDb.client).load();
+  assert.equal(loadedOldExecution.config.execution?.evaluationProvider, 'llm',
+    'old saved execution JSON without an evaluation provider normalizes to LLM');
+
   const raceRepository = createActivityDecisionConfigRepository(() => emptyDb.client);
   await assert.rejects(
     raceRepository.save({ mode: 'ai', thresholds: {} }, 0, 'racing-designer'),
     /CUSTOMER_ACTIVITY_CONFIG_VERSION_CONFLICT/,
   );
+
+  const customExecution = structuredClone(DEFAULT_ACTIVITY_EXECUTION_CONFIG);
+  customExecution.evaluationProvider = 'jev';
+  customExecution.quizDurationSeconds = 75;
+  customExecution.aiInstructions = '重点判断方案是否说明客户的验收问题、负责人和验证方式。';
+  customExecution.weights = { plan: 0.6, quiz: 0.4 };
+  customExecution.limits.supportMax = 2;
+  customExecution.questionBanks.technical_meeting[0].title = '自定义情境：客户临时缩短技术交流时间，你会怎么安排？';
+  customExecution.questionBanks.technical_meeting[0].options[0].text = '先核对最需要解决的问题，再调整议程。';
+  customExecution.questionBanks.technical_meeting[0].options[0].supportDelta = 2;
+  const executionSaved = await emptyRepository.save({ mode: 'ai', thresholds: validThresholds, execution: customExecution }, 2, 'rules-designer');
+  assert.equal(executionSaved.config.revision, 3);
+  assert.deepEqual(executionSaved.config.execution, customExecution, 'execution rules are included in the versioned configuration write');
+  assert.deepEqual((await emptyRepository.load()).config.execution, customExecution, 'question bank, timing, AI rubric and limits survive storage readback');
+  assert.equal(executionSaved.config.execution?.evaluationProvider, 'jev', 'Jev selection is saved with the same execution snapshot');
+  customExecution.quizDurationSeconds = 90;
+  assert.equal((await emptyRepository.load()).config.execution?.quizDurationSeconds, 75, 'caller mutations cannot modify the saved configuration');
+  const legacyWrite = await emptyRepository.save({ mode: 'numeric', thresholds: validThresholds }, 3, 'old-designer-client');
+  assert.equal(legacyWrite.config.execution?.quizDurationSeconds, 75, 'a thresholds-only old client preserves saved execution rules');
+  assert.equal(legacyWrite.config.execution?.evaluationProvider, 'jev', 'a thresholds-only legacy write preserves the saved Jev selection');
+  assert.equal(legacyWrite.config.execution?.weights.plan, 0.6);
+  await assert.rejects(emptyRepository.save({ mode: 'ai', thresholds: validThresholds, execution: customExecution }, 3, 'stale-rules-designer'),
+    /CUSTOMER_ACTIVITY_CONFIG_VERSION_CONFLICT/, 'execution writes use the same CAS revision as matching thresholds');
+  const brokenExecutionDb = fakeDatabase({
+    id: CUSTOMER_ACTIVITY_DECISION_CONFIG_ID,
+    config: { mode: 'ai', thresholds: validThresholds, execution: { ...customExecution, quizDurationSeconds: 1 } },
+    revision: 9, updated_by: 'broken-config', updated_at: '2026-11-02T00:00:00Z',
+  });
+  await assert.rejects(createActivityDecisionConfigRepository(() => brokenExecutionDb.client).load(), /CUSTOMER_ACTIVITY_CONFIG_INVALID/,
+    'invalid explicitly stored rules fail closed instead of reverting to defaults');
 
   process.env.SESSION_SECRET = 'customer-activity-api-test-only-secret';
   const apiUrl = 'http://localhost/api/designer/customer-activities';
@@ -161,6 +203,12 @@ async function main() {
     assert.equal((await PUT(apiRequest('PUT', role, {}))).status, 403, `${role} cannot write designer activity settings`);
   }
   const invalidConfigs = [
+    { mode: 'ai', thresholds: validThresholds, execution: { ...customExecution, quizDurationSeconds: 29 } },
+    { mode: 'ai', thresholds: validThresholds, execution: { ...customExecution, quizDurationSeconds: 601 } },
+    { mode: 'ai', thresholds: validThresholds, execution: { ...customExecution, weights: { plan: 0, quiz: 0 } } },
+    { mode: 'ai', thresholds: validThresholds, execution: { ...customExecution, limits: { ...customExecution.limits, supportMax: 100 } } },
+    { mode: 'ai', thresholds: validThresholds, execution: { ...customExecution, aiInstructions: ' ' } },
+    { mode: 'ai', thresholds: validThresholds, execution: { ...customExecution, secretExtraField: 'invalid' } },
     { mode: 'unknown', thresholds: {} },
     { mode: 'ai', thresholds: { technical_meeting: { supportMin: -1 } } },
     { mode: 'ai', thresholds: { technical_meeting: { pleasantnessMin: 101 } } },

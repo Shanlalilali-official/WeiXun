@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   CUSTOMER_ACTIVITY_PLANNING_MS,
+  CUSTOMER_ACTIVITY_EVALUATION_COMPLETED_MESSAGE,
   CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS,
   HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD,
   createResolvedCustomerActivityAgreement,
@@ -12,6 +13,8 @@ import {
   decideOrganizationActivityThreshold,
   finishCustomerActivityPlanningOnRoomEnd,
   finalizeExpiredCustomerActivities,
+  completeCustomerActivityQuiz,
+  isCustomerActivityReadyForEvaluation,
   isCustomerActivityState,
   parseActivityDecisionConfig,
   parseCustomerActivityState,
@@ -163,15 +166,21 @@ async function main() {
   assert.equal(lateSave.state.tasks[0].submitReason, 'timeout');
   assert.deepEqual(finalizeExpiredCustomerActivities(lateSave.state, 400_000), lateSave.state, 'timeout finalization is idempotent');
 
-  const recorded = recordCustomerActivityEvaluation(lateSave.state, task.id, evaluation, 311_000);
+  const evaluationBeforeQuiz = recordCustomerActivityEvaluation(lateSave.state, task.id, evaluation, 311_000);
+  assert.equal(evaluationBeforeQuiz.applied, false, 'plan submission opens a quiz before evaluation can settle');
+  assert.equal(isCustomerActivityReadyForEvaluation(lateSave.state.tasks[0]), false);
+  const quizCompleted = completeCustomerActivityQuiz(lateSave.state, task.id, 312_000);
+  assert.equal(quizCompleted.tasks[0].quiz?.status, 'completed');
+  const recorded = recordCustomerActivityEvaluation(quizCompleted, task.id, evaluation, 313_000);
   assert.equal(recorded.applied, true);
-  assert.deepEqual(recordCustomerActivityEvaluation(recorded.state, task.id, evaluation, 312_000), {
+  assert.ok(recorded.evaluation, 'the recorded result includes the combined evaluation used for NPC updates');
+  assert.deepEqual(recordCustomerActivityEvaluation(recorded.state, task.id, evaluation, 314_000), {
     state: recorded.state,
     applied: false,
   }, 'settlement marker prevents duplicate metric application');
   const publicTask = toPublicCustomerActivityTask(recorded.state.tasks[0]);
   assert.deepEqual(publicTask.basis, ['安排一次技术交流会', '可以，安排技术团队参加。']);
-  assert.deepEqual(publicTask.evaluation, { overallEvaluation: '本次方案有助于推进后续活动沟通。' });
+  assert.deepEqual(publicTask.evaluation, { overallEvaluation: CUSTOMER_ACTIVITY_EVALUATION_COMPLETED_MESSAGE });
   assert.equal('evidence' in publicTask, false);
   assert.equal('sourceConversation' in publicTask, false);
   assert.equal('supportDelta' in (publicTask.evaluation ?? {}), false);
@@ -179,11 +188,11 @@ async function main() {
     ...recorded.state.tasks[0],
     evaluation: {
       ...evaluation,
-      overallEvaluation: '客户支持度增加2分，愉悦度提升1分；建议补充会后跟进安排。',
+      overallEvaluation: '<p>支持度增加2分，愉悦度提升1分；活动已推进，请继续下一步。</p>',
     },
   });
-  assert.equal(legacyCommentaryTask.evaluation?.overallEvaluation, '本次方案有助于推进后续活动沟通。',
-    'legacy stored commentary and numeric values are replaced by a safe outcome in the public projection');
+  assert.equal(legacyCommentaryTask.evaluation?.overallEvaluation, CUSTOMER_ACTIVITY_EVALUATION_COMPLETED_MESSAGE,
+    'legacy stored HTML, outcome commentary, and numeric values are replaced by the neutral public status');
   assert.doesNotMatch(legacyCommentaryTask.evaluation?.overallEvaluation ?? '', /\d|支持度|愉悦度|建议/u);
 
   const caseAgreement = makeAgreement(

@@ -81,17 +81,25 @@ export function createActivityDecisionConfigRepository(createClient: ConfigDatab
   }
 
   async function save(
-    requestedConfig: Pick<ActivityDecisionConfig, 'mode' | 'thresholds'>,
+    requestedConfig: Pick<ActivityDecisionConfig, 'mode' | 'thresholds' | 'execution'>,
     expectedRevision: number,
     userId: string,
   ): Promise<StoredActivityDecisionConfig> {
     const writeConfig = parseCustomerActivityDecisionConfigWrite(requestedConfig);
     if (!writeConfig) throw new Error('CUSTOMER_ACTIVITY_CONFIG_INVALID');
+    // Older designer clients only send matching thresholds. Keep saved execution
+    // rules instead of replacing an edited question bank with built-in defaults.
+    const previous = writeConfig.execution === undefined ? await load() : null;
+    if (previous?.persisted && previous.config.revision !== expectedRevision) {
+      throw new Error('CUSTOMER_ACTIVITY_CONFIG_VERSION_CONFLICT');
+    }
+    const execution = writeConfig.execution ?? previous?.config.execution;
     const revision = expectedRevision + 1;
-    const config = normalizedConfig(writeConfig, revision);
+    const config = normalizedConfig({ ...writeConfig, ...(execution === undefined ? {} : { execution }) }, revision);
     const values = {
       mode: config.mode,
       thresholds: config.thresholds,
+      ...(config.execution === undefined ? {} : { execution: config.execution }),
     };
     const updatedAt = new Date().toISOString();
     const db = createClient();

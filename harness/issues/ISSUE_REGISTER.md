@@ -1,5 +1,37 @@
 # 动态问题台账
 
+## ACTIVITY-SYNC-020 第二个活动提示同步失败
+
+- 状态：Resolved（本地）；最后检查：2026-11-02。
+- 实证：HTML同步冲突被apiCall返回null，上层泛化错误且pending/planning无恢复入口；同key错误清除/重试按钮禁用复位缺失。旧日志均8月，不足以判截图具体HTTP状态。
+- 已修复public/project1-prototype-v9.html：同步409既有GET恢复一次，不重放写操作；具体错误/重试/同key清错及解锁。scripts/test-customer-activity-quiz-ui.ts与test-preview-recovery-ui.ts覆盖二项队列、实际点重试、草稿与恢复失败。根6项专项/tsc/build通过，完整lint无错误、harness通过。
+
+证据：harness/evidence/activity-sync-recovery-2026-11-02.md。
+
+## ACTIVITY-UI-019 问答灰选项与实际效果反馈
+
+- 状态：Resolved（本地）；最后检查：2026-11-02。
+- 根因：HTML同步期间响应渲染禁用问答，finally清busy后同key快路径未重算fieldset/选项，残留灰态。已统一同步控件状态，保留请求中/截止禁用。
+- 已完成：两端请求在飞即评估动效，真实评价确认后固定中性结束句，旧payload不外显；公开投影统一中性，内部评分/重试幂等不改。根实际diff、9项专项/类型/完整lint/Next+tsup构建通过；证据activity-neutral-ui-2026-11-02.md。未真实浏览器/模型/DB联调或部署。
+
+## ACTIVITY-ENGINE-018 活动方案LLM/Jev评价切换
+
+- 状态：Resolved（本地）；最后检查：2026-11-02。来源：用户要求方案评价也支持决策引擎切换。
+- 现有实际：方案evaluator直接LLM，已有Jev客户端和其它决策配置；缺口：方案无Jev typed输出适配、后台开关与两端运行时注入。
+- 已实现：execution独立llm/jev默认llm、冻结模式、7项整数choice严格校验、失败不改分不切引擎、两端同既有结算。根实际diff、引擎/协议/正式预览/配置与SSR专项、类型/完整lint/Next+tsup构建通过，证据activity-plan-engines-2026-11-02.md。未真实Jev/DB/浏览器联调或部署；新UI反馈019仍在实施。
+
+## ACTIVITY-DESIGNER-017 设计师活动问答及AI规则管理
+
+- 状态：Resolved（本地）；最后检查：2026-11-02。用户明确“补上”设计师配置。
+- 已实查既有后台只支持mode/thresholds，新增问答题库、时限、AI评价业务提示/数值范围、合并权重仍在代码；复用既有鉴权/版本CAS/JSON配置表。
+- 已完成：可视化编辑与版本化保存、自定义规则接真实业务函数、运行中冻结、旧配置和旧写入兼容、不泄玩家DTO。根实际diff、专项/类型/完整lint/Next+tsup构建/harness通过；保留ID P2经修复独立复审关闭。证据harness/evidence/designer-activity-rules-2026-11-02.md。未真实DB/AI/浏览器联调或部署。
+
+## ACTIVITY-016 活动方案AI评估与情境问答统一结算
+
+- 状态：Resolved（本地）；最后检查：2026-11-02。用户明确确认设计并补充AI按方案调整数值。
+- 已有：共享evaluateCustomerActivityPlan返回既有指标变化，正式state/repository及preview应用；缺口：方案提交直接结算，缺少三道情境题/答案保存/最终合并。
+- 范围已完成：四类活动问答、120秒独立时限、私有题库规则与公开无分值DTO、AI方案评价+答案规则一次性结算、旧任务及终局SQL形状兼容。根实际diff、专项/最终类型/完整lint/Next+tsup构建/harness通过；独立Review无剩余P1/P2。证据harness/evidence/activity-quiz-2026-11-02.md。未做新真实AI/DB/浏览器联调、迁移或部署，不声称远程已更新。
+
 ## PREVIEW-RECOVERY-015 · 2026-11-02 项目选择页没有同步入口 · Resolved（本地）
 
 用户当前界面是点击实际测试后、进入项目一前。已实查 topbar() 的 projects 空返回与 renderProjects，已有 renderPreviewRecoveryControls 但未在选择页调用；GET恢复逻辑已存在。验收已有会话可同步、无会话无误导按钮、进行中禁用及失败可重试，不丢草稿或自动重发写操作。主线程已检查实际 diff 并复跑：恢复UI专项、账号隔离专项、最终类型检查、修改脚本定向 ESLint、Next production build 与 tsup 通过；harness-check/diff --check 通过。项目选择页已有会话时显示恢复条，无会话隐藏，409 后刷新入口，恢复仅 GET 不重放失败 POST。完整 ESLint 在受限环境外执行并通过；初次受限执行长时间无输出后中止，Next 构建也改在受限环境外通过。未做真实浏览器/真实会话恢复或服务重启、部署、Git提交。

@@ -245,10 +245,11 @@ async function testProjectEntryShowsConflictRecovery() {
     postFailure: { status: 409, body: { error: 'PREVIEW_SESSION_VERSION_CONFLICT' } },
   });
   await waitForBoot(harness);
-  assert.equal(await harness.hooks.syncActivities(), false, '冲突的活动同步返回失败供调用方处理');
-  assert.match(harness.app.innerHTML, /预览会话版本已变化/, '409 后项目入口显示冲突原因');
+  harness.setGetFailure(503, { error: '模拟恢复服务暂时不可用' });
+  assert.equal(await harness.hooks.syncActivities(), false, '活动 POST 冲突且自动恢复 GET 失败时保留可重试错误');
+  assert.match(harness.app.innerHTML, /模拟恢复服务暂时不可用/, '活动冲突后的恢复错误不会被版本冲突旧文案覆盖');
   assert.match(harness.app.innerHTML, /同步预览会话/, '409 后项目入口提供手动恢复入口');
-  assert.equal(harness.requests.filter((request) => request.url === '/api/project-one-preview/ai' && request.method === 'POST').length, 1, '409 不自动重试活动同步 POST');
+  assert.equal(harness.requests.filter((request) => request.url === '/api/project-one-preview/ai' && request.method === 'POST').length, 1, '409 自动尝试 GET 恢复，不重放活动同步 POST');
 
   harness.deferGet();
   const recovery = harness.hooks.action('refresh-preview');

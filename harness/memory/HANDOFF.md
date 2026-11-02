@@ -1,5 +1,33 @@
 # 工作交接
 
+## 2026-11-02 连续活动同步修复本地完成
+
+worker修改public HTML、quiz-ui与preview-recovery-ui，根已读实际请求/恢复/按钮与测试diff，独立6项专项、tsc、Next+tsup构建通过。完整lint无错误、harness与diffcheck通过，020本地完成。未实际用户浏览器/DB验证或服务重启部署。GET恢复仍可走原到期settlement，不描述为绝对纯只读。保护原未提交改动。
+
+证据：harness/evidence/activity-sync-recovery-2026-11-02.md。
+
+## 2026-11-02 问答解灰与中性评估UI本地完成
+
+三个worker按HTML/React/公开投影分工完成，根检查实际diff并独立跑9项专项、tsc、完整lint、Next+tsup构建。灰态源于同步busy清理与同key渲染漏更新，统一syncCustomerActivityQuizControls修复。complete_quiz在飞阶段必须优先于旧server answering渲染动画，否则慢AI不显示动画；已双端覆盖。公共结束句固定且忽略历史payload，私有数值照常。证据activity-neutral-ui-2026-11-02.md。未真实模型/数据库/浏览器联调或服务重启部署。
+
+## 2026-11-02 活动方案引擎切换本地完成
+
+engines worker拥有AI evaluator/typed Jev转换及模型专项；UI worker拥有execution.evaluationProvider schema/default/后台控件及配置/SSR测试；runtime worker拥有preview独立raw Jev注入、正式与预览集成测试。根负责治理、实际diff review与统一最终验证，禁止worker跑build。独立开关默认llm，旧JSON缺字段须默认llm，不改全局decisionProvider，不自动fallback；Jev凭据仅服务端。保留前两轮未提交问答及设计师配置改动。
+
+根引擎批实际diff与专项/tsc/完整lint/Next+tsup构建通过，证据activity-plan-engines-2026-11-02.md；Jev真实凭据/模型质量未实查。当前用户新增019：灰选项、评估动画和公开固定中性结束句，仍需收尾该UI批，不能用引擎batch验收代替。Jev path直接raw invokeJev，不能回到全局router，否则会受global LLM覆盖。
+
+## 2026-11-02 设计师execution配置本地完成
+
+rules worker拥有新execution schema/default、quiz/domain及核心测试；UI worker拥有设计师页/editor/form/入口说明与UI测试；runtime worker拥有两端运行时传快照、SQL兼容和玩家动态时限文案及集成测试；根拥有repository/API/AI evaluator与配置持久化/AI专项、治理和最后review。接口ActivityDecisionConfig.execution可选；新module导出schema/default/type/resolve，quiz第五参execution，AI evaluator参数executionConfig。禁止各worker运行build，根统一检查避免共享.next冲突。保留上一轮未提交实现，不写真实DB或部署。
+
+最终ACTIVITY-DESIGNER-017本地Resolved，根已实际审查diff并复跑配置/存储API权限/AI/核心/两端集成/SSR及VM专项、tsc/完整lint/Next+tsup构建/harness；独立高风险Review无余留P1/P2。后台入口仍/designer/customer-activities，三tab同版本保存；execution包含题库、时限、AI说明、limits、weights，task.decisionConfig冻结。旧门槛写入必须保留已存execution，null/非法不回默认；reserved题目ID必须拒绝，空稿原惩罚不被权重/limits取消。证据designer-activity-rules-2026-11-02.md。未真实DB/AI/浏览器联调、重启、迁移、部署或Git提交，上一轮未提交问答保留。
+
+## 2026-11-02 活动情境问答本地完成
+
+domain worker拥有customer-activities及新quiz题库/核心专项；service worker拥有正式/预览服务、契约、route/state及两端专项；UI worker拥有React planner/预览HTML及UI回归；根负责AI方案rubric、独立AI测试、整合review和台账。status仍pending/planning/submitted，submitted.quiz.answering须挡住结算；record内合并并返回最终evaluation，正式state不能继续使用原AI值加分。题库评分不进公开DTO。保留今日标题/恢复等已提交能力，不写真实DB/配置，不部署。
+
+最终ACTIVITY-016本地Resolved：根已逐项审阅diff、复跑全部相关专项/最终tsc/完整lint/Next+tsup/build/harness；独立高风险Review与SQL兼容定向复核无剩余P1/P2。AI文字方案值与答案固定影响在record内合并，state/preview应用recorded.evaluation；旧pending新版start启用，旧planning/submitted不追加问答。终局多人SQL直接submitted无quiz的有效新task在normalize窄恢复completed空答，playing仍strict。不要移除room-end guard（无活动不写版本）或用plan deadline替代quiz.completedAt。全部证据和未验收范围见activity-quiz-2026-11-02.md；未重启服务/部署/迁移/写真实存档。题目首版可信模板+方案条件适配，未做AI自由编题或真实模型质量验收。
+
 ## 2026-11-02 项目入口恢复控件
 
 PREVIEW-RECOVERY-015：按用户澄清，只需让实际测试项目选择页已有会话时可同步。复用 renderPreviewRecoveryControls / refreshPreview，不能重置会话或自动重发冲突写请求；主线程已检查实际 diff 并复跑：恢复UI专项、账号隔离专项、最终类型检查、修改脚本定向 ESLint、Next production build 与 tsup 通过；harness-check/diff --check 通过。项目选择页已有会话时显示恢复条，无会话隐藏，409 后刷新入口，恢复仅 GET 不重放失败 POST。完整 ESLint 在受限环境外执行并通过；初次受限执行长时间无输出后中止，Next 构建也改在受限环境外通过。未做真实浏览器/真实会话恢复或服务重启、部署、Git提交。

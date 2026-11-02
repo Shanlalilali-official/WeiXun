@@ -1,5 +1,27 @@
 # 当前状态
 
+## 2026-11-02 连续活动同步失败（本地完成）
+
+ACTIVITY-SYNC-020已修复HTML错误泛化与恢复缺口：同步409有界调用既有GET恢复，成功清错且第二活动可开始，失败保留具体原因并可点重试；同key更新重试按钮，策划草稿保留，不重放活动写命令。根已独立通过6项专项、tsc、Next+tsup构建；完整lint无错误，harness通过。未查到截图时刻请求日志，不能断言实际故障一定409；未真实浏览器/DB联调或重启部署。
+
+证据：harness/evidence/activity-sync-recovery-2026-11-02.md。
+
+## 2026-11-02 问答不可点与评估中性反馈（本地完成）
+
+ACTIVITY-UI-019本地完成。真实HTML VM复现同key后台同步后busy复位但fieldset仍禁用，现于busy切换与同key快路径统一更新问答控件。正式/预览在交卷请求开始即显示三环动效，真实evaluation到达且至少900ms后只显示“评估已结束，请您继续开展您的销售工作”；旧payload与公开投影不露效果，私有数值不改。根实际diff、9项专项、tsc、完整lint、Next+tsup构建通过；证据activity-neutral-ui-2026-11-02.md。未真实浏览器/模型/数据库联调、服务重启或部署。
+
+## 2026-11-02 活动方案评价引擎切换（本地完成）
+
+ACTIVITY-ENGINE-018本地完成：独立execution.evaluationProvider默认llm，后台可切Jev并冻结到活动，Jev一次7项typed决策严格校验，共用权重/限幅/一次结算；失败不回退LLM，空稿不调引擎。根实际diff、两引擎/两端集成/配置/SSR与JeV本地HTTP回归、类型/完整lint/Next+tsup构建通过。证据activity-plan-engines-2026-11-02.md；未真实Jev/DB/浏览器联调或重启部署。后续用户UI解灰及隐藏效果要求另由019继续实施，不用本条冒称新UI已验收。
+
+## 2026-11-02 设计师问答与AI规则配置（本地完成）
+
+ACTIVITY-DESIGNER-017本地完成：后台三页签支持四活动题库/选项分值、30..600秒、AI评价说明/范围和合并权重，复用原鉴权与CAS存储。旧客户端只改门槛保留规则，旧行默认值兼容，活动用创建时冻结execution，两端题目/时间/AI/实际NPC加权变化均已验证。根实际diff、配置/权限/运行时/SSR与相关回归、最终类型/完整lint/Next+tsup构建和harness通过；独立Review保留ID导致quiz失败P2已修复复审。证据designer-activity-rules-2026-11-02.md；未真实DB/AI/浏览器联调、服务重启或部署。
+
+## 2026-11-02 活动情境问答及AI方案影响（本地完成）
+
+ACTIVITY-016本地完成：四活动方案后3题/120秒，保留并强化AI按文字方案给支持/愉悦/五维增减，问答按私有规则，最后一次合并限幅入账。两端真实业务函数已验证非零AI+答案实际改变目标NPC，未交卷不评分、重试不重复；保存/失败/刷新/截止/旧档兼容及双截止计时覆盖。旧pending新版开始启用，已有旧planning/submitted保持；多人终局SQL形状窄兼容已补。根实际diff、专项、最终类型/完整lint/Next+tsup build及harness通过，独立Review无剩余P1/P2。证据activity-quiz-2026-11-02.md；未真实AI/DB/浏览器联调或服务重启/部署。
+
 ## 2026-11-02 实际测试项目入口同步按钮
 
 PREVIEW-RECOVERY-015 本地实现完成：主线程已检查实际 diff 并复跑：恢复UI专项、账号隔离专项、最终类型检查、修改脚本定向 ESLint、Next production build 与 tsup 通过；harness-check/diff --check 通过。项目选择页已有会话时显示恢复条，无会话隐藏，409 后刷新入口，恢复仅 GET 不重放失败 POST。完整 ESLint 在受限环境外执行并通过；初次受限执行长时间无输出后中止，Next 构建也改在受限环境外通过。未做真实浏览器/真实会话恢复或服务重启、部署、Git提交。版本冲突具体并发来源未实查，不将日志归因为多标签页。

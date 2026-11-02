@@ -1,5 +1,33 @@
 # 调查发现
 
+## 2026-11-02 活动同步恢复缺口已复现
+
+真实HTML脚本VM复现第二活动pending同步409：底层apiCall返回null、错误被泛化、无弹窗恢复入口。另同key只更新start/submit/quiz，新增retry若不单独更新会在syncBusy清理后残灰，错误文本清除也不会更新DOM。修复把error纳入key并更新各retry，409沿既有GET有界恢复；503保留具体服务端错误，普通失败可实际点击重试到成功，dirty草稿恢复保留。GET可能走原到期任务结算，并非绝对无副作用；不重放活动写命令。只有8月旧本地log，没有截图时刻请求，不能断言本次实际HTTP原因。
+
+## 2026-11-02 选项残留禁用的实际根因与修复
+
+HTML同key快速返回只更新start/submit，而请求响应在busy时渲染quiz fieldset/按钮禁用；finally清busy未重算。完整真实脚本VM用deferred同步响应覆盖，修复后busy与sync都结束同key答案不变且选项恢复可点。两端另发现complete_quiz会等待AI，期间server quiz仍answering，故界面按in-flight action优先进入评估，而非只看server completed。真实evaluation未到达绝不按动画时间伪完成，失败仍可重试。公开投影及旧payload一律固定中性结果；私有数值专项确认保留。
+
+## 2026-11-02 方案评价尚未使用可切换决策路由
+
+evaluateCustomerActivityPlan实查deps.invoker??invokeLLM；invokeConfiguredJev仅在活动可行性分支，设计师Jev任务目录无方案项。既有invokeConfiguredJev受全局LLM/Jev开关影响，不能用它代替独立方案Jev开关，否则选择Jev仍可能调用LLM。新增分支须使用直接invokeJev或专用raw依赖，保留统一client与响应校验；Jev只有choice/score/noul，不具备自由文字评语，方案结果可用确定性文本。
+
+## 2026-11-02 设计师规则验证与兼容风险修复
+
+独立Review实测execution题目ID `__proto__` 可通过配置schema，但quiz answers经Zod解析丢键导致提交/超时失败；已拒绝该ID及constructor/prototype并测试合法配置实际生成问答。根review另修空数字只留旧值却可保存（改NaN阻止保存）、空稿负向被limits最小值0抹掉（沿原固定规则）、AI仅方案评价却UI描述重复评答案。旧客户端无execution的门槛写入必须在CAS前保留旧规则；API显式非法字段不回默认，运行时只用task快照。源码与测试证据见designer-activity-rules-2026-11-02.md，未读写真实配置行。
+
+## 2026-11-02 设计师规则未接入的实际入口
+
+实际src/app/designer/customer-activities/page.tsx及form/API/repository仅保存mode/thresholds；questionBanks、120秒和AI提示/结算限制在quiz/domain/AI模块。活动decisionConfig已持久冻结于task，可复用以隔离后来后台修改，避免另起运行时实时读配置。扩展repository需同步保存execution并保护缺字段旧请求，否则只做页面会丢规则或设置不生效。当前工作区保留上一轮未提交问答实现，本批在其上追加，不重置或重复建设。
+
+## 2026-11-02 问答终局与房间SQL兼容
+
+独立Review发现新room-end分支用返回对象引用判断变化，但domain read safeParse总创建新对象，会导致无活动的finished房间反复CAS；已改显式planning/quiz.answering guard并回归。根实查本地20261020000100迁移：end_multiplayer_room直接将planning改submitted、保留quizEnabled但无quiz；新strict schema会拒绝该真实SQL形状。state normalization新增仅terminal multiplayer_room_ended且有效room_ended/timeout任务的窄恢复，生成立即completed空答quiz，不放宽playing、不补旧task或已评价。离线双截止恢复必须取quiz.completedAt，不能用plan deadline误补扣问答两分钟。相关源码及实际形状fixture验收见activity-quiz-2026-11-02.md；线上SQL版本本批未实查。
+
+## 2026-11-02 已有活动方案AI数值链路与问答缺口
+
+实际evaluateCustomerActivityPlan已输出supportDelta[-5,4]/pleasureDelta[-8,6]/五维[-3,3]，正式processSubmittedCustomerActivityEvaluations和preview settleCustomerActivityTasks均会调用并入账，故用户新增要求复用并强化该链路。当前submit/timeout立即status submitted并可评价，需新quiz answering阻挡。正式applyCustomerActivityEvaluation在record后仍使用入参原AI值，合并逻辑加在domain record后必须切换为已合并返回值，否则记录与实际数值不一致。问答及UI为新增，原题例的实际到场/采购意向不作为事实或评分输入。
+
 ## 2026-11-02 同步按钮缺失的实际页面
 
 用户明确处于项目选择页，topbar() 对 state.screen===projects 返回空；当前同步入口只在顶部/拜访及AI错误区，因此该入口缺失有源码证据。客户活动modal也未提供会话同步，但用户本次并非modal场景；不把前者当实际原因。409日志表明版本不一致，具体并发来源尚未实查。

@@ -831,8 +831,8 @@ export default function DesignerPage() {
                   <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-700">活动判定</span>
                 </div>
                 <div className="text-sm font-semibold text-foreground">客户活动匹配设置</div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">选择 AI 综合判断，或按支持度与愉悦度门槛匹配活动。</p>
-                <div className="mt-4 text-xs font-medium text-emerald-700">配置活动判定方式 →</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">设置活动匹配门槛、情境问答题库，以及方案 AI 评价和数值结算规则。</p>
+                <div className="mt-4 text-xs font-medium text-emerald-700">配置门槛、题库与评价 →</div>
               </button>
 
               <button

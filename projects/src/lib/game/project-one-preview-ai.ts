@@ -35,7 +35,10 @@ import {
   type ActivityDecisionConfig,
   type CustomerActivityRelationshipSnapshot,
   finalizeExpiredCustomerActivities,
+  isCustomerActivityReadyForEvaluation,
   readCustomerActivityState,
+  saveCustomerActivityQuizAnswer,
+  completeCustomerActivityQuiz,
   recordCustomerActivityEvaluation,
   saveCustomerActivityDraft,
   startCustomerActivityPlanning,
@@ -1691,13 +1694,14 @@ async function settleCustomerActivityTasks(
   state: PreviewServerState,
   invoker: LlmInvoker,
   jevInvoker: PreviewJevInvoker,
+  activityPlanJevInvoker: JevInvoker,
   serverNow: number,
   attempts: CustomerActivitySettlementAttempts,
 ): Promise<void> {
   await settlePendingCustomerActivityDetections(state, invoker, jevInvoker, serverNow, attempts);
   state.customerActivities = finalizeExpiredCustomerActivities(state.customerActivities, serverNow);
   const task = state.customerActivities.tasks.find((item) =>
-    item.status === 'submitted' && !item.evaluation && !attempts.evaluations.has(item.id),
+    isCustomerActivityReadyForEvaluation(item) && !item.evaluation && !attempts.evaluations.has(item.id),
   );
   if (!task) return;
   const taskNpcId = previewNpcIdSchema.safeParse(task.npcId);
@@ -1709,6 +1713,7 @@ async function settleCustomerActivityTasks(
     summary: task.summary,
     conversation: task.sourceConversation,
     draft: task.draft,
+    executionConfig: task.decisionConfig?.execution,
     customerContext: {
       name: npc.name,
       title: npc.title,
@@ -1721,20 +1726,26 @@ async function settleCustomerActivityTasks(
       memoryFocus: npc.memoryFocus,
       nodeGuidance: npc.nodeGuidance,
     },
-  }, { invoker: toActivityInvoker(invoker) });
+  }, { invoker: toActivityInvoker(invoker), jevInvoker: activityPlanJevInvoker });
   if (!evaluation) return;
   const recorded = recordCustomerActivityEvaluation(state.customerActivities, task.id, evaluation, serverNow);
   state.customerActivities = recorded.state;
   if (recorded.applied) {
     const updatedTask = state.customerActivities.tasks.find((item) => item.id === task.id);
-    if (updatedTask) applyCustomerActivityEvaluation(state, updatedTask);
+    if (updatedTask?.evaluation) {
+      applyCustomerActivityEvaluation(state, {
+        ...updatedTask,
+        evaluation: recorded.evaluation ?? updatedTask.evaluation,
+      });
+    }
   }
 }
 
 export function hasCustomerActivitySettlementWork(state: PreviewServerState, serverNow = Date.now()): boolean {
   return state.pendingCustomerActivityDetections.length > 0 || state.customerActivities.tasks.some((task) =>
     (task.status === 'planning' && task.deadlineAt !== undefined && serverNow >= task.deadlineAt)
-    || (task.status === 'submitted' && !task.evaluation),
+    || (task.status === 'submitted' && task.quiz?.status === 'answering' && serverNow >= task.quiz.deadlineAt)
+    || (isCustomerActivityReadyForEvaluation(task) && !task.evaluation),
   );
 }
 
@@ -1850,10 +1861,21 @@ function messagePurpose(npcId: PreviewNpcId, channel: string, hasAttachment: boo
     + (hasAttachment ? '玩家附带了材料。若上下文说明未查看，只能知道已收到，不能假设或引用材料正文。' : '没有附件。');
 }
 
-export function createPreviewAiService(deps: { invoker?: LlmInvoker; jevInvoker?: PreviewJevInvoker; store?: PreviewSessionStore; leaseRenewIntervalMs?: number } = {}) {
+export function createPreviewAiService(deps: {
+  invoker?: LlmInvoker;
+  jevInvoker?: PreviewJevInvoker;
+  /** Raw transport reserved for activity-plan evaluation's frozen per-task provider choice. */
+  activityPlanJevInvoker?: JevInvoker;
+  store?: PreviewSessionStore;
+  leaseRenewIntervalMs?: number;
+} = {}) {
   const invoker = deps.invoker ?? invokeLLM;
   const jevInvoker = deps.jevInvoker ?? invokeDefaultJev;
   const activityJevInvoker = deps.jevInvoker ?? createPreviewCustomerActivityJevInvoker();
+  // This path deliberately bypasses the global designer router: evaluationProvider
+  // is frozen on each activity task, so later global routing changes must not
+  // change the engine used to score that task.
+  const activityPlanJevInvoker = deps.activityPlanJevInvoker ?? deps.jevInvoker ?? invokeJev;
   const store = deps.store ?? new PreviewSessionStore();
   const leaseRenewIntervalMs = deps.leaseRenewIntervalMs ?? 30_000;
   const inFlightSessions = new Set<string>();
@@ -1879,6 +1901,16 @@ async function executeUnsafe(
       state.npcStates = newNpcStates();
       state.completedCommands.clear();
       return previewAiResponseSchema.parse(base);
+    }
+
+    const answeringQuiz = state.customerActivities.tasks.find((task) =>
+      task.status === 'submitted' && task.quiz?.status === 'answering',
+    );
+    if (answeringQuiz
+      && request.action !== 'customer_activity_answer'
+      && request.action !== 'customer_activity_complete_quiz'
+      && request.action !== 'customer_activity_sync') {
+      throw new PreviewAiError('conflict', 'CUSTOMER_ACTIVITY_QUIZ_ACTIVE');
     }
 
     if (request.action === 'plan') {
@@ -1972,6 +2004,36 @@ async function executeUnsafe(
         const saved = saveCustomerActivityDraft(state.customerActivities, request.taskId, request.draft, Date.now());
         state.customerActivities = saved.state;
         if (saved.accepted) state.customerActivities = submitCustomerActivityPlan(state.customerActivities, request.taskId, Date.now());
+      }
+      return previewAiResponseSchema.parse({ ...base, customerActivities: publicCustomerActivities(state) });
+    }
+
+    if (request.action === 'customer_activity_answer') {
+      const task = state.customerActivities.tasks.find((item) => item.id === request.taskId);
+      if (!task) throw new PreviewAiError('not_found', 'CUSTOMER_ACTIVITY_NOT_FOUND');
+      if (task.status === 'submitted' && task.quiz?.status === 'completed') {
+        return previewAiResponseSchema.parse({ ...base, customerActivities: publicCustomerActivities(state) });
+      }
+      const saved = saveCustomerActivityQuizAnswer(
+        state.customerActivities,
+        request.taskId,
+        request.questionId,
+        request.optionId,
+        Date.now(),
+      );
+      if (!saved.accepted) throw new PreviewAiError('conflict', 'CUSTOMER_ACTIVITY_ANSWER_REJECTED');
+      state.customerActivities = saved.state;
+      return previewAiResponseSchema.parse({ ...base, customerActivities: publicCustomerActivities(state) });
+    }
+
+    if (request.action === 'customer_activity_complete_quiz') {
+      const task = state.customerActivities.tasks.find((item) => item.id === request.taskId);
+      if (!task) throw new PreviewAiError('not_found', 'CUSTOMER_ACTIVITY_NOT_FOUND');
+      if (task.quiz?.status !== 'completed') {
+        const completed = completeCustomerActivityQuiz(state.customerActivities, request.taskId, Date.now());
+        const updated = completed.tasks.find((item) => item.id === request.taskId);
+        if (updated?.quiz?.status !== 'completed') throw new PreviewAiError('conflict', 'CUSTOMER_ACTIVITY_QUIZ_NOT_ACTIVE');
+        state.customerActivities = completed;
       }
       return previewAiResponseSchema.parse({ ...base, customerActivities: publicCustomerActivities(state) });
     }
@@ -2244,9 +2306,9 @@ async function executeUnsafe(
       // the whole command has produced a valid public response.
       const pending = structuredClone(state) as PreviewServerState;
       const activityAttempts: CustomerActivitySettlementAttempts = { detections: new Set(), evaluations: new Set() };
-      await settleCustomerActivityTasks(pending, invoker, activityJevInvoker, Date.now(), activityAttempts);
+      await settleCustomerActivityTasks(pending, invoker, activityJevInvoker, activityPlanJevInvoker, Date.now(), activityAttempts);
       const raw = await executeUnsafe(pending, request, promptConfig, activityDecisionConfigSchema.parse(activityDecisionConfig));
-      await settleCustomerActivityTasks(pending, invoker, activityJevInvoker, Date.now(), activityAttempts);
+      await settleCustomerActivityTasks(pending, invoker, activityJevInvoker, activityPlanJevInvoker, Date.now(), activityAttempts);
       pending.version += 1;
       const response = previewAiResponseSchema.parse({
         ...raw,
@@ -2299,9 +2361,9 @@ async function executeUnsafe(
     try {
       const pending = structuredClone(acquired.state) as PreviewServerState;
       const activityAttempts: CustomerActivitySettlementAttempts = { detections: new Set(), evaluations: new Set() };
-      await settleCustomerActivityTasks(pending, invoker, activityJevInvoker, Date.now(), activityAttempts);
+      await settleCustomerActivityTasks(pending, invoker, activityJevInvoker, activityPlanJevInvoker, Date.now(), activityAttempts);
       const raw = await executeUnsafe(pending, request, promptConfig, activityDecisionConfigSchema.parse(activityDecisionConfig));
-      await settleCustomerActivityTasks(pending, invoker, activityJevInvoker, Date.now(), activityAttempts);
+      await settleCustomerActivityTasks(pending, invoker, activityJevInvoker, activityPlanJevInvoker, Date.now(), activityAttempts);
       if (renewal) await renewal;
       if (renewalFailure) throw renewalFailure;
       pending.version = acquired.version + 1;

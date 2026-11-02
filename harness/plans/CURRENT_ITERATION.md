@@ -1,5 +1,33 @@
 # 当前迭代
 
+## 2026-11-02 连续活动同步错误修复（用户反馈，已批准，本地完成）
+
+已实现并复现第二活动pending同步409后既有GET恢复、恢复失败重试、普通503错误保留、成功同key清旧错、重试按钮busy复位和未保存草稿保留。动作仍受服务端CAS/幂等保护，不自动重放start/answer/complete，GET本身沿原到期结算逻辑。根6项专项、类型、Next+tsup构建已通过，完整lint无错误、harness通过。截图具体HTTP状态未实查，范围是确认的错误恢复缺口；未重启服务或部署。
+
+证据：harness/evidence/activity-sync-recovery-2026-11-02.md。
+
+## 2026-11-02 问答选项禁用与中性评估动效（用户反馈，已批准，本地完成）
+
+完成实际请求生命周期解灰，真实同步同key回包后解除fieldset/选项/导航禁用；保存失败保留选择并可重试，截止限制保持。两端在complete_quiz请求开始立即显示三环评估，即使服务端旧quiz仍answering；快响应至少900ms，慢评价没有evaluation绝不伪完成，失败恢复可重试。结束固定“评估已结束，请您继续开展您的销售工作”，旧公开效果文本也隐藏，正负空稿不以颜色暗示。公开投影中性，私有NPC变化/LLM/Jev配置不改。根实际diff、9项专项、类型/完整lint/Next+tsup构建通过，证据activity-neutral-ui-2026-11-02.md；未真实浏览器/模型/DB联调或重启部署。
+
+## 2026-11-02 活动方案评价LLM/Jev切换（用户请求，已批准，本地完成）
+
+实查evaluateCustomerActivityPlan当前直接invokeLLM，既有customer_activity_feasibility走LLM/Jev决策路由但无方案评价任务。新增活动execution.evaluationProvider独立二选一，默认LLM；后台AI评价页可保存，随task.decisionConfig冻结，不改变全局其它决策开关。LLM沿原路径；Jev用同一服务端客户端作7项typed整数choice（支持/愉悦/五维），校验完整性/合法候选后转同一evaluation，再按原weights/limits与问答合并一次。Jev失败保持待评价，不静默切LLM；空稿原规则不调模型；公开DTO无引擎/凭据/分值。验收旧配置兼容/保存/SSR、两引擎与失败契约、正式预览快照/实际NPC/幂等/类型lintbuild/harness；不读写真实配置/对局或部署。
+
+完成：根实际diff、默认/两分支/失败/typed协议/空稿、正式预览冻结与实际数值、配置保存/SSR及本地Jev HTTP专项通过，最终tsc/完整lint/Next+tsup构建通过。证据activity-plan-engines-2026-11-02.md。新用户019界面修复仍继续，本条仅引擎能力完成，不声称真实Jev质量/DB/浏览器联调或部署。
+
+## 2026-11-02 设计师活动问答与AI结算配置（用户已批准，本地完成）
+
+用户要求补齐上一轮设计师后台缺口。已实查customer-activities页面/form/API/repository仅支持触发门槛，题库/120秒/AI业务rubric/合并限幅在代码；不重复建设匹配页。扩展同一版本化配置的可选execution，页面提供问答题干/四选项/分值、30..600秒、AI评价业务提示、数值范围及方案/问答权重；保留硬输出契约与最大范围。创建活动沿既有decisionConfig冻结，后续编辑不影响进行中活动；旧配置/旧客户端只改门槛时保留execution，未知/非法配置失败不静默回默认。API权限/CAS/表结构复用，无新表迁移或真实配置写入。验收保存读回/冲突/权限/运行时真实使用自定义配置/快照隔离/隐私/旧任务兼容/UI/类型lintbuild/harness。
+
+完成：上述UI/存储/AI/domain/两端运行时已接通。根实际diff、配置存储与权限、实际业务函数的自定义题库/时限/AI prompt/加权数值、快照隔离及SSR/VM测试通过，最终tsc/完整lint/Next+tsup/build/harness通过。独立Review发现保留题目ID导致创建失败，已严格校验并复核关闭；空数字保存旧值、空稿惩罚被配置抹掉等review项亦修复有回归。证据designer-activity-rules-2026-11-02.md；未实查真实配置行或进行真实浏览器/AI联调，不声称已部署。
+
+## 2026-11-02 活动情境问答与AI方案合并结算（用户已批准，本地完成）
+
+用户确认方案后增加三道情境选择题，并明确要求AI根据文字方案调整NPC数值。实查已有evaluateCustomerActivityPlan经统一client返回结构化support/pleasure/五维增减、正式及预览已落库应用；确认缺口为提交即评价，无问答阶段及合并结算。复用已有AI方案评估，新增四类活动各三题、120秒独立问答、固定答案影响、服务端保存恢复和超时提交；方案AI影响+问答规则一次合并受现有上下限约束，仅目标NPC，空白沿原准备不足。公开不露内部得分/快照。旧submitted不补题不重算，新任务启用。范围含domain、契约、正式/预览、两端UI、离线回归；不改触发门槛/真实存档/远程配置或部署。
+
+完成：根实际diff及worker接口复核，AI方案rubric强化、3题题库/稳定洗牌/方案适配、两端提交与数值合并、公开隐私、保存重试、截止计时及旧任务兼容均落地。独立Review发现room-end重复CAS已修；实查本地SQL直接submitted无quiz形状，补终局窄恢复并独立复审。根最终专项、tsc/完整lint/Next+tsup构建和harness通过；证据harness/evidence/activity-quiz-2026-11-02.md。未做真实模型质量/真实多人/浏览器视觉或远程部署验收。
+
 ## 2026-11-02 实际测试项目入口会话同步（用户反馈，已批准）
 
 PREVIEW-RECOVERY-015：用户确认点击实际测试后、进入项目一之前看不到同步按钮。已实查 public/project1-prototype-v9.html 的 topbar 在 projects 返回空、renderProjects 未挂载已有 renderPreviewRecoveryControls；已有服务端恢复 GET 与按钮事件处理，不重复建设后端。目标：已绑定会话在项目选择页显示同步入口及进行中/失败状态，无会话不显示无效入口。只修预览 UI 与相关回归，不改实际会话或数据库、不自动重发失败写操作。主线程已检查实际 diff 并复跑：恢复UI专项、账号隔离专项、最终类型检查、修改脚本定向 ESLint、Next production build 与 tsup 通过；harness-check/diff --check 通过。项目选择页已有会话时显示恢复条，无会话隐藏，409 后刷新入口，恢复仅 GET 不重放失败 POST。完整 ESLint 在受限环境外执行并通过；初次受限执行长时间无输出后中止，Next 构建也改在受限环境外通过。未做真实浏览器/真实会话恢复或服务重启、部署、Git提交。

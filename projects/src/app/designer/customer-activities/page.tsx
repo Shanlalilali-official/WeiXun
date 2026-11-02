@@ -16,7 +16,13 @@ import {
   type CustomerActivityType,
   type OrganizationActivityThreshold,
 } from '@/lib/game/customer-activities';
+import {
+  activityExecutionConfigSchema,
+  resolveActivityExecutionConfig,
+  type ActivityExecutionConfig,
+} from '@/lib/game/customer-activity-execution-config';
 import { PROJECT_ONE_FIVE_PERSON_NPCS } from '@/lib/designer/project-one-five-person';
+import { CustomerActivityExecutionEditor } from '@/components/designer/customer-activity-execution-editor';
 import {
   buildOrganizationActivityThreshold,
   isEmptyOrganizationActivityThresholdForm,
@@ -31,7 +37,10 @@ type ActivityDecisionForm = {
   mode: ActivityDecisionConfig['mode'];
   thresholds: Record<CustomerActivityType, OrganizationActivityThresholdForm>;
   hospitality: SingleCustomerActivityThresholdForm;
+  execution: ActivityExecutionConfig;
 };
+
+type SettingsTab = 'matching' | 'questions' | 'evaluation';
 
 const ACTIVITY_OPTIONS: Array<{ id: CustomerActivityType; label: string; description: string }> = [
   { id: 'technical_meeting', label: '技术交流会', description: '判断是否匹配与客户开展技术交流。' },
@@ -83,6 +92,7 @@ function emptyForm(mode: ActivityDecisionForm['mode'] = DEFAULT_ACTIVITY_DECISIO
     mode,
     thresholds: Object.fromEntries(CUSTOMER_ACTIVITY_TYPES.map((type) => [type, blankThresholdForm()])) as Record<CustomerActivityType, OrganizationActivityThresholdForm>,
     hospitality: { supportMin: String(HOSPITALITY_RECOMMENDATION.supportMin), pleasantnessMin: String(HOSPITALITY_RECOMMENDATION.pleasantnessMin) },
+    execution: resolveActivityExecutionConfig(),
   };
 }
 
@@ -94,6 +104,7 @@ function recommendedForm(mode: ActivityDecisionForm['mode']): ActivityDecisionFo
       type === 'hospitality' ? blankThresholdForm() : recommendedThresholdForm(RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS[type]),
     ])) as ActivityDecisionForm['thresholds'],
     hospitality: { supportMin: String(HOSPITALITY_RECOMMENDATION.supportMin), pleasantnessMin: String(HOSPITALITY_RECOMMENDATION.pleasantnessMin) },
+    execution: resolveActivityExecutionConfig(),
   };
 }
 
@@ -126,6 +137,7 @@ function formFromConfig(config: ActivityDecisionConfig): ActivityDecisionForm {
       supportMin: String(config.thresholds.hospitality?.supportMin ?? HOSPITALITY_RECOMMENDATION.supportMin),
       pleasantnessMin: String(config.thresholds.hospitality?.pleasantnessMin ?? HOSPITALITY_RECOMMENDATION.pleasantnessMin),
     },
+    execution: resolveActivityExecutionConfig(config.execution),
   };
 }
 
@@ -192,6 +204,7 @@ export default function CustomerActivitiesSettingsPage() {
   const [persisted, setPersisted] = useState(false);
   const [recommendationDraft, setRecommendationDraft] = useState(false);
   const [selectedActivity, setSelectedActivity] = useState<CustomerActivityType>(CUSTOMER_ACTIVITY_TYPES[0]);
+  const [activeTab, setActiveTab] = useState<SettingsTab>('matching');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
@@ -204,9 +217,11 @@ export default function CustomerActivitiesSettingsPage() {
     buildOrganizationActivityThreshold(form.thresholds[type]) !== null
   ));
   const hospitalityThresholdComplete = buildSingleCustomerActivityThreshold(form.hospitality) !== null;
+  const executionConfigValid = activityExecutionConfigSchema.safeParse(form.execution).success;
   const numericModeAvailable = organizationThresholdsComplete;
   const invalidThreshold = thresholds === null;
   const saveDisabled = loading || saving || !dirty || !config || conflict || invalidThreshold
+    || !executionConfigValid
     || !hospitalityThresholdComplete
     || (form.mode === 'numeric' && !organizationThresholdsComplete);
   const selectedThreshold = form.thresholds[selectedActivity];
@@ -241,7 +256,7 @@ export default function CustomerActivitiesSettingsPage() {
       const hasPersistedRow = Boolean(body && typeof body === 'object' && (body as { persisted?: unknown }).persisted === true);
       const showRecommendations = noOrganization && (nextConfig.mode === 'ai' || configHasLegacyRules(nextConfig));
       const nextForm = showRecommendations
-        ? { ...recommendedForm(nextConfig.mode), hospitality: saved.hospitality }
+        ? { ...recommendedForm(nextConfig.mode), hospitality: saved.hospitality, execution: saved.execution }
         : saved;
       setConfig(nextConfig);
       setPersisted(hasPersistedRow);
@@ -265,6 +280,11 @@ export default function CustomerActivitiesSettingsPage() {
   function markEdited() {
     setRecommendationDraft(false);
     setNotice('');
+  }
+
+  function updateExecution(execution: ActivityExecutionConfig) {
+    setForm((current) => ({ ...current, execution }));
+    markEdited();
   }
 
   function updateMode(mode: ActivityDecisionForm['mode']) {
@@ -311,9 +331,9 @@ export default function CustomerActivitiesSettingsPage() {
 
   async function save() {
     if (!config || saveDisabled || !thresholds) return;
-    const writeConfig = parseCustomerActivityDecisionConfigWrite({ mode: form.mode, thresholds });
+    const writeConfig = parseCustomerActivityDecisionConfigWrite({ mode: form.mode, thresholds, execution: form.execution });
     if (!writeConfig) {
-      setNotice('请完整配置吃饭或喝酒邀约的单人门槛；数值模式还要求三项组织活动规则完整。');
+      setNotice('请检查所有活动门槛、情境题和 AI 评价配置，确保字段范围及必填内容有效。');
       setNoticeKind('error');
       return;
     }
@@ -382,8 +402,8 @@ export default function CustomerActivitiesSettingsPage() {
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-700"><BrainCircuit className="h-5 w-5" /></span>
             <div>
-              <h1 className="text-lg font-semibold text-slate-900">客户活动匹配设置</h1>
-              <p className="mt-0.5 text-xs text-slate-500">配置技术交流、参观和吃饭或喝酒邀约的判定方式。</p>
+              <h1 className="text-lg font-semibold text-slate-900">客户活动设置</h1>
+              <p className="mt-0.5 text-xs text-slate-500">管理活动匹配、情境问答和方案 AI 评价规则。</p>
             </div>
           </div>
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
@@ -403,11 +423,11 @@ export default function CustomerActivitiesSettingsPage() {
       <main className="mx-auto max-w-6xl px-4 py-5 sm:px-6 sm:py-7">
         <div className="mb-5 flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs leading-5 text-blue-950">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-700" />
-          <p>活动在对话结束后匹配。技术交流和参观活动按冻结的五人客户状态检查组织门槛；吃饭或喝酒邀约只检查本次目标客户，支持度与愉悦度同时达到各自下限即可，并始终采用数值门槛。客户主动提出的吃饭或喝酒邀约需要销售确认后再进入策划。</p>
+          <p>活动在对话结束后匹配。技术交流和参观活动按冻结的五人客户状态检查组织门槛；吃饭或喝酒邀约只检查本次目标客户，支持度与愉悦度同时达到各自下限即可，并始终采用数值门槛。客户主动提出的吃饭或喝酒邀约需要销售确认后再进入策划。这里的配置仅用于之后创建的活动，已开始或已匹配的活动沿用创建时的配置快照。</p>
         </div>
 
         {recommendationDraft && config && <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950" role="status">
-          当前表格展示的是推荐门槛草稿，尚未写入服务端。请检查三项组织活动规则和单联系人邀约门槛，再选择匹配方式并保存。
+          当前表格展示的是推荐门槛草稿，尚未写入服务端。请检查三项组织活动规则和单联系人邀约门槛；情境题与 AI 评价配置也会随同一次保存。
         </div>}
         {legacyRows.length > 0 && <section className="mb-5 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-950" aria-labelledby="legacy-threshold-heading">
           <h2 id="legacy-threshold-heading" className="font-semibold">已保存的旧版单联系人门槛（只读）</h2>
@@ -427,6 +447,24 @@ export default function CustomerActivitiesSettingsPage() {
           <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-600"><p>配置暂时无法读取。</p><button type="button" onClick={() => void loadConfig()} className="mt-3 rounded-lg bg-emerald-700 px-4 py-2 text-xs font-semibold text-white">重试</button></div>
         ) : (
           <div className="space-y-5">
+            <div role="tablist" aria-label="客户活动设置分类" className="grid gap-2 rounded-2xl border border-slate-200 bg-white p-2 sm:grid-cols-3">
+              {([
+                ['matching', '匹配门槛'],
+                ['questions', '情境问答'],
+                ['evaluation', 'AI 评价与结算'],
+              ] as const).map(([tab, label]) => <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab}
+                onClick={() => setActiveTab(tab)}
+                className={'rounded-xl px-4 py-3 text-left text-sm font-semibold transition-colors ' + (activeTab === tab ? 'bg-emerald-50 text-emerald-950 ring-1 ring-emerald-500' : 'text-slate-600 hover:bg-slate-50')}
+              >{label}</button>)}
+            </div>
+
+            {!executionConfigValid && <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs leading-5 text-rose-900" role="alert">情境题或 AI 评价配置中有字段未通过校验。请检查必填文本、选项变化范围、最终上下限和权重后保存。</p>}
+
+            {activeTab === 'matching' ? <>
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="activity-decision-mode">
               <div className="mb-4">
                 <h2 id="activity-decision-mode" className="text-sm font-semibold text-slate-900">活动匹配方式</h2>
@@ -562,6 +600,12 @@ export default function CustomerActivitiesSettingsPage() {
                 {form.mode === 'numeric' && !organizationThresholdsComplete && <p className="text-xs text-rose-700" role="alert">数值门槛模式要求三项活动各自设置全体最低愉悦度，并至少配置一条完整团队路径。</p>}
               </div>}
             </section>
+            </> : <CustomerActivityExecutionEditor
+              tab={activeTab}
+              value={form.execution}
+              disabled={loading || saving}
+              onChange={updateExecution}
+            />}
           </div>
         )}
       </main>

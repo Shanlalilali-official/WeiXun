@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { publicCustomerActivityQuizSchema } from '@/lib/game/customer-activity-quiz';
 
 export const previewNpcIdSchema = z.enum(['P1-001', 'P1-002', 'P1-003', 'P1-004', 'P1-005']);
 export type PreviewNpcId = z.infer<typeof previewNpcIdSchema>;
@@ -85,6 +86,8 @@ export const previewAiRequestSchema = z.discriminatedUnion('action', [
   commonRequestSchema.extend({ action: z.literal('customer_activity_start'), taskId: z.string().min(1).max(512) }),
   commonRequestSchema.extend({ action: z.literal('customer_activity_save'), taskId: z.string().min(1).max(512), draft: z.string().max(12_000) }),
   commonRequestSchema.extend({ action: z.literal('customer_activity_submit'), taskId: z.string().min(1).max(512), draft: z.string().max(12_000) }),
+  commonRequestSchema.extend({ action: z.literal('customer_activity_answer'), taskId: z.string().min(1).max(512), questionId: z.string().trim().min(1).max(80), optionId: z.string().trim().min(1).max(80).nullable() }),
+  commonRequestSchema.extend({ action: z.literal('customer_activity_complete_quiz'), taskId: z.string().min(1).max(512) }),
   commonRequestSchema.extend({ action: z.literal('customer_activity_end_conversation'), npcId: previewNpcIdSchema, channel: previewChannelSchema }),
   commonRequestSchema.extend({ action: z.literal('customer_activity_sync') }),
   commonRequestSchema.extend({ action: z.literal('reset') }),
@@ -130,6 +133,7 @@ const previewCustomerActivityTaskSchema = z.object({
   draft: z.string().max(12_000),
   submittedAt: z.number().int().nonnegative().optional(),
   submitReason: z.enum(['manual', 'timeout']).optional(),
+  quiz: publicCustomerActivityQuizSchema.optional(),
   evaluation: z.object({ overallEvaluation: z.string().min(1).max(600) }).strict().optional(),
   evaluatedAt: z.number().int().nonnegative().optional(),
 }).strict();
@@ -157,7 +161,7 @@ export type PreviewNpcTestState = z.infer<typeof previewNpcTestStateSchema>;
 export const previewAiResponseSchema = z.object({
   previewSessionId: z.string().regex(/^[A-Za-z0-9_-]{20,128}$/),
   version: z.number().int().min(0),
-  action: z.enum(['plan', 'message', 'wechat_request', 'phone_connect', 'visit_preparation', 'brief_visit', 'start_visit', 'visit_turn', 'end_visit', 'test_adjust_npcs', 'test_adjust_appointments', 'customer_activity_start', 'customer_activity_save', 'customer_activity_submit', 'customer_activity_end_conversation', 'customer_activity_sync', 'reset']),
+  action: z.enum(['plan', 'message', 'wechat_request', 'phone_connect', 'visit_preparation', 'brief_visit', 'start_visit', 'visit_turn', 'end_visit', 'test_adjust_npcs', 'test_adjust_appointments', 'customer_activity_start', 'customer_activity_save', 'customer_activity_submit', 'customer_activity_answer', 'customer_activity_complete_quiz', 'customer_activity_end_conversation', 'customer_activity_sync', 'reset']),
   content: z.string().max(2_000).nullable().optional(),
   /** Message delivery state. The internal reason for a read-without-reply is never returned here. */
   responseAction: previewMessageResponseActionSchema.optional(),

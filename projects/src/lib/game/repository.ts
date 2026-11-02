@@ -15,6 +15,8 @@ import { appendCustomerActivityDiagnostic, applyCustomerActivityEvaluation, comp
 import type { GameReview } from '@/lib/contracts/game';
 import {
   finalizeExpiredCustomerActivities,
+  finishCustomerActivityPlanningOnRoomEnd,
+  isCustomerActivityReadyForEvaluation,
   type CustomerActivityFeasibilityDecision,
   type CustomerActivityProposalCandidate,
 } from '@/lib/game/customer-activities';
@@ -152,6 +154,12 @@ export interface OwnedGameSession {
   id: string;
   userId: string;
   state: GameRuntimeState;
+}
+
+export function hasCustomerActivityWindowToClose(state: GameRuntimeState): boolean {
+  return state.customerActivities.tasks.some((task) =>
+    task.status === 'planning' || (task.status === 'submitted' && task.quiz?.status === 'answering'),
+  );
 }
 
 /**
@@ -377,7 +385,6 @@ export async function synchronizeOwnedGameTimer(sessionId: string, userId: strin
     const loaded = await getOwnedGameSession(sessionId, userId, { materializeTimer: false });
     // A completed multiplayer runtime keeps its frozen timer snapshot. Do not
     // install a fresh room-start anchor on every result-page poll.
-    if (loaded.state.status !== 'playing') return loaded;
     let timerBase = loaded.state;
     if (loaded.state.gameMode === 'multiplayer') {
       const supabase = createServerClient();
@@ -393,20 +400,50 @@ export async function synchronizeOwnedGameTimer(sessionId: string, userId: strin
       // budget starts only when the room runs. New room-start SQL stamps the
       // same anchor into each runtime atomically; an older running save with
       // no timer anchor begins at this migration boundary.
+      if (room?.status === 'finished') {
+        if (!hasCustomerActivityWindowToClose(timerBase)) return loaded;
+        const closedActivities = finishCustomerActivityPlanningOnRoomEnd(timerBase.customerActivities, Date.now());
+        try {
+          const committed = await commitGameCommand({
+            sessionId,
+            commandId: `customer-activity-room-end:${loaded.state.version}`,
+            commandType: 'customer_activity.room_end_finalize',
+            expectedVersion: loaded.state.version,
+            state: { ...timerBase, customerActivities: closedActivities },
+            eventType: 'customer_activity.room_end_completed',
+            eventPayload: { taskIds: closedActivities.tasks
+              .filter((task) => task.status === 'submitted' && task.quiz?.status === 'completed' && !task.evaluation)
+              .map((task) => task.id) },
+            result: { finalized: true },
+          });
+          return { ...loaded, state: committed.state };
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== 'STATE_VERSION_CONFLICT' || attempt === 2) throw error;
+          continue;
+        }
+      }
       if (room?.status !== 'running') return loaded;
       if (!timerBase.projectTimer.lastResumedAt && !timerBase.projectTimer.visitPaused) {
         timerBase = { ...timerBase, projectTimer: { ...timerBase.projectTimer, lastResumedAt: new Date().toISOString() } };
       }
     }
+    if (loaded.state.status !== 'playing') return loaded;
     const planningTask = timerBase.customerActivities.tasks.find((task) => task.status === 'planning');
     if (planningTask) {
       const nowMs = Date.now();
       if (planningTask.deadlineAt === undefined || nowMs < planningTask.deadlineAt) return loaded;
       const finalizedActivities = finalizeExpiredCustomerActivities(timerBase.customerActivities, nowMs);
-      const resumedAtDeadline = resumeProjectTimerAfterCustomerActivity({
+      const finalizedTask = finalizedActivities.tasks.find((task) => task.id === planningTask.id);
+      const submittedState = {
         ...timerBase,
         customerActivities: finalizedActivities,
-      }, planningTask.deadlineAt);
+      };
+      const resumedAtDeadline = finalizedTask?.quiz?.status === 'answering'
+        ? submittedState
+        : resumeProjectTimerAfterCustomerActivity(
+          submittedState,
+          finalizedTask?.quiz?.completedAt ?? planningTask.deadlineAt,
+        );
       const next = synchronizeProjectTimer(resumedAtDeadline, nowMs, true);
       try {
         const committed = await commitGameCommand({
@@ -423,6 +460,39 @@ export async function synchronizeOwnedGameTimer(sessionId: string, userId: strin
             projectTimerExpired: next.status !== 'playing',
           },
           result: { activityTaskId: planningTask.id, submitReason: 'timeout' },
+        });
+        return { ...loaded, state: committed.state };
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'STATE_VERSION_CONFLICT' || attempt === 2) throw error;
+        continue;
+      }
+    }
+    const quizTask = timerBase.customerActivities.tasks.find((task) =>
+      task.status === 'submitted' && task.quiz?.status === 'answering',
+    );
+    if (quizTask?.quiz) {
+      const nowMs = Date.now();
+      if (nowMs < quizTask.quiz.deadlineAt) return loaded;
+      const finalizedActivities = finalizeExpiredCustomerActivities(timerBase.customerActivities, nowMs);
+      const resumedAtDeadline = resumeProjectTimerAfterCustomerActivity({
+        ...timerBase,
+        customerActivities: finalizedActivities,
+      }, quizTask.quiz.deadlineAt);
+      const next = synchronizeProjectTimer(resumedAtDeadline, nowMs, true);
+      try {
+        const committed = await commitGameCommand({
+          sessionId,
+          commandId: `customer-activity-quiz-timeout:${loaded.state.version}:${quizTask.quiz.deadlineAt}`,
+          commandType: 'customer_activity.quiz_timeout_complete',
+          expectedVersion: loaded.state.version,
+          state: next,
+          eventType: 'customer_activity.quiz_auto_completed',
+          eventPayload: {
+            taskId: quizTask.id,
+            completedAt: quizTask.quiz.deadlineAt,
+            projectTimerExpired: next.status !== 'playing',
+          },
+          result: { activityTaskId: quizTask.id, completedAt: quizTask.quiz.deadlineAt },
         });
         return { ...loaded, state: committed.state };
       } catch (error) {
@@ -867,17 +937,28 @@ function customerActivityEvaluationCommandId(taskId: string): string {
 export async function processSubmittedCustomerActivityEvaluations(
   sessionId: string,
   userId: string,
+  dependencies: {
+    load?: typeof getOwnedGameSession;
+    evaluate?: typeof evaluateCustomerActivityPlan;
+    commit?: typeof commitGameCommand;
+    now?: () => number;
+  } = {},
 ): Promise<OwnedGameSession> {
+  const load = dependencies.load ?? getOwnedGameSession;
+  const evaluatePlan = dependencies.evaluate ?? evaluateCustomerActivityPlan;
+  const commit = dependencies.commit ?? commitGameCommand;
+  const now = dependencies.now ?? Date.now;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const loaded = await getOwnedGameSession(sessionId, userId, { materializeTimer: false });
-    const task = loaded.state.customerActivities.tasks.find((item) => item.status === 'submitted' && !item.evaluation);
+    const loaded = await load(sessionId, userId, { materializeTimer: false });
+    const task = loaded.state.customerActivities.tasks.find((item) => isCustomerActivityReadyForEvaluation(item) && !item.evaluation);
     if (!task) return loaded;
     const npc = getProjectOneNpc(task.npcId);
-    const evaluation = await evaluateCustomerActivityPlan({
+    const evaluation = await evaluatePlan({
       activityType: task.type,
       summary: task.summary,
       conversation: task.sourceConversation,
       draft: task.draft,
+      executionConfig: task.decisionConfig?.execution,
       customerContext: npc ? {
         name: npc.name,
         title: npc.title,
@@ -887,9 +968,9 @@ export async function processSubmittedCustomerActivityEvaluations(
       } : null,
     });
     if (!evaluation) return loaded;
-    const nextState = applyCustomerActivityEvaluation(loaded.state, task.id, evaluation, Date.now());
+    const nextState = applyCustomerActivityEvaluation(loaded.state, task.id, evaluation, now());
     try {
-      const committed = await commitGameCommand({
+      const committed = await commit({
         sessionId,
         commandId: customerActivityEvaluationCommandId(task.id),
         commandType: 'customer_activity.evaluate',

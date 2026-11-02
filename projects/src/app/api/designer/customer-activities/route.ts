@@ -31,7 +31,7 @@ export async function PUT(request: NextRequest) {
   if (!guard.ok || !guard.session) return guard.response!;
   try {
     const raw = await request.text();
-    if (raw.length > 32_000) return NextResponse.json({ error: '客户活动配置过大。' }, { status: 413 });
+    if (raw.length > 128_000) return NextResponse.json({ error: '客户活动配置过大。' }, { status: 413 });
     let body: unknown;
     try {
       body = JSON.parse(raw);
@@ -41,7 +41,7 @@ export async function PUT(request: NextRequest) {
     const parsed = requestSchema.safeParse(body);
     if (!parsed.success) return NextResponse.json({ error: '客户活动配置字段无效。', details: parsed.error.flatten() }, { status: 400 });
     const config = parseCustomerActivityDecisionConfigWrite(parsed.data.config);
-    if (!config) return NextResponse.json({ error: '客户活动配置无效；请完整设置饭局的目标客户门槛，以及数值模式下三项团队活动的规则。' }, { status: 400 });
+    if (!config) return NextResponse.json({ error: '客户活动配置无效；请检查匹配门槛、题目与选项、问答时限及AI评价和结算规则。' }, { status: 400 });
     const saved = await saveActivityDecisionConfig(config, parsed.data.expectedRevision, guard.session.userId);
     return NextResponse.json({ success: true, ...saved });
   } catch (error) {

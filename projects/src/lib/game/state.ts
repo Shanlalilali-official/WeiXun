@@ -7,6 +7,7 @@ import {
   CUSTOMER_ACTIVITY_CONVERSATION_MAX_LENGTH,
   CUSTOMER_ACTIVITY_CONVERSATION_MAX_MESSAGES,
   CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS,
+  CUSTOMER_ACTIVITY_TYPES,
   customerActivityConversationMessageSchema,
   customerActivityOrganizationSnapshotSchema,
   customerActivityRelationshipSnapshotSchema,
@@ -26,6 +27,7 @@ import {
   type CustomerActivityState,
   type PublicCustomerActivityTask,
 } from '@/lib/game/customer-activities';
+import { completeCustomerActivityQuizSnapshot, createCustomerActivityQuiz } from '@/lib/game/customer-activity-quiz';
 import {
   PROJECT_ONE_ACTION_POINT_CAP,
   PROJECT_ONE_CODE,
@@ -1320,6 +1322,50 @@ function applyProjectTimerCheckpoints(state: GameRuntimeState, fromExclusive: nu
   return next;
 }
 
+/**
+ * The room-end SQL transition predates quiz snapshots and can leave a newly
+ * submitted terminal multiplayer task with quizEnabled but no quiz object.
+ * Reconstruct only that exact server-authored terminal shape before the
+ * normal strict customer-activity parser runs.
+ */
+function recoverTerminalRoomEndQuizzes(value: unknown, terminalRoomEnd: boolean): unknown {
+  if (!terminalRoomEnd || !value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const activityState = value as Record<string, unknown>;
+  if (!Array.isArray(activityState.tasks)) return value;
+  let changed = false;
+  const tasks = activityState.tasks.map((rawTask) => {
+    if (!rawTask || typeof rawTask !== 'object' || Array.isArray(rawTask)) return rawTask;
+    const task = rawTask as Record<string, unknown>;
+    const activityType = CUSTOMER_ACTIVITY_TYPES.find((candidate) => candidate === task.type);
+    const submittedAt = task.submittedAt;
+    const alreadyEvaluated = task.evaluation !== undefined && task.evaluation !== null;
+    const decisionConfig = task.decisionConfig === undefined
+      ? undefined
+      : parseActivityDecisionConfig(task.decisionConfig);
+    if (!activityType
+      || task.status !== 'submitted'
+      || task.quizEnabled !== true
+      || task.quiz !== undefined
+      || (task.submitReason !== 'room_ended' && task.submitReason !== 'timeout')
+      || alreadyEvaluated
+      || typeof task.id !== 'string'
+      || typeof task.draft !== 'string'
+      || typeof submittedAt !== 'number'
+      || !Number.isSafeInteger(submittedAt)
+      || submittedAt < 0
+      || (task.decisionConfig !== undefined && !decisionConfig)) {
+      return rawTask;
+    }
+    const quiz = completeCustomerActivityQuizSnapshot(
+      createCustomerActivityQuiz(activityType, submittedAt, task.draft, task.id, decisionConfig?.execution),
+      submittedAt,
+    );
+    changed = true;
+    return { ...task, quiz };
+  });
+  return changed ? { ...activityState, tasks } : value;
+}
+
 /** Pure legacy migration: no Date.now() and no wall-clock phase advancement. */
 export function normalizeProjectOneState(state: ProjectOneStateInput): GameRuntimeState {
   const contacts = Object.fromEntries(PROJECT_ONE_NPCS.map((npc) => {
@@ -1350,8 +1396,14 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
   ]));
   const companyId = state.companyId ?? 'player-company';
   const candidateBidRule = (state as Partial<GameRuntimeState>).bidRule;
-  const customerActivities = readCustomerActivityState(state.customerActivities);
-  const hasPlanningActivity = customerActivities.tasks.some((task) => task.status === 'planning');
+  const terminalRoomEnd = state.gameMode === 'multiplayer'
+    && state.status !== 'playing'
+    && state.lastAction === 'multiplayer_room_ended';
+  const activityInput = recoverTerminalRoomEndQuizzes(state.customerActivities, terminalRoomEnd);
+  const customerActivities = readCustomerActivityState(activityInput);
+  const hasPlanningActivity = customerActivities.tasks.some((task) =>
+    task.status === 'planning' || (task.status === 'submitted' && task.quiz?.status === 'answering'),
+  );
   const customerActivityDetectionQueue = normalizeCustomerActivityDetectionQueue(
     state.customerActivityDetectionQueue,
     (npcId) => freezeRelationshipSnapshot(npcId, npcAttitudes, npcAffinity, state.dimensions, state.currentStage ?? state.currentRound),
@@ -1672,12 +1724,18 @@ export function isCustomerActivityPlanning(state: GameRuntimeState): boolean {
   return readCustomerActivityState(state.customerActivities).tasks.some((task) => task.status === 'planning');
 }
 
+export function isCustomerActivityQuizActive(state: GameRuntimeState): boolean {
+  return readCustomerActivityState(state.customerActivities).tasks.some((task) =>
+    task.status === 'submitted' && task.quiz?.status === 'answering',
+  );
+}
+
 export function hasUnsettledCustomerActivityEvaluations(state: GameRuntimeState): boolean {
   return readCustomerActivityState(state.customerActivities).tasks.some((task) => task.status === 'submitted' && !task.evaluation);
 }
 
 export function isCustomerActivityBlockingGameActions(state: GameRuntimeState): boolean {
-  return isCustomerActivityPlanning(state) || hasUnsettledCustomerActivityEvaluations(state);
+  return isCustomerActivityPlanning(state) || isCustomerActivityQuizActive(state) || hasUnsettledCustomerActivityEvaluations(state);
 }
 
 /** Queue an ended conversation in the same versioned write that closes it. */
@@ -1791,15 +1849,16 @@ export function applyCustomerActivityEvaluation(
   const recorded = recordCustomerActivityEvaluation(state.customerActivities, taskId, evaluation, serverNow);
   if (!recorded.applied) return state;
   const task = recorded.state.tasks.find((item) => item.id === taskId);
-  if (!task) return state;
+  const appliedEvaluation = recorded.evaluation ?? task?.evaluation;
+  if (!task || !appliedEvaluation) return state;
   const dimensions = Object.fromEntries(GAME_DIMENSIONS.map((key) => [
     key,
-    clamp(state.dimensions[key] + evaluation.dimensionDeltas[key] * state.progressionMultiplier),
+    clamp(state.dimensions[key] + appliedEvaluation.dimensionDeltas[key] * state.progressionMultiplier),
   ])) as GameDimensions;
   return applyNpcAttitudeDelta({ ...state, dimensions, customerActivities: recorded.state }, task.npcId, {
-    supportDelta: evaluation.supportDelta * state.progressionMultiplier,
-    pleasantnessDelta: evaluation.pleasureDelta * state.progressionMultiplier,
-    reason: evaluation.overallEvaluation,
+    supportDelta: appliedEvaluation.supportDelta * state.progressionMultiplier,
+    pleasantnessDelta: appliedEvaluation.pleasureDelta * state.progressionMultiplier,
+    reason: appliedEvaluation.overallEvaluation,
     source: `customer_activity:${taskId}`,
   });
 }

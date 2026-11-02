@@ -8,6 +8,10 @@ import {
   type CustomerActivityOrganizationNpcId,
   type OrganizationActivityThreshold,
 } from '@/lib/game/customer-activities';
+import {
+  activityExecutionConfigSchema,
+  type ActivityExecutionConfig,
+} from '@/lib/game/customer-activity-execution-config';
 
 export type OrganizationConditionForm = {
   id: string;
@@ -33,7 +37,9 @@ export type SingleCustomerActivityThresholdForm = {
   pleasantnessMin: string;
 };
 
-export type CustomerActivityDecisionConfigWrite = Pick<ActivityDecisionConfig, 'mode' | 'thresholds'>;
+export type CustomerActivityDecisionConfigWrite = Pick<ActivityDecisionConfig, 'mode' | 'thresholds'> & {
+  execution?: ActivityExecutionConfig;
+};
 
 export function parseCustomerActivityThreshold(value: string): number | null {
   if (!/^\d{1,3}$/.test(value)) return null;
@@ -101,9 +107,13 @@ export function buildSingleCustomerActivityThreshold(
 export function parseCustomerActivityDecisionConfigWrite(value: unknown): CustomerActivityDecisionConfigWrite | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const input = value as Record<string, unknown>;
-  if (Object.keys(input).some((key) => key !== 'mode' && key !== 'thresholds')
+  if (Object.keys(input).some((key) => key !== 'mode' && key !== 'thresholds' && key !== 'execution')
     || !Object.hasOwn(input, 'mode')
     || !Object.hasOwn(input, 'thresholds')) return null;
+  const execution = Object.hasOwn(input, 'execution')
+    ? activityExecutionConfigSchema.safeParse(input.execution)
+    : null;
+  if (execution && !execution.success) return null;
   const parsed = activityDecisionConfigSchema.safeParse({ revision: 0, ...input });
   if (!parsed.success) return null;
   for (const type of ORGANIZATION_CUSTOMER_ACTIVITY_TYPES) {
@@ -120,5 +130,6 @@ export function parseCustomerActivityDecisionConfigWrite(value: unknown): Custom
       ...parsed.data.thresholds,
       hospitality: parsed.data.thresholds.hospitality ?? HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD,
     },
+    ...(execution?.success ? { execution: execution.data } : {}),
   };
 }

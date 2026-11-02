@@ -10,7 +10,10 @@ import {
   synchronizeOwnedGameTimer,
 } from '@/lib/game/repository';
 import {
+  completeCustomerActivityQuiz,
+  isCustomerActivityReadyForEvaluation,
   saveCustomerActivityDraft,
+  saveCustomerActivityQuizAnswer,
   startCustomerActivityPlanning,
   submitCustomerActivityPlan,
   toPublicCustomerActivityTask,
@@ -107,6 +110,17 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         state: toPlayerVisibleGameState(session.state),
       });
     }
+    if ((parsed.data.action === 'answer' || parsed.data.action === 'complete_quiz')
+      && existingTask.quiz?.status === 'completed') {
+      return NextResponse.json({
+        success: true,
+        activity: toPublicCustomerActivityTask(existingTask),
+        activities: session.state.customerActivities.tasks.map(toPublicCustomerActivityTask),
+        serverNow: Date.now(),
+        version: session.state.version,
+        state: toPlayerVisibleGameState(session.state),
+      });
+    }
     await assertOwnedMultiplayerRoomRunning(id, session.state);
     if (session.state.status !== 'playing') return failure('GAME_ALREADY_FINISHED', 409, session.state);
     if (session.state.version !== parsed.data.expectedVersion) return failure('STATE_VERSION_CONFLICT', 409, session.state);
@@ -138,9 +152,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       if (!saved.accepted && updatedTask?.status !== 'submitted') return failure('CUSTOMER_ACTIVITY_SAVE_REJECTED', 409, session.state);
       nextState = { ...session.state, customerActivities: saved.state };
       if (updatedTask?.status === 'submitted') {
-        const deadlineAt = updatedTask.deadlineAt ?? now;
-        nextState = resumeProjectTimerAfterCustomerActivity(nextState, deadlineAt);
-        nextState = synchronizeProjectTimer(nextState, now, true);
+        if (updatedTask.quiz?.status !== 'answering') {
+          const resumeAt = updatedTask.quiz?.completedAt ?? updatedTask.deadlineAt ?? now;
+          nextState = resumeProjectTimerAfterCustomerActivity(nextState, resumeAt);
+          nextState = synchronizeProjectTimer(nextState, now, true);
+        }
         eventType = 'customer_activity.plan_auto_submitted';
         commandType = 'customer_activity.timeout_submit';
         result = { taskId: parsed.data.taskId, submitReason: 'timeout' };
@@ -149,7 +165,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         commandType = 'customer_activity.save';
         result = { taskId: parsed.data.taskId, saved: true };
       }
-    } else {
+    } else if (parsed.data.action === 'submit') {
       if (existingTask.status !== 'planning') return failure('CUSTOMER_ACTIVITY_NOT_PLANNING', 409, session.state);
       let activities = session.state.customerActivities;
       if (parsed.data.draft !== undefined) {
@@ -159,12 +175,51 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       activities = submitCustomerActivityPlan(activities, parsed.data.taskId, now);
       const submittedTask = activities.tasks.find((task) => task.id === parsed.data.taskId);
       if (!submittedTask || submittedTask.status !== 'submitted') return failure('CUSTOMER_ACTIVITY_SUBMIT_REJECTED', 409, session.state);
-      const resumeAt = submittedTask.submitReason === 'timeout' ? submittedTask.deadlineAt! : submittedTask.submittedAt!;
-      nextState = resumeProjectTimerAfterCustomerActivity({ ...session.state, customerActivities: activities }, resumeAt);
-      nextState = synchronizeProjectTimer(nextState, now, true);
+      nextState = { ...session.state, customerActivities: activities };
+      if (submittedTask.quiz?.status !== 'answering') {
+        const resumeAt = submittedTask.quiz?.completedAt
+          ?? (submittedTask.submitReason === 'timeout' ? submittedTask.deadlineAt! : submittedTask.submittedAt!);
+        nextState = resumeProjectTimerAfterCustomerActivity(nextState, resumeAt);
+        nextState = synchronizeProjectTimer(nextState, now, true);
+      }
       eventType = submittedTask.submitReason === 'timeout' ? 'customer_activity.plan_auto_submitted' : 'customer_activity.plan_submitted';
       commandType = submittedTask.submitReason === 'timeout' ? 'customer_activity.timeout_submit' : 'customer_activity.submit';
       result = { taskId: parsed.data.taskId, submitReason: submittedTask.submitReason };
+    } else if (parsed.data.action === 'answer') {
+      if (existingTask.status !== 'submitted' || existingTask.quiz?.status !== 'answering') {
+        return failure('CUSTOMER_ACTIVITY_QUIZ_NOT_ACTIVE', 409, session.state);
+      }
+      const saved = saveCustomerActivityQuizAnswer(
+        session.state.customerActivities,
+        parsed.data.taskId,
+        parsed.data.questionId,
+        parsed.data.optionId,
+        now,
+      );
+      if (!saved.accepted) return failure('CUSTOMER_ACTIVITY_ANSWER_REJECTED', 409, session.state);
+      nextState = { ...session.state, customerActivities: saved.state };
+      const updatedTask = saved.state.tasks.find((task) => task.id === parsed.data.taskId);
+      if (updatedTask && isCustomerActivityReadyForEvaluation(updatedTask)) {
+        nextState = resumeProjectTimerAfterCustomerActivity(nextState, now);
+        nextState = synchronizeProjectTimer(nextState, now, true);
+      }
+      eventType = 'customer_activity.quiz_answered';
+      commandType = 'customer_activity.answer';
+      result = { taskId: parsed.data.taskId, questionId: parsed.data.questionId };
+    } else {
+      if (existingTask.status !== 'submitted' || existingTask.quiz?.status !== 'answering') {
+        return failure('CUSTOMER_ACTIVITY_QUIZ_NOT_ACTIVE', 409, session.state);
+      }
+      const activities = completeCustomerActivityQuiz(session.state.customerActivities, parsed.data.taskId, now);
+      const completedTask = activities.tasks.find((task) => task.id === parsed.data.taskId);
+      if (!completedTask || !isCustomerActivityReadyForEvaluation(completedTask)) {
+        return failure('CUSTOMER_ACTIVITY_QUIZ_NOT_ACTIVE', 409, session.state);
+      }
+      nextState = resumeProjectTimerAfterCustomerActivity({ ...session.state, customerActivities: activities }, now);
+      nextState = synchronizeProjectTimer(nextState, now, true);
+      eventType = 'customer_activity.quiz_completed';
+      commandType = 'customer_activity.complete_quiz';
+      result = { taskId: parsed.data.taskId, completedAt: completedTask.quiz?.completedAt };
     }
 
     const committed = await commitGameCommand({
@@ -179,7 +234,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     });
     let responseState = committed.state;
     currentState = responseState;
-    if (committed.state.customerActivities.tasks.some((task) => task.status === 'submitted' && !task.evaluation)) {
+    if (committed.state.customerActivities.tasks.some((task) => isCustomerActivityReadyForEvaluation(task) && !task.evaluation)) {
       responseState = (await processSubmittedCustomerActivityEvaluations(id, guard.session.userId).catch(() => null))?.state ?? responseState;
     }
     currentState = responseState;

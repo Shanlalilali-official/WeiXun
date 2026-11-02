@@ -4,6 +4,7 @@ import {
   createPreviewAiService,
   createPreviewCustomerActivityJevInvoker,
   createPreviewServerState,
+  hasCustomerActivitySettlementWork,
   fromPersistedPreviewServerState,
   PREVIEW_NPC_IDS,
   PreviewSessionStore,
@@ -14,12 +15,14 @@ import {
 import { previewAiRequestSchema, type PreviewAiRequest } from '../src/lib/contracts/project-one-preview-ai';
 import { detectCustomerActivityProposals } from '../src/lib/ai/customer-activities';
 import {
+  CUSTOMER_ACTIVITY_EVALUATION_COMPLETED_MESSAGE,
   CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS,
   DEFAULT_ACTIVITY_DECISION_CONFIG,
   type CustomerActivityType,
   type CustomerActivityConversationMessage,
   type ActivityDecisionConfig,
 } from '../src/lib/game/customer-activities';
+import { DEFAULT_ACTIVITY_EXECUTION_CONFIG } from '../src/lib/game/customer-activity-execution-config';
 import type { JevInvoker, JevRequest } from '../src/lib/ai/jev-client';
 type TestNpcId = keyof ReturnType<typeof createPreviewServerState>['npcStates'];
 const legacyAiDecisionConfig: ActivityDecisionConfig = { revision: 30, mode: 'ai', thresholds: {} };
@@ -144,10 +147,49 @@ function selectionJev(choiceFor: (id: string, state: string, criteria: Record<st
   };
 }
 
+const activityPlanEvaluationKeys = [
+  'supportDelta',
+  'pleasureDelta',
+  'decisionAnalysis',
+  'relationshipBuilding',
+  'valuePresentation',
+  'objectionHandling',
+  'informationDiscovery',
+] as const;
+
+function activityPlanJevInvoker(
+  deltas: Record<(typeof activityPlanEvaluationKeys)[number], number>,
+  onRequest?: (request: JevRequest) => void,
+): JevInvoker {
+  return async (request) => {
+    onRequest?.(request);
+    assert.deepEqual(Object.keys(request.questions), activityPlanEvaluationKeys,
+      'preview activity evaluation asks seven independent questions with stable metric keys');
+    const answers = Object.fromEntries(activityPlanEvaluationKeys.map((key) => {
+      const question = request.questions[key];
+      assert.ok(question && question.type === 'choice', `${key} is an integer-choice question`);
+      const choice = String(deltas[key]);
+      const criteria = Object.keys(question.criteria);
+      assert.ok(criteria.every((item) => Number.isInteger(Number(item)) && String(Number(item)) === item),
+        `${key} options are canonical integer strings`);
+      assert.ok(criteria.includes(choice), `${key} result is in the task's frozen allowed range`);
+      return [key, {
+        type: 'choice' as const,
+        choice,
+        probabilities: Object.fromEntries(criteria.map((item) => [item, item === choice ? 1 : 0])),
+        confidence: 1,
+      }];
+    }));
+    return { model: 'test-activity-plan', answers, usage: { input_tokens: 1, output_tokens: 1 } };
+  };
+}
+
 async function testCustomerConfirmationAndPlanning() {
   const userId = 'preview-activity-confirmation';
   const store = new PreviewSessionStore();
   let detectionFailures = 1;
+  let planEvaluationCalls = 0;
+  let planSystemPrompt = '';
   const planEvaluation = {
     supportDelta: 2,
     pleasureDelta: 1,
@@ -164,7 +206,11 @@ async function testCustomerConfirmationAndPlanning() {
         }
         return json(modelCandidate(messagesFromDetectionPrompt(messages[messages.length - 1].content), 'case_site_visit'));
       }
-      if (messages[0]?.content.includes('销售活动策划的复盘评价器')) return json(planEvaluation);
+      if (messages[0]?.content.includes('销售活动策划的复盘评价器')) {
+        planEvaluationCalls += 1;
+        planSystemPrompt = messages[0]?.content ?? '';
+        return json(planEvaluation);
+      }
       throw new Error('unexpected prose model request');
     },
     jevInvoker: async () => { throw new Error('customer confirmation and plan evaluation do not need Jev'); },
@@ -175,7 +221,15 @@ async function testCustomerConfirmationAndPlanning() {
     { messageId: 'case-confirm-1', speaker: 'sales', text: '可以，我来协调案例现场参观。' },
   ]);
 
-  const config: ActivityDecisionConfig = { ...legacyAiDecisionConfig, revision: 4 };
+  const configuredExecution = structuredClone(DEFAULT_ACTIVITY_EXECUTION_CONFIG);
+  configuredExecution.quizDurationSeconds = 90;
+  configuredExecution.questionBanks.case_site_visit[0].title = '情境推演（假设）：冻结的自定义案例题？';
+  configuredExecution.aiInstructions = '冻结执行规则：评价方案时优先核对案例信息授权与后续责任人。';
+  configuredExecution.weights = { plan: 0.5, quiz: 0.5 };
+  configuredExecution.limits.supportMax = 1;
+  configuredExecution.limits.pleasureMax = 1;
+  configuredExecution.limits.dimensionMax = 0;
+  const config: ActivityDecisionConfig = { ...legacyAiDecisionConfig, revision: 4, execution: configuredExecution };
   let response = await execute(service, userId, state.previewSessionId, 0,
     { action: 'customer_activity_end_conversation', npcId: 'P1-002', channel: 'email' }, config);
   let current = store.get(userId, state.previewSessionId)!;
@@ -184,6 +238,10 @@ async function testCustomerConfirmationAndPlanning() {
   assert.equal(current.pendingCustomerActivityDetections[0].relationshipSnapshot.support, 0);
   assert.equal(current.pendingCustomerActivityDetections[0].decisionConfig.revision, 4);
 
+  configuredExecution.quizDurationSeconds = 30;
+  configuredExecution.questionBanks.case_site_visit[0].title = '后台后来修改的题';
+  configuredExecution.aiInstructions = '后来修改的提示词';
+
   response = await execute(service, userId, state.previewSessionId, response.version,
     { action: 'customer_activity_sync' });
   current = store.get(userId, state.previewSessionId)!;
@@ -191,6 +249,10 @@ async function testCustomerConfirmationAndPlanning() {
   assert.equal(current.customerActivities.tasks.length, 1);
   assert.equal(current.customerActivities.tasks[0].type, 'case_site_visit');
   assert.equal(current.customerActivities.tasks[0].decisionMode, 'customer_confirmed');
+  assert.equal(current.customerActivities.tasks[0].decisionConfig?.execution?.quizDurationSeconds, 90,
+    'a task retains the full execution config captured when its ended conversation was queued');
+  assert.equal(current.customerActivities.tasks[0].decisionConfig?.execution?.aiInstructions,
+    '冻结执行规则：评价方案时优先核对案例信息授权与后续责任人。');
   assert.equal(current.customerActivities.decisions.length, 1);
   assert.equal(current.customerActivities.decisions[0].configRevision, 4);
 
@@ -211,19 +273,299 @@ async function testCustomerConfirmationAndPlanning() {
   assert.equal(submitted.status, 'submitted');
   assert.equal(submitted.submitReason, 'manual');
   assert.match(submitted.draft, /运维边界/, 'submit commits the exact latest client draft atomically');
-  assert.deepEqual(submitted.evaluation, planEvaluation);
-  assert.equal(current.npcStates['P1-002'].support, 2);
-  assert.equal(current.npcStates['P1-002'].pleasantness, 51);
-  assert.equal(current.npcStates['P1-002'].dimensionScores.decisionAnalysis, 1);
+  assert.ok(submitted.quiz);
+  assert.equal(submitted.quiz.status, 'answering');
+  assert.equal(submitted.quiz.deadlineAt - submitted.quiz.startedAt, 90_000,
+    'the submitted task uses its frozen, designer-configured quiz deadline');
+  assert.equal(submitted.quiz.questions[0]?.title, '情境推演（假设）：冻结的自定义案例题？',
+    'the submitted quiz uses its frozen custom question text');
+  assert.equal(hasCustomerActivitySettlementWork(current, submitted.quiz!.startedAt), false,
+    'an active quiz is not treated as immediately ready for background AI evaluation');
+  assert.equal(submitted.evaluation, undefined, 'plan submit does not settle or change NPC metrics before answers');
+  assert.equal(planEvaluationCalls, 0, 'plan submit does not call the evaluator before the quiz');
+  assert.equal(current.npcStates['P1-002'].support, 0);
+  assert.equal(current.npcStates['P1-002'].pleasantness, 50);
+  assert.equal(current.npcStates['P1-002'].dimensionScores.decisionAnalysis, 0);
 
-  response = await execute(service, userId, state.previewSessionId, response.version,
-    { action: 'customer_activity_sync' });
+  await assert.rejects(
+    execute(service, userId, state.previewSessionId, response.version,
+      { action: 'message', npcId: 'P1-002', channel: 'email', text: '趁现在补充一下项目内容。' }, config),
+    /CUSTOMER_ACTIVITY_QUIZ_ACTIVE/u,
+    'other preview game actions are blocked during the quiz',
+  );
   current = store.get(userId, state.previewSessionId)!;
-  assert.equal(current.npcStates['P1-002'].support, 2, 'repeat recovery does not apply the evaluation twice');
-  assert.equal(response.customerActivities?.tasks[0].evaluation?.overallEvaluation, planEvaluation.overallEvaluation);
+  assert.equal(current.version, response.version, 'a blocked game action does not advance the preview version');
+
+  for (const [questionId, optionId] of submitted.quiz.questions.map((question) => {
+      const best = question.options.reduce((currentBest, option) =>
+        option.supportDelta + option.pleasureDelta > currentBest.supportDelta + currentBest.pleasureDelta ? option : currentBest);
+      return [question.id, best.id] as const;
+    })) {
+    response = await execute(service, userId, state.previewSessionId, response.version,
+      { action: 'customer_activity_answer', taskId, questionId, optionId }, config);
+  }
+  current = store.get(userId, state.previewSessionId)!;
+  assert.equal(current.customerActivities.tasks[0]?.quiz?.status, 'answering', 'answers alone do not settle before final confirmation');
+  assert.equal(current.customerActivities.tasks[0]?.evaluation, undefined);
+  assert.equal(planEvaluationCalls, 0);
+  assert.equal(current.npcStates['P1-002'].support, 0, 'answering the quiz still has no intermediate metric changes');
+
+  const privateQuiz = current.customerActivities.tasks[0]!.quiz!;
+  const expectedQuizDelta = privateQuiz.questions.reduce((total, question) => {
+    const selected = question.options.find((option) => option.id === privateQuiz.answers[question.id]);
+    return { supportDelta: total.supportDelta + (selected?.supportDelta ?? 0), pleasureDelta: total.pleasureDelta + (selected?.pleasureDelta ?? 0) };
+  }, { supportDelta: 0, pleasureDelta: 0 });
+  assert.deepEqual(expectedQuizDelta, { supportDelta: 3, pleasureDelta: 3 },
+    'the configured question options retain their private answer deltas before weighting');
+  const persistedQuiz = toPersistedPreviewServerState(current);
+  const reloadedState = fromPersistedPreviewServerState(
+    JSON.parse(JSON.stringify(persistedQuiz)), userId, state.previewSessionId, current.version,
+  );
+  assert.deepEqual(reloadedState.customerActivities, current.customerActivities,
+    'quiz questions and selected answers survive JSON storage reload');
+  let committedState = reloadedState;
+  const persistence: PreviewSessionPersistence = {
+    async acquire(_userId, request) {
+      return {
+        previewSessionId: committedState.previewSessionId,
+        version: committedState.version,
+        state: structuredClone(committedState),
+        leaseToken: `quiz-${request.commandId}`,
+      };
+    },
+    async renew() {},
+    async commit(args) {
+      committedState = args.state;
+      return args.response;
+    },
+    async abandon() {},
+  };
+  response = await service.executePersistent(
+    userId,
+    requestFor(state.previewSessionId, committedState.version, { action: 'customer_activity_complete_quiz', taskId }),
+    persistence,
+    undefined,
+    config,
+  );
+  current = committedState;
+  const settledTask = current.customerActivities.tasks[0]!;
+  assert.equal(settledTask.quiz?.status, 'completed');
+  assert.equal(planEvaluationCalls, 1, 'the plan evaluator runs once after quiz completion');
+  assert.equal(settledTask.evaluation?.supportDelta, 1,
+    'weighted AI and quiz support is constrained by the frozen total cap');
+  assert.equal(settledTask.evaluation?.pleasureDelta, 1,
+    'weighted AI and quiz pleasure is constrained by the frozen total cap');
+  assert.deepEqual(settledTask.evaluationBreakdown?.aiPlan, {
+    ...planEvaluation,
+    supportDelta: 1,
+    pleasureDelta: 1,
+    dimensionDeltas: { decisionAnalysis: 0, relationshipBuilding: 0, valuePresentation: 0, objectionHandling: 0, informationDiscovery: 0 },
+  }, 'the frozen AI limits clamp the model contribution before it is combined with quiz scores');
+  assert.deepEqual(settledTask.evaluationBreakdown?.quiz, { supportDelta: 1.5, pleasureDelta: 1.5 },
+    'the frozen quiz weight contributes to the private breakdown');
+  assert.equal(current.npcStates['P1-002'].support, 1,
+    'weighted, capped AI and quiz results change the target NPC support score');
+  assert.equal(current.npcStates['P1-002'].pleasantness, 51,
+    'weighted, capped AI and quiz results change the target NPC experience score');
+  assert.equal(current.npcStates['P1-002'].dimensionScores.decisionAnalysis, 0,
+    'the frozen dimension cap applies to the weighted AI dimension delta');
+  assert.match(planSystemPrompt, /冻结执行规则/u, 'the plan evaluator receives the original snapshotted AI instructions');
+  assert.doesNotMatch(planSystemPrompt, /后来修改的提示词/u, 'changing designer settings later cannot change an in-progress task prompt');
+  assert.equal(current.npcStates['P1-001'].support, 0, 'other NPC metrics remain untouched');
+  assert.equal(current.npcStates['P1-001'].pleasantness, 50);
+  assert.equal(JSON.stringify(response).includes('supportDelta'), false, 'public completion response omits score deltas');
+  assert.equal(JSON.stringify(response).includes('pleasureDelta'), false, 'public quiz omits private option scoring');
+  assert.equal(JSON.stringify(response).includes('evaluationBreakdown'), false, 'the AI and quiz score breakdown stays private');
+  assert.equal(JSON.stringify(response).includes('aiInstructions'), false, 'the public task response hides designer execution settings');
+
+  const supportAfterEvaluation = current.npcStates['P1-002'].support;
+  const pleasureAfterEvaluation = current.npcStates['P1-002'].pleasantness;
+  response = await service.executePersistent(
+    userId,
+    requestFor(state.previewSessionId, committedState.version, { action: 'customer_activity_complete_quiz', taskId }),
+    persistence,
+    undefined,
+    config,
+  );
+  current = committedState;
+  assert.equal(planEvaluationCalls, 1, 'a repeated quiz completion does not rerun AI evaluation');
+  assert.equal(current.npcStates['P1-002'].support, supportAfterEvaluation, 'repeated completion does not apply support twice');
+  assert.equal(current.npcStates['P1-002'].pleasantness, pleasureAfterEvaluation, 'repeated completion does not apply pleasure twice');
+  assert.equal(response.customerActivities?.tasks[0].evaluation?.overallEvaluation,
+    CUSTOMER_ACTIVITY_EVALUATION_COMPLETED_MESSAGE);
   const persisted = toPersistedPreviewServerState(current);
   const restored = fromPersistedPreviewServerState(persisted, userId, state.previewSessionId, current.version);
   assert.deepEqual(restored.customerActivities, current.customerActivities, 'task, decision, and one-time evaluation markers survive JSON persistence');
+}
+
+async function testFrozenActivityPlanProviderAndJevFailure() {
+  const planDeltas = {
+    supportDelta: 2,
+    pleasureDelta: 2,
+    decisionAnalysis: 1,
+    relationshipBuilding: -1,
+    valuePresentation: 2,
+    objectionHandling: 0,
+    informationDiscovery: 1,
+  };
+  const jevExecution = structuredClone(DEFAULT_ACTIVITY_EXECUTION_CONFIG);
+  jevExecution.evaluationProvider = 'jev';
+  jevExecution.weights = { plan: 0.5, quiz: 0.5 };
+  const jevConfig: ActivityDecisionConfig = { ...legacyAiDecisionConfig, revision: 61, execution: jevExecution };
+  const laterExecution = structuredClone(DEFAULT_ACTIVITY_EXECUTION_CONFIG);
+  laterExecution.evaluationProvider = 'llm';
+  laterExecution.weights = { plan: 0.5, quiz: 0.5 };
+  const laterConfig: ActivityDecisionConfig = { ...legacyAiDecisionConfig, revision: 62, execution: laterExecution };
+
+  const prepareSubmittedHospitalityQuiz = async (
+    service: ReturnType<typeof createPreviewAiService>,
+    store: PreviewSessionStore,
+    userId: string,
+  ) => {
+    const state = store.create(userId);
+    setOrganizationMetrics(state, Object.fromEntries(CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS.map((npcId) => [
+      npcId,
+      npcId === 'P1-002' ? { support: 15, pleasantness: 55 } : { support: 0, pleasantness: 0 },
+    ])) as Record<TestNpcId, TestOrganizationMetrics>);
+    seedEmailConversation(state, [
+      { messageId: `${userId}-proposal`, speaker: 'sales', text: '赵老师，周末方便一起吃饭吗？我想听听您对项目安排的想法。' },
+      { messageId: `${userId}-response`, speaker: 'customer', text: '我先看下工作安排，之后再回复您。' },
+    ]);
+    let response = await execute(service, userId, state.previewSessionId, state.version,
+      { action: 'customer_activity_end_conversation', npcId: 'P1-002', channel: 'email' }, jevConfig);
+    let current = store.get(userId, state.previewSessionId)!;
+    const task = current.customerActivities.tasks[0];
+    assert.ok(task, 'the hospitality gate creates a task for the target customer at the threshold');
+    assert.equal(task.decisionConfig?.execution?.evaluationProvider, 'jev',
+      'proposal matching freezes the Jev evaluator provider on the new task');
+    response = await execute(service, userId, state.previewSessionId, response.version,
+      { action: 'customer_activity_start', taskId: task.id }, laterConfig);
+    const draft = '围绕项目接口和客户关注点准备议题，提前确认时间与餐饮偏好，提供无酒精饮品选项，尊重不饮酒选择，并在会后发送经确认的要点。';
+    response = await execute(service, userId, state.previewSessionId, response.version,
+      { action: 'customer_activity_submit', taskId: task.id, draft }, laterConfig);
+    current = store.get(userId, state.previewSessionId)!;
+    assert.equal(current.customerActivities.tasks[0]?.quiz?.status, 'answering');
+    assert.equal(current.customerActivities.tasks[0]?.evaluation, undefined);
+    return { state, response, taskId: task.id, current };
+  };
+
+  const answerAndCompleteQuiz = async (
+    service: ReturnType<typeof createPreviewAiService>,
+    store: PreviewSessionStore,
+    userId: string,
+    sessionId: string,
+    response: Awaited<ReturnType<typeof execute>>,
+    taskId: string,
+    afterAnswers?: () => void,
+  ) => {
+    let current = store.get(userId, sessionId)!;
+    let nextResponse = response;
+    const questions = current.customerActivities.tasks[0]!.quiz!.questions;
+    for (const question of questions) {
+      nextResponse = await execute(service, userId, sessionId, nextResponse.version,
+        { action: 'customer_activity_answer', taskId, questionId: question.id, optionId: 'option-1' }, laterConfig);
+    }
+    afterAnswers?.();
+    nextResponse = await execute(service, userId, sessionId, nextResponse.version,
+      { action: 'customer_activity_complete_quiz', taskId }, laterConfig);
+    current = store.get(userId, sessionId)!;
+    return { response: nextResponse, current };
+  };
+
+  const store = new PreviewSessionStore();
+  let llmEvaluationCalls = 0;
+  let jevEvaluationCalls = 0;
+  const service = createPreviewAiService({
+    store,
+    invoker: async (messages) => {
+      if (messages[0]?.content.includes('活动提议语义识别器')) {
+        return json(modelCandidate(messagesFromDetectionPrompt(messages.at(-1)?.content ?? ''), 'hospitality'));
+      }
+      if (messages[0]?.content.includes('销售活动策划的复盘评价器')) {
+        llmEvaluationCalls += 1;
+        return json({ supportDelta: 0, pleasureDelta: 0, dimensionDeltas: {
+          decisionAnalysis: 0, relationshipBuilding: 0, valuePresentation: 0, objectionHandling: 0, informationDiscovery: 0,
+        }, overallEvaluation: 'LLM fallback must not run.' });
+      }
+      throw new Error('unexpected preview model request');
+    },
+    jevInvoker: async () => { throw new Error('numeric hospitality decision must not use the global Jev router'); },
+    activityPlanJevInvoker: activityPlanJevInvoker(planDeltas, () => { jevEvaluationCalls += 1; }),
+  });
+  const prepared = await prepareSubmittedHospitalityQuiz(service, store, 'preview-frozen-jev-provider');
+  assert.equal(llmEvaluationCalls, 0);
+  assert.equal(jevEvaluationCalls, 0, 'preview does not call the Jev evaluator before quiz completion');
+  assert.equal(prepared.current.npcStates['P1-002'].support, 15);
+  assert.equal(prepared.current.npcStates['P1-002'].pleasantness, 55);
+  const completed = await answerAndCompleteQuiz(service, store, 'preview-frozen-jev-provider', prepared.state.previewSessionId,
+    prepared.response, prepared.taskId, () => {
+      assert.equal(jevEvaluationCalls, 0, 'answering questions without completing the quiz still does not call Jev');
+      assert.equal(llmEvaluationCalls, 0);
+    });
+  const settledTask = completed.current.customerActivities.tasks[0]!;
+  assert.equal(jevEvaluationCalls, 1, 'preview calls Jev once after quiz completion despite the current global LLM setting');
+  assert.equal(llmEvaluationCalls, 0, 'preview Jev evaluation never calls the LLM evaluator');
+  assert.equal(settledTask.evaluation?.supportDelta, 2,
+    'the Jev plan support and the two-point hospitality quiz score are each weighted by one half');
+  assert.equal(settledTask.evaluation?.pleasureDelta, 3,
+    'the Jev plan pleasure and four-point hospitality quiz score are weighted and combined');
+  assert.deepEqual(settledTask.evaluation?.dimensionDeltas, {
+    decisionAnalysis: 1,
+    relationshipBuilding: -1,
+    valuePresentation: 1,
+    objectionHandling: 0,
+    informationDiscovery: 1,
+  });
+  assert.equal(completed.current.npcStates['P1-002'].support, 17,
+    'the weighted Jev plan and quiz results change the target customer once');
+  assert.equal(completed.current.npcStates['P1-002'].pleasantness, 58,
+    'weighted plan and quiz effects change target customer experience once');
+  assert.equal(completed.current.npcStates['P1-001'].support, 0, 'preview settlement leaves other NPCs unchanged');
+  assert.equal(completed.current.npcStates['P1-001'].pleasantness, 0, 'preview settlement leaves other NPC experience unchanged');
+  assert.equal(completed.current.npcStates['P1-002'].dimensionScores.relationshipBuilding, -1,
+    'the five integer Jev choices update the target NPC ability dimensions');
+  assert.equal(completed.current.npcStates['P1-002'].dimensionScores.valuePresentation, 1);
+
+  const failureStore = new PreviewSessionStore();
+  let failedJevCalls = 0;
+  let failedLlmEvaluationCalls = 0;
+  const failingService = createPreviewAiService({
+    store: failureStore,
+    invoker: async (messages) => {
+      if (messages[0]?.content.includes('活动提议语义识别器')) {
+        return json(modelCandidate(messagesFromDetectionPrompt(messages.at(-1)?.content ?? ''), 'hospitality'));
+      }
+      if (messages[0]?.content.includes('销售活动策划的复盘评价器')) {
+        failedLlmEvaluationCalls += 1;
+        return json({ supportDelta: 0, pleasureDelta: 0, dimensionDeltas: {
+          decisionAnalysis: 0, relationshipBuilding: 0, valuePresentation: 0, objectionHandling: 0, informationDiscovery: 0,
+        }, overallEvaluation: '不应回退。' });
+      }
+      throw new Error('unexpected preview model request');
+    },
+    jevInvoker: async () => { throw new Error('numeric hospitality decision must not use the global Jev router'); },
+    activityPlanJevInvoker: async () => { failedJevCalls += 1; throw new Error('Jev unavailable'); },
+  });
+  const failedPrepared = await prepareSubmittedHospitalityQuiz(failingService, failureStore, 'preview-failing-jev-provider');
+  const failedReady = await answerAndCompleteQuiz(failingService, failureStore, 'preview-failing-jev-provider', failedPrepared.state.previewSessionId,
+    failedPrepared.response, failedPrepared.taskId, () => {
+      assert.equal(failedJevCalls, 0, 'a Jev evaluation is not attempted while the player is still answering');
+      assert.equal(failedLlmEvaluationCalls, 0);
+    });
+  assert.equal(failedJevCalls, 1);
+  assert.equal(failedLlmEvaluationCalls, 0, 'a Jev failure never silently falls back to the LLM');
+  assert.equal(failedReady.current.customerActivities.tasks[0]?.evaluation, undefined,
+    'a failed Jev evaluation leaves the task ready for retry');
+  assert.equal(failedReady.current.npcStates['P1-002'].support, 15,
+    'a failed Jev evaluation leaves target customer values unchanged');
+  const retried = await execute(failingService, 'preview-failing-jev-provider', failedPrepared.state.previewSessionId,
+    failedReady.response.version, { action: 'customer_activity_sync' }, laterConfig);
+  const afterRetry = failureStore.get('preview-failing-jev-provider', failedPrepared.state.previewSessionId)!;
+  assert.equal(failedJevCalls, 2, 'a later preview sync retries the pending Jev evaluation');
+  assert.equal(failedLlmEvaluationCalls, 0);
+  assert.equal(afterRetry.customerActivities.tasks[0]?.evaluation, undefined);
+  assert.equal(afterRetry.npcStates['P1-002'].support, 15);
+  assert.ok(retried.customerActivities);
 }
 
 async function testHospitalityPreviewServiceFlow() {
@@ -287,7 +629,28 @@ async function testHospitalityPreviewServiceFlow() {
   let current = allowed.store.get('preview-hospitality-allowed', allowed.state.previewSessionId)!;
   assert.equal(current.customerActivities.tasks[0]?.status, 'submitted');
   assert.match(current.customerActivities.tasks[0]?.draft ?? '', /不劝酒.*不作采购承诺/u);
+  assert.equal(current.customerActivities.tasks[0]?.quiz?.questions[0]?.id, 'hospitality-preparation');
+  assert.equal(current.customerActivities.tasks[0]?.evaluation, undefined, 'hospitality plan submission also waits for quiz completion');
+  assert.equal(current.npcStates['P1-002'].support, 15);
+  assert.equal(current.npcStates['P1-002'].pleasantness, 55);
+  for (const questionId of ['hospitality-preparation', 'hospitality-event', 'hospitality-follow-up']) {
+    response = await execute(allowed.service, 'preview-hospitality-allowed', allowed.state.previewSessionId, response.version,
+      { action: 'customer_activity_answer', taskId: task.id, questionId, optionId: 'option-1' }, config);
+  }
+  const answeredQuiz = allowed.store.get('preview-hospitality-allowed', allowed.state.previewSessionId)!.customerActivities.tasks[0]!.quiz!;
+  const expectedQuizDelta = answeredQuiz.questions.reduce((total, question) => {
+    const selected = question.options.find((option) => option.id === answeredQuiz.answers[question.id]);
+    return { supportDelta: total.supportDelta + (selected?.supportDelta ?? 0), pleasureDelta: total.pleasureDelta + (selected?.pleasureDelta ?? 0) };
+  }, { supportDelta: 0, pleasureDelta: 0 });
+  response = await execute(allowed.service, 'preview-hospitality-allowed', allowed.state.previewSessionId, response.version,
+    { action: 'customer_activity_complete_quiz', taskId: task.id }, config);
+  current = allowed.store.get('preview-hospitality-allowed', allowed.state.previewSessionId)!;
   assert.equal(current.customerActivities.tasks[0]?.evaluation?.overallEvaluation, planEvaluation.overallEvaluation);
+  assert.deepEqual(current.customerActivities.tasks[0]?.evaluationBreakdown?.quiz, expectedQuizDelta);
+  const combinedEvaluation = current.customerActivities.tasks[0]?.evaluation as { supportDelta: number; pleasureDelta: number } | undefined;
+  assert.ok(combinedEvaluation);
+  assert.equal(current.npcStates['P1-002'].support, 15 + combinedEvaluation.supportDelta);
+  assert.equal(current.npcStates['P1-002'].pleasantness, 55 + combinedEvaluation.pleasureDelta);
   const supportAfterEvaluation = current.npcStates['P1-002'].support;
   const recovery = toPreviewRecoveryDto(current);
   assert.equal(JSON.stringify(recovery).includes('relationshipSnapshot'), false,
@@ -631,15 +994,35 @@ async function testServerAuthoritativeTimeout() {
   current.customerActivities.tasks[0].deadlineAt = deadlineAt;
 
   response = await execute(service, userId, state.previewSessionId, response.version,
-    { action: 'customer_activity_save', taskId, draft: '迟到的客户端草稿不得覆盖服务端已冻结的草稿。' });
+    { action: 'customer_activity_sync' });
   current = store.get(userId, state.previewSessionId)!;
   const timedOut = current.customerActivities.tasks[0];
   assert.equal(timedOut.status, 'submitted', 'a server sync/save request after expiry performs auto-submit');
   assert.equal(timedOut.submitReason, 'timeout');
   assert.equal(timedOut.submittedAt, deadlineAt, 'timeout records the server deadline, not the later sync time');
   assert.equal(timedOut.draft, '', 'text sent after the deadline cannot replace the last saved server draft');
-  assert.ok(timedOut.evaluation, 'timeout submissions still receive their normal one-time evaluation');
-  assert.deepEqual(timedOut.evaluation, {
+  assert.equal(timedOut.quiz?.status, 'answering', 'a plan timeout starts the separate quiz timer at the planning deadline');
+  assert.equal(timedOut.quiz?.startedAt, deadlineAt);
+  assert.equal(timedOut.quiz?.deadlineAt, deadlineAt + 120_000);
+  assert.equal(timedOut.evaluation, undefined, 'an empty plan still waits for the quiz deadline before evaluation');
+  assert.equal(current.npcStates['P1-002'].support, 10, 'plan timeout does not immediately alter the NPC score');
+  assert.equal(current.npcStates['P1-002'].pleasantness, 55);
+  assert.equal(current.npcStates['P1-002'].dimensionScores.decisionAnalysis, 5);
+  assert.equal(evaluationPromptCalls, 0, 'timeout submission does not call the evaluator during the quiz window');
+
+  const quizStartedAt = Date.now() - 120_001;
+  current.customerActivities.tasks[0]!.quiz!.startedAt = quizStartedAt;
+  current.customerActivities.tasks[0]!.quiz!.deadlineAt = quizStartedAt + 120_000;
+  assert.equal(hasCustomerActivitySettlementWork(current, quizStartedAt + 120_000), true,
+    'an expired quiz becomes background settlement work');
+  response = await execute(service, userId, state.previewSessionId, response.version,
+    { action: 'customer_activity_sync' });
+  current = store.get(userId, state.previewSessionId)!;
+  const quizTimedOut = current.customerActivities.tasks[0];
+  assert.equal(quizTimedOut?.quiz?.status, 'completed', 'a server sync completes an expired quiz after reload');
+  assert.equal(quizTimedOut?.quiz?.completedAt, quizStartedAt + 120_000);
+  assert.ok(quizTimedOut?.evaluation, 'the expired quiz then receives its one-time plan evaluation');
+  assert.deepEqual(quizTimedOut?.evaluation, {
     supportDelta: -2,
     pleasureDelta: -3,
     dimensionDeltas: {
@@ -657,7 +1040,8 @@ async function testServerAuthoritativeTimeout() {
   assert.equal(current.npcStates['P1-002'].dimensionScores.valuePresentation, 6);
   assert.equal(evaluationPromptCalls, 0, 'an empty timeout draft does not call the LLM evaluation prompt');
   assert.ok(response.customerActivities);
-  assert.equal(response.customerActivities.tasks[0].evaluation?.overallEvaluation, '活动准备不充分，本次未能推进。');
+  assert.equal(response.customerActivities.tasks[0].evaluation?.overallEvaluation,
+    CUSTOMER_ACTIVITY_EVALUATION_COMPLETED_MESSAGE);
   assert.equal(response.customerActivities.serverNow, Math.floor(response.customerActivities.serverNow));
 
   response = await execute(service, userId, state.previewSessionId, response.version,
@@ -1103,6 +1487,7 @@ async function testProposalMergeAndLowConfidenceFiltering() {
 
 async function main() {
   await testCustomerConfirmationAndPlanning();
+  await testFrozenActivityPlanProviderAndJevFailure();
   await testHospitalityPreviewServiceFlow();
   await testFrozenNumericGateAndDuplicateDecision();
   await testOrganizationNumericGateAndLegacyQueue();

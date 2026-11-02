@@ -344,17 +344,17 @@ export default function JevConfigPage() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 id="decision-provider-heading" className="text-sm font-semibold text-slate-900">全局决策模型</h2>
-              <p className="mt-1 max-w-4xl text-xs leading-5 text-slate-600">此设置对项目内所有 AI 决策统一生效。切换后需要点击“保存全部”；保存成功后，新发起的决策才会使用所选模型。</p>
+              <p className="mt-1 max-w-4xl text-xs leading-5 text-slate-600">此设置统一控制下方列出的通用决策。活动方案评价的 LLM / Jev 选择在“客户活动匹配设置 → AI 评价与结算”中单独配置。切换后需要点击“保存全部”；保存成功后，新发起的通用决策才会使用所选模型。</p>
             </div>
             <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${config.decisionProvider === 'jev' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'}`}>
               当前草稿：{config.decisionProvider === 'jev' ? 'Jev' : '现有 LLM'}
             </span>
           </div>
           <fieldset className="mt-3 grid gap-2 sm:grid-cols-2" disabled={loading || saving}>
-            <legend className="sr-only">选择所有决策使用的模型</legend>
+            <legend className="sr-only">选择通用决策使用的模型</legend>
             {([
-              { value: 'jev', title: 'Jev', description: '将所有决策交给 Jev API。' },
-              { value: 'llm', title: '现有 LLM', description: '将所有决策交给项目当前配置的 LLM。' },
+              { value: 'jev', title: 'Jev', description: '将下方通用决策交给 Jev API。' },
+              { value: 'llm', title: '现有 LLM', description: '将下方通用决策交给项目当前配置的 LLM。' },
             ] as const).map((option) => (
               <label
                 key={option.value}

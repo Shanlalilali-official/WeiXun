@@ -1,4 +1,20 @@
 import { z } from 'zod';
+import {
+  DEFAULT_ACTIVITY_EXECUTION_CONFIG,
+  activityExecutionConfigSchema,
+  resolveActivityExecutionConfig,
+  type ActivityExecutionConfig,
+} from './customer-activity-execution-config';
+import {
+  completeCustomerActivityQuizSnapshot,
+  createCustomerActivityQuiz,
+  customerActivityQuizSchema,
+  publicCustomerActivityQuizSchema,
+  saveCustomerActivityQuizSnapshotAnswer,
+  sumCustomerActivityQuizDeltas,
+  toPublicCustomerActivityQuiz,
+  type PublicCustomerActivityQuiz,
+} from './customer-activity-quiz';
 
 export const CUSTOMER_ACTIVITY_TYPES = [
   'technical_meeting',
@@ -107,6 +123,7 @@ export const customerActivityThresholdSchema = z.object({
 export const activityDecisionConfigSchema = z.object({
   revision: z.number().int().nonnegative(),
   mode: z.enum(['ai', 'numeric']),
+  execution: activityExecutionConfigSchema.optional(),
   thresholds: z.object({
     technical_meeting: customerActivityThresholdSchema.optional(),
     case_site_visit: customerActivityThresholdSchema.optional(),
@@ -148,6 +165,7 @@ export type OrganizationActivityThresholdDecision = {
   reason: string;
 };
 export type ActivityDecisionConfig = z.infer<typeof activityDecisionConfigSchema>;
+export type { ActivityExecutionConfig };
 export type CustomerActivityDecisionConfigSnapshot = ActivityDecisionConfig;
 export type CustomerActivityDecisionMode = 'customer_confirmed' | 'ai' | 'numeric';
 export type CustomerActivityFeasibilityOutcome = 'allow' | 'reject' | 'need_more';
@@ -212,6 +230,7 @@ export const RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS: Record<typeof ORGANIZ
 export const DEFAULT_ACTIVITY_DECISION_CONFIG: ActivityDecisionConfig = {
   revision: 0,
   mode: 'numeric',
+  execution: DEFAULT_ACTIVITY_EXECUTION_CONFIG,
   thresholds: {
     technical_meeting: { organization: RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS.technical_meeting },
     case_site_visit: { organization: RECOMMENDED_ORGANIZATION_ACTIVITY_THRESHOLDS.case_site_visit },
@@ -265,6 +284,7 @@ export function parseActivityDecisionConfig(value: unknown): ActivityDecisionCon
   if (!parsed.success) return null;
   return {
     ...parsed.data,
+    execution: resolveActivityExecutionConfig(parsed.data.execution),
     thresholds: {
       ...parsed.data.thresholds,
       hospitality: parsed.data.thresholds.hospitality ?? { ...HOSPITALITY_ACTIVITY_DEFAULT_THRESHOLD },
@@ -408,6 +428,14 @@ export type CustomerActivityConversationMessage = z.infer<typeof customerActivit
 export type CustomerActivityEvaluation = z.infer<typeof customerActivityEvaluationSchema>;
 export type CustomerActivityAgreement = z.infer<typeof customerActivityAgreementSchema>;
 
+const customerActivityEvaluationBreakdownSchema = z.object({
+  aiPlan: customerActivityEvaluationSchema,
+  quiz: z.object({
+    supportDelta: z.number(),
+    pleasureDelta: z.number(),
+  }).strict(),
+}).strict();
+
 function requiresNumericCustomerActivityDecision(config: ActivityDecisionConfig, type: CustomerActivityType): boolean {
   return config.mode === 'numeric' || type === 'hospitality';
 }
@@ -439,6 +467,8 @@ export const customerActivityTaskSchema = z.object({
   decisionRevision: z.number().int().nonnegative().optional(),
   decisionReason: z.string().trim().min(1).max(300).optional(),
   status: z.enum(['pending', 'planning', 'submitted']),
+  quizEnabled: z.boolean().optional(),
+  quiz: customerActivityQuizSchema.optional(),
   createdAt: z.number().int().nonnegative(),
   startedAt: z.number().int().nonnegative().optional(),
   deadlineAt: z.number().int().nonnegative().optional(),
@@ -446,6 +476,7 @@ export const customerActivityTaskSchema = z.object({
   submittedAt: z.number().int().nonnegative().optional(),
   submitReason: z.enum(['manual', 'timeout', 'room_ended']).optional(),
   evaluation: customerActivityEvaluationSchema.optional(),
+  evaluationBreakdown: customerActivityEvaluationBreakdownSchema.optional(),
   evaluatedAt: z.number().int().nonnegative().optional(),
 }).strict().superRefine((task, context) => {
   if (task.sourceConversation.reduce((length, item) => length + item.text.length, 0) > CUSTOMER_ACTIVITY_CONVERSATION_MAX_LENGTH) {
@@ -462,6 +493,18 @@ export const customerActivityTaskSchema = z.object({
   }
   if ((task.evaluation === undefined) !== (task.evaluatedAt === undefined)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: 'evaluation and settlement timestamp must be stored together' });
+  }
+  if (task.quiz && task.status !== 'submitted') {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['quiz'], message: 'quiz is available only after plan submission' });
+  }
+  if (task.quizEnabled === true && task.status === 'submitted' && !task.quiz) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['quiz'], message: 'quiz-enabled submitted tasks require their quiz snapshot' });
+  }
+  if (task.evaluation && task.quiz?.status === 'answering') {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['evaluation'], message: 'evaluation cannot be recorded before the quiz completes' });
+  }
+  if (task.evaluationBreakdown && !task.evaluation) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['evaluationBreakdown'], message: 'evaluation breakdown requires its evaluation' });
   }
   if (task.responseMessageId !== undefined && task.responseMessageId !== task.agreementMessageId) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['responseMessageId'], message: 'responseMessageId must match agreementMessageId' });
@@ -547,25 +590,25 @@ export type PublicCustomerActivityTask = Omit<CustomerActivityTask,
   | 'decisionRevision'
   | 'decisionReason'
   | 'evaluation'
+  | 'evaluationBreakdown'
+  | 'quizEnabled'
+  | 'quiz'
 > & {
   basis: string[];
   evaluation?: Pick<CustomerActivityEvaluation, 'overallEvaluation'>;
+  quiz?: PublicCustomerActivityQuiz;
 };
 
 export type CustomerActivityPlanningAction = 'manual' | 'timeout' | 'room_ended';
 
-/** A short player-facing outcome, intentionally independent of model commentary. */
-export function getPublicCustomerActivityOutcome(
-  draft: string,
-  evaluation: Pick<CustomerActivityEvaluation, 'supportDelta' | 'pleasureDelta'>,
-): string {
-  if (!draft.trim()) return '活动准备不充分，本次未能推进。';
+/** Public settlement status deliberately contains no information about the result. */
+export const CUSTOMER_ACTIVITY_EVALUATION_COMPLETED_MESSAGE = '评估已结束，请您继续开展您的销售工作';
 
-  const { supportDelta, pleasureDelta } = evaluation;
-  if (supportDelta === 0 && pleasureDelta === 0) return '本次方案暂未带来进一步推进。';
-  if (supportDelta >= 0 && pleasureDelta >= 0) return '本次方案有助于推进后续活动沟通。';
-  if (supportDelta <= 0 && pleasureDelta <= 0) return '本次方案未能推动后续活动沟通。';
-  return '本次方案对后续活动沟通的推动作用有限。';
+export function getPublicCustomerActivityOutcome(
+  _draft: string,
+  _evaluation: Pick<CustomerActivityEvaluation, 'supportDelta' | 'pleasureDelta'>,
+): string {
+  return CUSTOMER_ACTIVITY_EVALUATION_COMPLETED_MESSAGE;
 }
 
 export function createEmptyCustomerActivityState(): CustomerActivityState {
@@ -775,6 +818,7 @@ export function createCustomerActivityTasks(
       ...(agreement.decisionRevision === undefined ? {} : { decisionRevision: agreement.decisionRevision }),
       ...(agreement.decisionReason === undefined ? {} : { decisionReason: agreement.decisionReason }),
       status: 'pending',
+      quizEnabled: true,
       createdAt: Math.floor(serverNow),
       draft: '',
     });
@@ -873,13 +917,22 @@ export function startCustomerActivityPlanning(
     version: 1,
     decisions: state.decisions,
     tasks: state.tasks.map((task) => task.id === taskId
-      ? { ...task, status: 'planning', startedAt, deadlineAt: startedAt + CUSTOMER_ACTIVITY_PLANNING_MS }
+      ? { ...task, status: 'planning', quizEnabled: true, startedAt, deadlineAt: startedAt + CUSTOMER_ACTIVITY_PLANNING_MS }
       : task),
   };
 }
 
 function markSubmitted(task: CustomerActivityTask, serverNow: number, reason: CustomerActivityPlanningAction): CustomerActivityTask {
-  return { ...task, status: 'submitted', submittedAt: Math.floor(serverNow), submitReason: reason };
+  const submittedAt = Math.floor(serverNow);
+  if (task.quizEnabled !== true) return { ...task, status: 'submitted', submittedAt, submitReason: reason };
+  const quiz = createCustomerActivityQuiz(task.type, submittedAt, task.draft, task.id, task.decisionConfig?.execution);
+  return {
+    ...task,
+    status: 'submitted',
+    submittedAt,
+    submitReason: reason,
+    quiz: reason === 'room_ended' ? completeCustomerActivityQuizSnapshot(quiz, submittedAt) : quiz,
+  };
 }
 
 /** Commits any expired task using only the draft last saved by the server. */
@@ -888,9 +941,16 @@ export function finalizeExpiredCustomerActivities(stateInput: unknown, serverNow
   if (!Number.isFinite(serverNow) || serverNow < 0) return state;
   let changed = false;
   const tasks = state.tasks.map((task) => {
-    if (task.status !== 'planning' || task.deadlineAt === undefined || serverNow < task.deadlineAt) return task;
-    changed = true;
-    return markSubmitted(task, task.deadlineAt, 'timeout');
+    let nextTask = task;
+    if (nextTask.status === 'planning' && nextTask.deadlineAt !== undefined && serverNow >= nextTask.deadlineAt) {
+      changed = true;
+      nextTask = markSubmitted(nextTask, nextTask.deadlineAt, 'timeout');
+    }
+    if (nextTask.quiz?.status === 'answering' && serverNow >= nextTask.quiz.deadlineAt) {
+      changed = true;
+      nextTask = { ...nextTask, quiz: completeCustomerActivityQuizSnapshot(nextTask.quiz, nextTask.quiz.deadlineAt) };
+    }
+    return nextTask;
   });
   return changed ? { version: 1, tasks, decisions: state.decisions } : state;
 }
@@ -940,6 +1000,56 @@ export function submitCustomerActivityPlan(
   };
 }
 
+/** Saves only a selected option from the server-side question snapshot. */
+export function saveCustomerActivityQuizAnswer(
+  stateInput: unknown,
+  taskId: string,
+  questionId: string,
+  optionId: string | null,
+  serverNow: number,
+): { state: CustomerActivityState; accepted: boolean } {
+  let state = readCustomerActivityState(stateInput);
+  if (!Number.isFinite(serverNow) || serverNow < 0) return { state, accepted: false };
+  const task = state.tasks.find((item) => item.id === taskId);
+  if (!task || task.status !== 'submitted' || !task.quiz || task.quiz.status !== 'answering') {
+    return { state, accepted: false };
+  }
+  if (serverNow >= task.quiz.deadlineAt) {
+    state = finalizeExpiredCustomerActivities(state, serverNow);
+    return { state, accepted: false };
+  }
+  const saved = saveCustomerActivityQuizSnapshotAnswer(task.quiz, questionId, optionId, serverNow);
+  if (!saved.accepted) return { state, accepted: false };
+  return {
+    state: {
+      version: 1,
+      decisions: state.decisions,
+      tasks: state.tasks.map((item) => item.id === taskId ? { ...item, quiz: saved.quiz } : item),
+    },
+    accepted: true,
+  };
+}
+
+/** Completes an answering quiz, preserving saved answers and treating skipped questions as unanswered. */
+export function completeCustomerActivityQuiz(
+  stateInput: unknown,
+  taskId: string,
+  serverNow: number,
+): CustomerActivityState {
+  let state = readCustomerActivityState(stateInput);
+  if (!Number.isFinite(serverNow) || serverNow < 0) return state;
+  const task = state.tasks.find((item) => item.id === taskId);
+  if (!task || task.status !== 'submitted' || !task.quiz || task.quiz.status !== 'answering') return state;
+  const completedAt = serverNow >= task.quiz.deadlineAt ? task.quiz.deadlineAt : Math.floor(serverNow);
+  const quiz = completeCustomerActivityQuizSnapshot(task.quiz, completedAt);
+  state = {
+    version: 1,
+    decisions: state.decisions,
+    tasks: state.tasks.map((item) => item.id === taskId ? { ...item, quiz } : item),
+  };
+  return state;
+}
+
 /** Ends an active planning window with its server-saved draft when its room closes. */
 export function finishCustomerActivityPlanningOnRoomEnd(stateInput: unknown, serverNow: number): CustomerActivityState {
   const state = readCustomerActivityState(stateInput);
@@ -947,10 +1057,18 @@ export function finishCustomerActivityPlanningOnRoomEnd(stateInput: unknown, ser
   let changed = false;
   const now = Math.floor(serverNow);
   const tasks = state.tasks.map((task) => {
-    if (task.status !== 'planning' || task.deadlineAt === undefined) return task;
-    changed = true;
-    if (now >= task.deadlineAt) return markSubmitted(task, task.deadlineAt, 'timeout');
-    return markSubmitted(task, now, 'room_ended');
+    let nextTask = task;
+    if (nextTask.status === 'planning' && nextTask.deadlineAt !== undefined) {
+      changed = true;
+      nextTask = now >= nextTask.deadlineAt
+        ? markSubmitted(nextTask, nextTask.deadlineAt, 'timeout')
+        : markSubmitted(nextTask, now, 'room_ended');
+    }
+    if (nextTask.quiz?.status === 'answering') {
+      changed = true;
+      nextTask = { ...nextTask, quiz: completeCustomerActivityQuizSnapshot(nextTask.quiz, now) };
+    }
+    return nextTask;
   });
   return changed ? { version: 1, tasks, decisions: state.decisions } : state;
 }
@@ -961,23 +1079,91 @@ export function recordCustomerActivityEvaluation(
   taskId: string,
   evaluationInput: CustomerActivityEvaluation,
   serverNow: number,
-): { state: CustomerActivityState; applied: boolean } {
+): { state: CustomerActivityState; applied: boolean; evaluation?: CustomerActivityEvaluation } {
   const state = readCustomerActivityState(stateInput);
   if (!Number.isFinite(serverNow) || serverNow < 0) return { state, applied: false };
   const evaluationResult = customerActivityEvaluationSchema.safeParse(evaluationInput);
   if (!evaluationResult.success) return { state, applied: false };
   const task = state.tasks.find((item) => item.id === taskId);
-  if (!task || task.status !== 'submitted' || task.evaluation) return { state, applied: false };
+  if (!task || !isCustomerActivityReadyForEvaluation(task) || task.evaluation) return { state, applied: false };
+  const combined = combineCustomerActivityEvaluation(task, evaluationResult.data);
   return {
     state: {
       version: 1,
       decisions: state.decisions,
       tasks: state.tasks.map((item) => item.id === taskId
-        ? { ...item, evaluation: evaluationResult.data, evaluatedAt: Math.floor(serverNow) }
+        ? {
+          ...item,
+          evaluation: combined.evaluation,
+          evaluationBreakdown: combined.breakdown,
+          evaluatedAt: Math.floor(serverNow),
+        }
         : item),
     },
     applied: true,
+    evaluation: combined.evaluation,
   };
+}
+
+export function isCustomerActivityReadyForEvaluation(task: CustomerActivityTask): boolean {
+  return task.status === 'submitted' && (!task.quiz || task.quiz.status === 'completed');
+}
+
+function clampEvaluationDelta(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function roundEvaluationDelta(value: number): number {
+  return Math.sign(value) * Math.round(Math.abs(value));
+}
+
+/** Combines the independent plan assessment and fixed scenario choices within the existing delta limits. */
+export function combineCustomerActivityEvaluation(
+  taskInput: CustomerActivityTask,
+  aiEvaluationInput: CustomerActivityEvaluation,
+): { evaluation: CustomerActivityEvaluation; breakdown: z.infer<typeof customerActivityEvaluationBreakdownSchema> } {
+  const task = customerActivityTaskSchema.parse(taskInput);
+  const aiEvaluation = customerActivityEvaluationSchema.parse(aiEvaluationInput);
+  const execution = resolveActivityExecutionConfig(task.decisionConfig?.execution);
+  const quizDelta = task.quiz ? sumCustomerActivityQuizDeltas(task.quiz) : { supportDelta: 0, pleasureDelta: 0 };
+  // A blank plan always keeps its deterministic no-plan penalty; answers cannot offset it positively.
+  const hasPlan = Boolean(task.draft.trim());
+  const usableQuizDelta = hasPlan
+    ? quizDelta
+    : {
+      supportDelta: Math.min(0, quizDelta.supportDelta),
+      pleasureDelta: Math.min(0, quizDelta.pleasureDelta),
+    };
+  const weightedQuizDelta = {
+    supportDelta: usableQuizDelta.supportDelta * execution.weights.quiz,
+    pleasureDelta: usableQuizDelta.pleasureDelta * execution.weights.quiz,
+  };
+  const weightedPlanSupport = hasPlan ? aiEvaluation.supportDelta * execution.weights.plan : aiEvaluation.supportDelta;
+  const weightedPlanPleasure = hasPlan ? aiEvaluation.pleasureDelta * execution.weights.plan : aiEvaluation.pleasureDelta;
+  const supportLimits = hasPlan ? [execution.limits.supportMin, execution.limits.supportMax] as const : [-5, 4] as const;
+  const pleasureLimits = hasPlan ? [execution.limits.pleasureMin, execution.limits.pleasureMax] as const : [-8, 6] as const;
+  const dimensionDeltas = Object.fromEntries(
+    Object.entries(aiEvaluation.dimensionDeltas).map(([key, value]) => [
+      key,
+      hasPlan ? clampEvaluationDelta(roundEvaluationDelta(value * execution.weights.plan), execution.limits.dimensionMin, execution.limits.dimensionMax) : value,
+    ]),
+  ) as CustomerActivityEvaluation['dimensionDeltas'];
+  const evaluation = customerActivityEvaluationSchema.parse({
+    ...aiEvaluation,
+    supportDelta: clampEvaluationDelta(
+      roundEvaluationDelta(weightedPlanSupport + weightedQuizDelta.supportDelta),
+      supportLimits[0],
+      supportLimits[1],
+    ),
+    pleasureDelta: clampEvaluationDelta(
+      roundEvaluationDelta(weightedPlanPleasure + weightedQuizDelta.pleasureDelta),
+      pleasureLimits[0],
+      pleasureLimits[1],
+    ),
+    dimensionDeltas,
+  });
+  const breakdown = customerActivityEvaluationBreakdownSchema.parse({ aiPlan: aiEvaluation, quiz: weightedQuizDelta });
+  return { evaluation, breakdown };
 }
 
 export function toPublicCustomerActivityTask(taskInput: CustomerActivityTask): PublicCustomerActivityTask {
@@ -993,6 +1179,7 @@ export function toPublicCustomerActivityTask(taskInput: CustomerActivityTask): P
     ...(task.startedAt === undefined ? {} : { startedAt: task.startedAt }),
     ...(task.deadlineAt === undefined ? {} : { deadlineAt: task.deadlineAt }),
     draft: task.draft,
+    ...(task.quiz === undefined ? {} : { quiz: publicCustomerActivityQuizSchema.parse(toPublicCustomerActivityQuiz(task.quiz)) }),
     ...(task.submittedAt === undefined ? {} : { submittedAt: task.submittedAt }),
     ...(task.submitReason === undefined ? {} : { submitReason: task.submitReason }),
     ...(task.evaluation === undefined ? {} : {

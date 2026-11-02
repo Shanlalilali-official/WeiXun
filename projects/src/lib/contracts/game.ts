@@ -22,6 +22,16 @@ export const customerActivityMutationSchema = z.discriminatedUnion('action', [
     action: z.literal('submit'),
     draft: z.string().max(12_000).optional(),
   }).strict(),
+  z.object({
+    ...customerActivityCommandBaseSchema,
+    action: z.literal('answer'),
+    questionId: z.string().trim().min(1).max(80),
+    optionId: z.string().trim().min(1).max(80).nullable(),
+  }).strict(),
+  z.object({
+    ...customerActivityCommandBaseSchema,
+    action: z.literal('complete_quiz'),
+  }).strict(),
 ]);
 
 export type CustomerActivityMutation = z.infer<typeof customerActivityMutationSchema>;
