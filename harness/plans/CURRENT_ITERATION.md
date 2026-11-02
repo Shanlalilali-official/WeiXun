@@ -1,5 +1,10 @@
 # 当前迭代
 
+## 2026-11-02 实际测试项目入口会话同步（用户反馈，已批准）
+
+PREVIEW-RECOVERY-015：用户确认点击实际测试后、进入项目一之前看不到同步按钮。已实查 public/project1-prototype-v9.html 的 topbar 在 projects 返回空、renderProjects 未挂载已有 renderPreviewRecoveryControls；已有服务端恢复 GET 与按钮事件处理，不重复建设后端。目标：已绑定会话在项目选择页显示同步入口及进行中/失败状态，无会话不显示无效入口。只修预览 UI 与相关回归，不改实际会话或数据库、不自动重发失败写操作。主线程已检查实际 diff 并复跑：恢复UI专项、账号隔离专项、最终类型检查、修改脚本定向 ESLint、Next production build 与 tsup 通过；harness-check/diff --check 通过。项目选择页已有会话时显示恢复条，无会话隐藏，409 后刷新入口，恢复仅 GET 不重放失败 POST。完整 ESLint 在受限环境外执行并通过；初次受限执行长时间无输出后中止，Next 构建也改在受限环境外通过。未做真实浏览器/真实会话恢复或服务重启、部署、Git提交。
+
+
 ## 2026-11-02 设计师实际测试页标题换行（用户请求，已批准）
 
 PREVIEW-UI-014：已实查 projects/public/project1-prototype-v9.html 的 renderTopbar 与最终 brand 样式；已有蓝色品牌区与副标题，确认缺口是连续标题自动折行导致末字落单。目标为项目一独占首行、项目名称完整第二行，缩小第二行字号并保持图标尺寸。仅改静态预览页标题布局，不涉及业务状态、正式页面或数据库。本地静态布局完成。实际 diff、类型检查、内联脚本语法、tsup、harness-check 和 diff --check 通过。Corepack pnpm9下载因 DNS 不通受阻，改用现有依赖直接执行相同工具；完整 ESLint 与 Next build 长时间无完成输出后中止，未记为通过。未做浏览器视觉验收、服务重启或部署。

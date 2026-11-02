@@ -1,5 +1,10 @@
 # 工作交接
 
+## 2026-11-02 项目入口恢复控件
+
+PREVIEW-RECOVERY-015：按用户澄清，只需让实际测试项目选择页已有会话时可同步。复用 renderPreviewRecoveryControls / refreshPreview，不能重置会话或自动重发冲突写请求；主线程已检查实际 diff 并复跑：恢复UI专项、账号隔离专项、最终类型检查、修改脚本定向 ESLint、Next production build 与 tsup 通过；harness-check/diff --check 通过。项目选择页已有会话时显示恢复条，无会话隐藏，409 后刷新入口，恢复仅 GET 不重放失败 POST。完整 ESLint 在受限环境外执行并通过；初次受限执行长时间无输出后中止，Next 构建也改在受限环境外通过。未做真实浏览器/真实会话恢复或服务重启、部署、Git提交。
+
+
 ## 2026-11-02 测试页标题分行
 
 本批仅 projects/public/project1-prototype-v9.html 的顶部品牌标题与样式：首行项目一、第二行单单位内部竞标，副标题保留；不修改外部原型或历史交接包。实际 diff、类型检查、内联脚本语法、tsup、harness-check 和 diff --check 通过。Corepack pnpm9下载因 DNS 不通受阻，改用现有依赖直接执行相同工具；完整 ESLint 与 Next build 长时间无完成输出后中止，未记为通过。未做浏览器视觉验收、服务重启或部署。
