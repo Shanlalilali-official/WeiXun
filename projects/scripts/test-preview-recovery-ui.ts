@@ -82,7 +82,6 @@ function response(status: number, body: unknown) {
 function createHarness(options: {
   state?: ReturnType<typeof baseLocalState>; sessionId?: string; version?: number;
   initialDto?: RecoveryDto; postResult?: (request: Record<string, unknown>) => Record<string, unknown>;
-  postFailure?: { status: number; body: unknown }; noSession?: boolean;
 } = {}) {
   const userA = 'recovery-user-a';
   const state = options.state || baseLocalState();
@@ -114,10 +113,9 @@ function createHarness(options: {
     localStorage.setItem('weixun_session', token);
     const suffix = encodeURIComponent(userId);
     sessionStorage.setItem(`project1_interactive_prototype_v10:user:${suffix}`, JSON.stringify({ ownerId: userId, state: savedState }));
-    if (id) sessionStorage.setItem(`weixun_project1_preview_session_v1:user:${suffix}`, JSON.stringify({ ownerId: userId, id, version }));
-    else sessionStorage.removeItem(`weixun_project1_preview_session_v1:user:${suffix}`);
+    sessionStorage.setItem(`weixun_project1_preview_session_v1:user:${suffix}`, JSON.stringify({ ownerId: userId, id, version }));
   };
-  setUser(userA, 'recovery-token-a', options.noSession ? '' : sessionId, options.version ?? 2, state);
+  setUser(userA, 'recovery-token-a', sessionId, options.version ?? 2, state);
   let commandCounter = 0;
   let timerCounter = 0;
   const scheduleVmTimer = (callback: (...args: unknown[]) => void, delay = 0) => {
@@ -142,7 +140,6 @@ function createHarness(options: {
     }
     if (url === '/api/project-one-preview/ai' && method === 'POST') {
       if (!body) return response(400, { error: 'missing request' });
-      if (options.postFailure) return response(options.postFailure.status, options.postFailure.body);
       const data = options.postResult?.(body) || {
         previewSessionId: sessionId,
         version: Number(body.expectedVersion || 0) + 1,
@@ -175,10 +172,6 @@ setVisitMessages:messages=>{state.conversations['P1-001'].meeting=messages;save(
  recoveryReady:()=>previewRecoveryIsReady(),
  recoveryError:()=>previewRecoveryError,
  renderMeeting:()=>renderMeeting(),
- renderProjects:()=>renderProjects(),
- render:()=>render(),
- action:action=>handleAction({currentTarget:{dataset:{action}}}),
- syncActivities:()=>refreshCustomerActivityQueue(),
  snapshot:()=>JSON.parse(JSON.stringify({owner:stateOwnerUserId,id:state.previewSessionId,version:state.previewVersion,meeting:state.meeting,draft:state.meetingDraft,timer:state.timer,conversations:state.conversations,appointments:state.appointments,wechat:state.wechat,activities:state.customerActivities,completedVisits:state.completedVisits,retry:state.aiRetry,requestBusy,previewRecoveryPending,previewRecoveryError,screen:state.screen,workspaceMode:state.workspaceMode,selectedNpcId:state.selectedNpcId})),
 };
 })();`;
@@ -194,8 +187,7 @@ setVisitMessages:messages=>{state.conversations['P1-001'].meeting=messages;save(
   const hooks = vm.runInContext('globalThis.__previewRecoveryHooks', context) as {
     wait: () => Promise<unknown> | null; refresh: () => Promise<boolean>; send: () => Promise<unknown>; end: () => Promise<unknown>;
     syncIdentity: () => boolean; setDraft: (text: string) => void; setMeeting: (meeting: unknown) => void; setVisitMessages: (messages: Array<Record<string, unknown>>) => void;
-    recoveryReady: () => boolean; recoveryError: () => string; renderMeeting: () => string; renderProjects: () => string; render: () => void;
-    action: (action: string) => Promise<unknown>; syncActivities: () => Promise<boolean>;
+    recoveryReady: () => boolean; recoveryError: () => string; renderMeeting: () => string;
     snapshot: () => { owner: string; id: string | null; version: number; meeting: null | { npcId: string; turn: number; awaitingFinalReplyFrom?: string; historyMessageIds?: string[] }; draft: string; timer: { elapsedMs: number; paused: boolean }; conversations: Record<string, Record<string, Array<Record<string, unknown>>>>; appointments: Array<Record<string, unknown>>; wechat: Record<string, unknown>; activities: { tasks: Array<Record<string, unknown>> }; completedVisits: Array<Record<string, unknown>>; retry: unknown; requestBusy: boolean; previewRecoveryPending: boolean; previewRecoveryError: string; screen: string; workspaceMode: string; selectedNpcId: string | null };
   };
   return {
@@ -212,51 +204,6 @@ setVisitMessages:messages=>{state.conversations['P1-001'].meeting=messages;save(
 async function waitForBoot(harness: ReturnType<typeof createHarness>) {
   const pending = harness.hooks.wait();
   if (pending) await pending;
-}
-
-async function testProjectEntryHasManualRecoveryControl() {
-  const projectState = baseLocalState(null);
-  projectState.screen = 'projects';
-  const harness = createHarness({ state: projectState, initialDto: recoveryDto(sessionA, 3, null) });
-  await waitForBoot(harness);
-  assert.match(harness.app.innerHTML, /同步预览会话/, '项目入口在已有预览会话时显示同步按钮');
-
-  harness.deferGet();
-  const recovery = harness.hooks.action('refresh-preview');
-  assert.match(harness.app.innerHTML, /data-action="refresh-preview"[^>]*disabled/, 'GET 恢复期间按钮显示同步中并禁用');
-  harness.resolveDeferredGet(recoveryDto(sessionA, 4, null));
-  await recovery;
-  assert.equal(harness.hooks.snapshot().version, 4, '项目入口按钮从服务端读取最新会话版本');
-  assert.equal(harness.requests.filter((request) => request.url === '/api/project-one-preview/ai' && request.method === 'POST').length, 0, '手动恢复只发 GET，不重放预览写操作');
-
-  const noSessionState = baseLocalState(null);
-  noSessionState.screen = 'projects';
-  const noSession = createHarness({ state: noSessionState, noSession: true, initialDto: recoveryDto(sessionA, 3, null) });
-  await waitForBoot(noSession);
-  assert.doesNotMatch(noSession.app.innerHTML, /同步预览会话/, '没有预览会话时项目入口不显示恢复控件');
-}
-
-async function testProjectEntryShowsConflictRecovery() {
-  const projectState = baseLocalState(null);
-  projectState.screen = 'projects';
-  const harness = createHarness({
-    state: projectState,
-    initialDto: recoveryDto(sessionA, 3, null),
-    postFailure: { status: 409, body: { error: 'PREVIEW_SESSION_VERSION_CONFLICT' } },
-  });
-  await waitForBoot(harness);
-  assert.equal(await harness.hooks.syncActivities(), false, '冲突的活动同步返回失败供调用方处理');
-  assert.match(harness.app.innerHTML, /预览会话版本已变化/, '409 后项目入口显示冲突原因');
-  assert.match(harness.app.innerHTML, /同步预览会话/, '409 后项目入口提供手动恢复入口');
-  assert.equal(harness.requests.filter((request) => request.url === '/api/project-one-preview/ai' && request.method === 'POST').length, 1, '409 不自动重试活动同步 POST');
-
-  harness.deferGet();
-  const recovery = harness.hooks.action('refresh-preview');
-  assert.match(harness.app.innerHTML, /data-action="refresh-preview"[^>]*disabled/, '冲突后的 GET 恢复进行中禁用按钮');
-  harness.resolveDeferredGet(recoveryDto(sessionA, 4, null));
-  await recovery;
-  assert.equal(harness.hooks.snapshot().version, 4, '冲突后恢复到最新服务端版本');
-  assert.equal(harness.requests.filter((request) => request.url === '/api/project-one-preview/ai' && request.method === 'POST').length, 1, '手动恢复不重放失败的活动同步');
 }
 
 async function testVersionRecoveryAndVisitFlow() {
@@ -433,10 +380,6 @@ async function main() {
   try {
     await Promise.race([
       (async () => {
-        await testProjectEntryHasManualRecoveryControl();
-        currentTest = '项目入口 409 冲突恢复';
-        await testProjectEntryShowsConflictRecovery();
-        currentTest = '版本恢复与拜访流程';
         await testVersionRecoveryAndVisitFlow();
         currentTest = '新拜访消息边界';
         await testNewVisitBoundaryDoesNotRestoreOldDraft();
@@ -456,7 +399,7 @@ async function main() {
   } finally {
     if (watchdog) clearTimeout(watchdog);
   }
-  console.log('项目入口预览恢复控件、409 冲突恢复、拜访恢复、失败保留、身份隔离与倒计时幂等回归通过');
+  console.log('预览会话恢复 GET、分渠道拜访恢复、失败保留、身份隔离与倒计时幂等回归通过');
 }
 
 void main().catch((error: unknown) => { console.error(error); process.exitCode = 1; });

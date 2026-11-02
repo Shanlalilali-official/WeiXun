@@ -1,15 +1,5 @@
 # 动态问题台账
 
-## PREVIEW-RECOVERY-015 · 2026-11-02 项目选择页没有同步入口 · Resolved（本地）
-
-用户当前界面是点击实际测试后、进入项目一前。已实查 topbar() 的 projects 空返回与 renderProjects，已有 renderPreviewRecoveryControls 但未在选择页调用；GET恢复逻辑已存在。验收已有会话可同步、无会话无误导按钮、进行中禁用及失败可重试，不丢草稿或自动重发写操作。主线程已检查实际 diff 并复跑：恢复UI专项、账号隔离专项、最终类型检查、修改脚本定向 ESLint、Next production build 与 tsup 通过；harness-check/diff --check 通过。项目选择页已有会话时显示恢复条，无会话隐藏，409 后刷新入口，恢复仅 GET 不重放失败 POST。完整 ESLint 在受限环境外执行并通过；初次受限执行长时间无输出后中止，Next 构建也改在受限环境外通过。未做真实浏览器/真实会话恢复或服务重启、部署、Git提交。
-
-
-## PREVIEW-UI-014 · 2026-11-02 设计师测试页标题断行 · Resolved（本地静态布局）
-
-用户截图与 public/project1-prototype-v9.html:renderTopbar 确认连续标题在窄品牌栏末字落单。已改双行 span、次行 .82em、行距及图标禁止压缩；实际 diff、类型检查、内联脚本语法、tsup、harness-check 和 diff --check 通过。Corepack pnpm9下载因 DNS 不通受阻，改用现有依赖直接执行相同工具；完整 ESLint 与 Next build 长时间无完成输出后中止，未记为通过。未做浏览器视觉验收、服务重启或部署。不改数据、会话、业务规则。
-
-
 ## HANDOVER-002 ZIP 中文文件名编码
 
 - 状态：Resolved（打包工具修复）；最后检查：2026-10-30。

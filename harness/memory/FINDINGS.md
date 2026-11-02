@@ -1,15 +1,5 @@
 # 调查发现
 
-## 2026-11-02 同步按钮缺失的实际页面
-
-用户明确处于项目选择页，topbar() 对 state.screen===projects 返回空；当前同步入口只在顶部/拜访及AI错误区，因此该入口缺失有源码证据。客户活动modal也未提供会话同步，但用户本次并非modal场景；不把前者当实际原因。409日志表明版本不一致，具体并发来源尚未实查。
-
-
-## 2026-11-02 设计师实际测试页标题入口
-
-截图对应 projects/public/project1-prototype-v9.html 的 renderTopbar（副标题 AI 预览会话），而非 src/app/game/page.tsx 正式页。已有连续 h1 在 flex 品牌栏自动换行，形成末字孤行；本批用显式双行与次级字号修正。无数据或服务端缺口，数据库不涉及。
-
-
 ## 2026-10-29 附加旧UI契约回归失败
 
 test-legacy-ui-contracts.ts首条doesNotMatch(showCompetitors等)与当前game/page.tsx冲突。git show HEAD:projects/src/app/game/page.tsx也含showCompetitors及“查看竞争对手资料”按钮，且本批未改该文件，证明该旧断言不兼容已有入口，非本次饭局新增引入。登记TEST-LEGACY-001，不自动修改竞品功能或测试预期。恢复UI与预览AI专项均另行通过。
