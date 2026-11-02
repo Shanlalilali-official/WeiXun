@@ -1,5 +1,10 @@
 # 动态问题台账
 
+## PREVIEW-UI-014 · 2026-11-02 设计师测试页标题断行 · Resolved（本地静态布局）
+
+用户截图与 public/project1-prototype-v9.html:renderTopbar 确认连续标题在窄品牌栏末字落单。已改双行 span、次行 .82em、行距及图标禁止压缩；实际 diff、类型检查、内联脚本语法、tsup、harness-check 和 diff --check 通过。Corepack pnpm9下载因 DNS 不通受阻，改用现有依赖直接执行相同工具；完整 ESLint 与 Next build 长时间无完成输出后中止，未记为通过。未做浏览器视觉验收、服务重启或部署。不改数据、会话、业务规则。
+
+
 ## HANDOVER-002 ZIP 中文文件名编码
 
 - 状态：Resolved（打包工具修复）；最后检查：2026-10-30。

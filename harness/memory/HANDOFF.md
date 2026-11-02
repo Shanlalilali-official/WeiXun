@@ -1,5 +1,10 @@
 # 工作交接
 
+## 2026-11-02 测试页标题分行
+
+本批仅 projects/public/project1-prototype-v9.html 的顶部品牌标题与样式：首行项目一、第二行单单位内部竞标，副标题保留；不修改外部原型或历史交接包。实际 diff、类型检查、内联脚本语法、tsup、harness-check 和 diff --check 通过。Corepack pnpm9下载因 DNS 不通受阻，改用现有依赖直接执行相同工具；完整 ESLint 与 Next build 长时间无完成输出后中止，未记为通过。未做浏览器视觉验收、服务重启或部署。
+
+
 ## 2026-10-30 全量项目交接入口
 
 先读 docs/handover/README.md、DELIVERY_REPORT.md、DATA_RESTORE.md及页面/API清单。本批保存此前未提交的客户活动与系统评测功能，增加无密钥备份/恢复/打包工具，不改业务规则。真实源数据已完整读取PostgREST发现的27表672行与1 bucket35对象，最终副本为仓库外 outputs/WeiXun-supabase-export-20261030-v2；首次失败副本不交付。35对象哈希核验、12专项、类型/完整lint/production build通过；未真实AI调用、未写原数据库、未恢复目标或部署。压缩包包含外部原始业务资料和当前非敏感配置模板，依赖/构建缓存/密钥不含；完整性与Git号以包内MANIFEST/git-metadata及包外receipt为准。
