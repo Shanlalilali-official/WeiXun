@@ -1,0 +1,29 @@
+{
+  "checkedAt": "2026-11-06T08:08:48.987Z",
+  "variants": [
+    {
+      "file": "01-作战简报.html",
+      "curatedCombinationsChecked": 12,
+      "desktop": "1440x1000",
+      "mobile": "390x844",
+      "passed": true
+    },
+    {
+      "file": "02-商务工作台.html",
+      "curatedCombinationsChecked": 12,
+      "desktop": "1440x1000",
+      "mobile": "390x844",
+      "passed": true
+    },
+    {
+      "file": "03-行业场景.html",
+      "curatedCombinationsChecked": 12,
+      "desktop": "1440x1000",
+      "mobile": "390x844",
+      "passed": true
+    }
+  ],
+  "externalRequests": [],
+  "errors": [],
+  "passed": true
+}

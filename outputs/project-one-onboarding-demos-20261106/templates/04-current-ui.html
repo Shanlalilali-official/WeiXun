@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>项目一 · 现有界面开场示例</title>
+  <style>
+    :root {
+      --bg: #eff3f9;
+      --text: #17223a;
+      --muted: #68758c;
+      --line: #dbe4f0;
+      --blue: #2f6bff;
+      --blue-deep: #2258dd;
+      --card: #fff;
+      --shadow: 0 18px 54px rgba(24, 43, 77, .18);
+      --radius: 16px;
+      --ease: cubic-bezier(.22, .9, .28, 1);
+    }
+    * { box-sizing: border-box; }
+    html, body { min-width: 320px; min-height: 100%; margin: 0; color: var(--text); font-family: Inter, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+    body { min-height: 100vh; background: var(--bg); font-size: 14px; }
+    button, select { font: inherit; }
+    button { cursor: pointer; }
+    [hidden] { display: none !important; }
+    :focus-visible { outline: 3px solid rgba(47, 107, 255, .35); outline-offset: 2px; }
+    .game-backdrop { position: fixed; inset: 0; background: center top / cover no-repeat url("__GAME_BACKDROP__"); }
+    .game-backdrop::after { position: absolute; inset: 0; background: rgba(239, 243, 249, .2); content: ""; }
+    .modal-backdrop { position: fixed; inset: 0; z-index: 1; display: grid; place-items: center; overflow: auto; padding: 18px; background: rgba(23, 34, 58, .36); backdrop-filter: blur(5px); }
+    .dialog-shell { display: flex; width: min(820px, calc(100vw - 36px)); max-height: min(920px, calc(100dvh - 36px)); flex-direction: column; overflow: hidden; border: 1px solid rgba(255, 255, 255, .85); border-radius: var(--radius); background: #fff; box-shadow: var(--shadow); }
+    body[data-layout="compact"] .dialog-shell { width: min(680px, calc(100vw - 36px)); }
+    body[data-layout="split"] .dialog-shell { width: min(980px, calc(100vw - 36px)); }
+    .modal-head { display: flex; min-height: 68px; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 18px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, #f7faff, #fff); }
+    .head-brand, .head-tools { display: flex; min-width: 0; align-items: center; gap: 11px; }
+    .brand-mark { position: relative; display: grid; width: 38px; height: 38px; flex: none; place-items: center; border-radius: 11px; background: linear-gradient(150deg, #4f8dff, #2258dd); color: #fff; font-size: 26px; line-height: 1; font-weight: 900; box-shadow: 0 6px 14px rgba(47, 107, 255, .25); }
+    .brand-mark-glyph { position: relative; z-index: 1; }
+    .opening-ring { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+    .opening-ring circle { fill: none; stroke: rgba(232, 241, 255, .9); stroke-width: 1.25; stroke-linecap: round; stroke-dasharray: 107 107; stroke-dashoffset: 107; animation: opening-ring-draw 1.2s cubic-bezier(.22, .9, .28, 1) 0s 1 both; }
+    .head-copy strong, .head-copy span { display: block; }
+    .head-copy strong { font-size: 15px; line-height: 1.35; }
+    .head-copy span { margin-top: 2px; color: var(--muted); font-size: 12px; }
+    .head-tools { justify-content: flex-end; }
+    .sample-mark { flex: none; border: 1px solid var(--line); border-radius: 999px; background: #fff; padding: 6px 10px; color: #526987; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .motion-toggle { border: 1px solid var(--line); border-radius: 10px; background: linear-gradient(180deg, #fff, #f5f8fc); padding: 8px 10px; color: #405777; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .motion-toggle[aria-pressed="true"] { border-color: #9eb8eb; background: #edf4ff; color: #275bc4; }
+    .stepper { display: flex; align-items: center; gap: 8px; padding: 11px 20px; border-bottom: 1px solid #e8eef6; background: #fff; }
+    .step-item { display: flex; min-width: 0; align-items: center; gap: 8px; color: #8190a5; font-size: 13px; font-weight: 700; }
+    .step-number { display: grid; width: 25px; height: 25px; flex: none; place-items: center; border: 1px solid #d5dfeb; border-radius: 50%; background: #f6f8fb; color: #718097; font-size: 11px; }
+    .step-item[data-active="true"] { color: #245bd0; }
+    .step-item[data-active="true"] .step-number { border-color: var(--blue); background: var(--blue); color: #fff; box-shadow: 0 0 0 4px rgba(47, 107, 255, .12); }
+    .step-connector { width: clamp(22px, 8vw, 68px); height: 1px; flex: none; background: #dce5f1; }
+    .step-count { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .dialog-scroll { min-height: 0; flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; padding: 18px 20px; overscroll-behavior: contain; scrollbar-gutter: stable; }
+    .screen-title { margin: 0; font-size: 21px; line-height: 1.35; letter-spacing: .01em; }
+    .screen-lead { margin: 7px 0 0; color: #52647e; font-size: 14px; line-height: 1.65; }
+    .select-layout { display: grid; gap: 14px; }
+    .welcome-panel, .selector-panel, .brief-card, .people-panel, .details-card, .ready-panel { border: 1px solid var(--line); border-radius: var(--radius); background: linear-gradient(180deg, #fff, #fbfdff); box-shadow: 0 5px 16px rgba(30, 75, 135, .055); }
+    .welcome-panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 280px); align-items: center; gap: 18px; padding: 16px 18px; border: 1px solid transparent; background: linear-gradient(145deg, #fff, #f8fbff 75%) padding-box, linear-gradient(115deg, #dbe7fb, #aac5f6 52%, #e5ecf8) border-box; box-shadow: 0 7px 22px rgba(38, 84, 155, .08), 0 0 28px rgba(108, 158, 255, .08); }
+    .welcome-copy { min-width: 0; }
+    .welcome-kicker { display: inline-flex; align-items: center; gap: 7px; margin-bottom: 7px; color: #4771b6; font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+    .welcome-kicker::before { width: 15px; height: 2px; border-radius: 99px; background: linear-gradient(90deg, #2f6bff, #91b6ff); content: ""; }
+    .welcome-panel .screen-title { color: #172f5c; }
+    .welcome-panel .screen-lead { max-width: 440px; }
+    .welcome-illustration { display: grid; min-width: 0; height: 180px; place-items: center; overflow: hidden; margin: 0; border: 1px solid rgba(211, 226, 249, .9); border-radius: 14px; background: radial-gradient(ellipse at 50% 48%, rgba(255, 255, 255, .92), rgba(235, 243, 255, .8) 72%), linear-gradient(135deg, #f8fbff, #e9f1ff); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 5px 14px rgba(49, 91, 157, .09); }
+    .welcome-illustration { position: relative; }
+    .welcome-illustration img { position: absolute; inset: 4px; display: block; width: calc(100% - 8px); height: calc(100% - 8px); min-width: 0; min-height: 0; object-fit: contain; object-position: center; }
+    .selector-panel { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 16px; }
+    .field { min-width: 0; }
+    .field label { display: block; margin-bottom: 7px; color: #283e61; font-size: 14px; font-weight: 800; }
+    .field select { width: 100%; min-height: 46px; border: 1px solid #cbd8e9; border-radius: 11px; background: linear-gradient(180deg, #fff, #f8fafd); padding: 9px 12px; color: var(--text); font-size: 14px; }
+    .field select:focus { border-color: #6593e8; outline: 0; box-shadow: 0 0 0 3px rgba(47, 107, 255, .12); }
+    .field select:disabled { cursor: not-allowed; background: #f3f6fa; color: #8793a5; }
+    .field-hint { min-height: 34px; margin: 7px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .selection-summary { grid-column: 1 / -1; margin: 0; border: 1px solid #d9e6f8; border-radius: 11px; background: #f5f9ff; padding: 10px 12px; color: #526987; font-size: 13px; line-height: 1.55; }
+    .dialog-footer { display: flex; min-height: 66px; flex: none; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 20px; border-top: 1px solid #e5ebf3; background: #fff; }
+    .footer-note { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .button-row { display: flex; flex: none; align-items: center; gap: 9px; }
+    .button { min-height: 40px; border: 1px solid #d5deeb; border-radius: 10px; background: linear-gradient(180deg, #fff, #f5f8fc); padding: 8px 14px; color: var(--text); font-size: 13px; font-weight: 800; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 2px 6px rgba(24, 43, 77, .05); transition: border-color .2s var(--ease), background-color .2s var(--ease), box-shadow .2s var(--ease); }
+    .button:hover:not(:disabled) { border-color: #b9cbe6; background: #fff; box-shadow: 0 7px 16px rgba(28, 54, 102, .1); }
+    .button-primary { border-color: #2b64ee; background: linear-gradient(180deg, #4080ff, #2b64ee 60%, #2355d6); color: #fff; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 7px 18px rgba(47, 107, 255, .28); }
+    .button-primary:hover:not(:disabled) { border-color: #2355d6; background: linear-gradient(180deg, #4a86ff, #2f69f2 60%, #2658dc); }
+    .button:disabled { cursor: not-allowed; opacity: .48; }
+    .brief-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 14px; }
+    .brief-top .screen-title { color: #172f5c; }
+    .client-name { display: block; margin-top: 2px; color: #264d91; font-size: 15px; }
+    .brief-tags { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+    .brief-tag { display: inline-flex; align-items: center; min-height: 27px; border: 1px solid #dce6f3; border-radius: 999px; background: #f7faff; padding: 4px 9px; color: #526987; font-size: 12px; white-space: nowrap; }
+    .brief-description { margin: 10px 0 0; color: #52647e; font-size: 14px; line-height: 1.65; }
+    .brief-card, .people-panel, .details-card { margin-top: 14px; padding: 14px; }
+    .section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 0 0 10px; }
+    .section-heading h3 { margin: 0; color: #20385f; font-size: 15px; }
+    .section-heading span { color: var(--muted); font-size: 12px; }
+    .facts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 9px; }
+    body[data-layout="compact"] .facts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .overview { margin-top: 14px; }
+    .fact-card { min-width: 0; border: 1px solid #e0e8f2; border-radius: 12px; background: #fbfdff; padding: 11px; }
+    .fact-label, .fact-value, .fact-note { display: block; }
+    .fact-label { color: var(--muted); font-size: 12px; }
+    .fact-value { margin-top: 4px; color: #243f70; font-size: 14px; line-height: 1.45; }
+    .fact-note { margin-top: 4px; color: #718097; font-size: 12px; line-height: 1.45; }
+    .overview-copy { margin: 0; color: #465b79; font-size: 14px; line-height: 1.7; }
+    .goal-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .goal-chip { border: 1px solid #dce6f3; border-radius: 999px; background: #f5f9ff; padding: 5px 9px; color: #42628f; font-size: 12px; }
+    .people-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; }
+    body[data-layout="compact"] .people-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .person-card { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 8px; border: 1px solid #dce6f3; border-radius: 13px; background: linear-gradient(180deg, #fff, #fbfdff); padding: 11px; }
+    .person-photo { display: block; width: 64px; height: 64px; flex: none; border: 2px solid #e6effc; border-radius: 50%; background: #e7f0ff; object-fit: cover; object-position: center 27%; box-shadow: 0 3px 9px rgba(32, 75, 140, .13); }
+    .person-copy { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+    .person-name { color: #233d66; font-size: 14px; font-weight: 850; line-height: 1.4; overflow-wrap: anywhere; }
+    .person-role { display: block; overflow: visible; color: var(--muted); font-size: 12px; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
+    .details-toggle { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; border: 0; background: transparent; padding: 0; color: #285fc0; font-size: 14px; font-weight: 800; text-align: left; }
+    .details-toggle span:last-child { color: #7c8ba1; font-size: 18px; }
+    .details-panel { display: grid; gap: 12px; margin-top: 13px; }
+    .detail-section { border-top: 1px solid #e7edf5; padding-top: 11px; }
+    .detail-section h3 { margin: 0 0 8px; color: #294875; font-size: 14px; }
+    .detail-table { display: grid; grid-template-columns: minmax(95px, .32fr) minmax(0, 1fr); gap: 7px 12px; margin: 0; }
+    .detail-table dt { color: var(--muted); font-size: 13px; }
+    .detail-table dd { display: flex; min-width: 0; justify-content: space-between; gap: 8px; margin: 0; color: #405777; font-size: 13px; line-height: 1.55; }
+    .detail-visibility { flex: none; color: #718097; font-size: 11px; white-space: nowrap; }
+    .detail-visibility.is-public { color: #41659a; }
+    .ready-panel { padding: 23px; text-align: center; }
+    .ready-icon { display: grid; width: 46px; height: 46px; place-items: center; margin: 0 auto 12px; border: 1px solid #d5e2f4; border-radius: 14px; background: #f1f6ff; color: var(--blue); font-size: 22px; font-weight: 800; }
+    .ready-panel .screen-title { color: #172f5c; }
+    .ready-panel p { max-width: 540px; margin: 9px auto 0; color: #52647e; font-size: 14px; line-height: 1.7; }
+    .ready-note { border: 1px solid #d9e6f8; border-radius: 11px; background: #f5f9ff; padding: 10px 12px; color: #526987 !important; }
+    body[data-layout="split"] .select-layout { grid-template-columns: minmax(250px, .85fr) minmax(0, 1.15fr); align-items: stretch; }
+    body[data-layout="split"] .selector-panel { grid-template-columns: 1fr; align-content: start; }
+    body[data-layout="split"] .selection-summary { grid-column: auto; }
+    body[data-layout="split"] .welcome-panel { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 190px; align-content: center; gap: 15px; padding: 22px; }
+    body[data-layout="split"] .welcome-illustration { height: 190px; }
+    body[data-layout="split"] .people-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+    body[data-layout="compact"] .dialog-scroll { padding: 15px 16px; }
+    body[data-layout="compact"] .welcome-panel { grid-template-columns: minmax(0, 1fr) minmax(180px, 220px); gap: 13px; padding: 13px 15px; }
+    body[data-layout="compact"] .welcome-illustration { height: 148px; }
+    body[data-layout="compact"] .welcome-panel .screen-title { font-size: 19px; }
+    body[data-layout="compact"] .selector-panel { grid-template-columns: 1fr; gap: 9px; padding: 13px; }
+    body[data-layout="compact"] .field-hint { min-height: 0; }
+    body[data-layout="compact"] .brief-card, body[data-layout="compact"] .people-panel, body[data-layout="compact"] .details-card { margin-top: 10px; padding: 11px; }
+    body[data-layout="compact"] .person-card { padding: 9px; }
+    @keyframes opening-ring-draw { to { stroke-dashoffset: 0; } }
+    .reduce-motion [data-opening-animation] { animation-duration: .01ms !important; stroke-dashoffset: 0 !important; }
+    .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    @media (max-width: 760px) {
+      .modal-backdrop { place-items: start center; padding: 10px; }
+      .dialog-shell, body[data-layout="compact"] .dialog-shell, body[data-layout="split"] .dialog-shell { width: 100%; max-height: calc(100dvh - 20px); }
+      .modal-head { min-height: 60px; padding: 10px 12px; }
+      .head-brand, .head-tools { gap: 7px; }
+      .brand-mark { width: 34px; height: 34px; }
+      .head-copy strong { font-size: 14px; }
+      .head-copy span { font-size: 11px; }
+      .sample-mark { padding: 5px 7px; font-size: 11px; }
+      .motion-toggle { padding: 7px 8px; font-size: 11px; }
+      .stepper { gap: 6px; padding: 9px 13px; }
+      .step-item { gap: 6px; font-size: 12px; }
+      .step-number { width: 23px; height: 23px; }
+      .step-connector { width: 18px; }
+      .dialog-scroll { padding: 13px; }
+      .screen-title { font-size: 19px; }
+      .screen-lead, .brief-description { font-size: 13px; }
+      .welcome-panel, body[data-layout="compact"] .welcome-panel, body[data-layout="split"] .welcome-panel { grid-template-columns: minmax(0, 1fr) minmax(108px, 36%); grid-template-rows: auto; gap: 10px; padding: 12px; }
+      .welcome-panel .screen-title { font-size: 18px; }
+      .welcome-panel .screen-lead { margin-top: 5px; line-height: 1.5; }
+      .welcome-kicker { margin-bottom: 5px; font-size: 10px; letter-spacing: .04em; }
+      .welcome-illustration, body[data-layout="compact"] .welcome-illustration, body[data-layout="split"] .welcome-illustration { height: 112px; border-radius: 11px; }
+      .selector-panel, body[data-layout="split"] .selector-panel { grid-template-columns: 1fr; gap: 10px; padding: 13px; }
+      .selection-summary, body[data-layout="split"] .selection-summary { grid-column: auto; }
+      body[data-layout="split"] .select-layout { grid-template-columns: 1fr; }
+      .brief-top { grid-template-columns: 1fr; gap: 9px; }
+      .brief-tags { justify-content: flex-start; }
+      .facts-grid, body[data-layout="compact"] .facts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .people-grid, body[data-layout="compact"] .people-grid, body[data-layout="split"] .people-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .dialog-footer { align-items: flex-start; padding: 10px 13px; }
+      .footer-note { max-width: 42%; font-size: 11px; }
+      .button-row { gap: 6px; }
+      .button { min-height: 38px; padding: 7px 10px; font-size: 12px; }
+      .detail-table { grid-template-columns: 1fr; gap: 3px; }
+      .detail-table dd { margin-bottom: 6px; }
+    }
+    @media (max-width: 390px) {
+      .modal-head { align-items: flex-start; }
+      .head-tools { flex-direction: column; align-items: flex-end; }
+      .sample-mark { align-self: flex-end; }
+      .step-count { display: none; }
+      .facts-grid, body[data-layout="compact"] .facts-grid { grid-template-columns: 1fr; }
+      .dialog-footer { flex-direction: column; }
+      .footer-note { max-width: none; }
+      .button-row { width: 100%; justify-content: flex-end; }
+      .person-card { padding: 9px; }
+    }
+    @media (max-width: 360px) {
+      .welcome-panel, body[data-layout="compact"] .welcome-panel, body[data-layout="split"] .welcome-panel { grid-template-columns: minmax(0, 1fr) minmax(94px, 34%); gap: 8px; padding: 10px; }
+      .welcome-illustration, body[data-layout="compact"] .welcome-illustration, body[data-layout="split"] .welcome-illustration { height: 104px; }
+      .welcome-panel .screen-title { font-size: 17px; }
+      .welcome-panel .screen-lead { font-size: 12px; }
+    }
+    @media (max-height: 680px) {
+      .modal-backdrop { place-items: start center; padding-top: 8px; padding-bottom: 8px; }
+      .dialog-shell, body[data-layout="compact"] .dialog-shell, body[data-layout="split"] .dialog-shell { max-height: calc(100dvh - 16px); }
+      .modal-head { min-height: 56px; }
+      .dialog-scroll { padding-top: 12px; padding-bottom: 12px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+      [data-opening-animation] { animation-delay: 0ms !important; stroke-dashoffset: 0 !important; }
+    }
+  </style>
+</head>
+<body data-layout="__LAYOUT__">
+  <div class="game-backdrop" aria-hidden="true" inert></div>
+  <div class="modal-backdrop">
+    <main class="dialog-shell" data-demo-dialog role="dialog" aria-modal="true" aria-labelledby="select-title">
+      <header class="modal-head">
+        <div class="head-brand">
+          <span class="brand-mark" aria-hidden="true">
+            <span class="brand-mark-glyph">▦</span>
+            <svg class="opening-ring" viewBox="0 0 38 38" aria-hidden="true" focusable="false">
+              <circle data-opening-animation cx="19" cy="19" r="17"></circle>
+            </svg>
+          </span>
+          <div class="head-copy"><strong>项目一开场</strong><span>销售作战台</span></div>
+        </div>
+        <div class="head-tools">
+          <span class="sample-mark">界面示例</span>
+          <button class="motion-toggle" type="button" data-motion-toggle aria-pressed="false">减少动画</button>
+        </div>
+      </header>
+      <nav class="stepper" aria-label="开场步骤">
+        <div class="step-item" data-step-indicator="select" data-active="true" aria-current="step"><span class="step-number">1</span><span>选择方向</span></div>
+        <span class="step-connector" aria-hidden="true"></span>
+        <div class="step-item" data-step-indicator="brief" data-active="false"><span class="step-number">2</span><span>客户简报</span></div>
+        <span class="step-count" data-current-step>01 / 02</span>
+      </nav>
+      <div class="dialog-scroll" data-dialog-scroll>
+        <section data-step="select">
+          <div class="select-layout">
+            <article class="welcome-panel">
+              <div class="welcome-copy">
+                <span class="welcome-kicker">客户沟通 · 项目协同</span>
+                <h1 class="screen-title" id="select-title" data-screen-title tabindex="-1">欢迎进入项目一</h1>
+                <p class="screen-lead">从需求沟通与项目协作出发，了解客户情境。选择客户行业和我方主营业务，查看对应的公开项目简报。</p>
+              </div>
+              <figure class="welcome-illustration">
+                <img data-onboarding-hero src="__ONBOARDING_HERO__" alt="写实商务会议场景，项目团队围绕资料沟通协作" width="420" height="280">
+              </figure>
+            </article>
+            <div class="selector-panel" aria-label="选择客户方向">
+              <div class="field">
+                <label for="industry-select">客户所属行业</label>
+                <select id="industry-select" data-industry-select>
+                  <option value="">请选择客户行业</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="business-select">我方主营业务</label>
+                <select id="business-select" data-business-select aria-describedby="business-guidance" disabled>
+                  <option value="">请先选择客户行业</option>
+                </select>
+                <p class="field-hint" id="business-guidance" data-business-hint aria-live="polite">先选择客户行业，再选择我方主营业务。</p>
+              </div>
+              <p class="selection-summary" data-selection-summary role="status" aria-live="polite">尚未选择。请选择客户行业和主营业务后继续。</p>
+            </div>
+          </div>
+        </section>
+        <section data-step="brief" hidden>
+          <div class="brief-top">
+            <div>
+              <h1 class="screen-title" data-screen-title data-project-name tabindex="-1">客户项目简报</h1>
+              <strong class="client-name" data-client-name>客户名称</strong>
+            </div>
+            <div class="brief-tags"><span class="brief-tag" data-industry-label>客户行业</span><span class="brief-tag" data-business-label>主营业务</span></div>
+          </div>
+          <p class="brief-description" data-project-description>选择方向后查看对应的客户项目简介。</p>
+          <section class="brief-card" aria-label="项目要点">
+            <div class="section-heading"><h3>项目要点</h3><span>公开简报</span></div>
+            <div class="facts-grid" data-brief-facts></div>
+            <div class="overview" data-project-overview></div>
+          </section>
+          <section class="people-panel" aria-label="客户项目联系人">
+            <div class="section-heading"><h3>项目联系人</h3><span>五位联系人</span></div>
+            <div class="people-grid" data-people-grid></div>
+          </section>
+          <section class="details-card">
+            <button class="details-toggle" type="button" data-open-details aria-expanded="false" aria-controls="details-panel"><span>查看项目公开详情</span><span aria-hidden="true">⌄</span></button>
+            <div class="details-panel" id="details-panel" data-details-panel hidden></div>
+          </section>
+        </section>
+        <section data-step="ready" hidden>
+          <div class="ready-panel">
+            <span class="ready-icon" aria-hidden="true">✓</span>
+            <h1 class="screen-title" data-screen-title tabindex="-1">开场示例已准备好</h1>
+            <p>客户项目简报已展示。你可以返回查看公开资料，或回到选择步骤浏览其他演示组合。</p>
+            <p class="ready-note">本页为开场演示，不会创建真实对局。</p>
+          </div>
+        </section>
+      </div>
+      <footer class="dialog-footer" data-step-footer="select">
+        <p class="footer-note">选择行业与主营业务后查看客户简报。</p>
+        <div class="button-row"><button class="button button-primary" type="button" data-continue disabled>查看客户简报</button></div>
+      </footer>
+      <footer class="dialog-footer" data-step-footer="brief" hidden>
+        <p class="footer-note">先浏览项目摘要与联系人资料。</p>
+        <div class="button-row"><button class="button" type="button" data-back>返回修改</button><button class="button button-primary" type="button" data-start>开始训练</button></div>
+      </footer>
+      <footer class="dialog-footer" data-step-footer="ready" hidden>
+        <p class="footer-note">演示流程已结束。</p>
+        <div class="button-row"><button class="button" type="button" data-review>返回项目简报</button><button class="button button-primary" type="button" data-restart>返回选择</button></div>
+      </footer>
+    </main>
+  </div>
+  <!--DEMO_DATA-->
+  <!--DEMO_ENGINE-->
+</body>
+</html>

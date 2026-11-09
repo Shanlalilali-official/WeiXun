@@ -1,0 +1,74 @@
+{
+  "checkedAt": "2026-11-06T09:39:52.703Z",
+  "variants": [
+    {
+      "file": "04-现有UI-标准弹窗.html",
+      "rootTokens": {
+        "bg": "#eff3f9",
+        "blue": "#2f6bff"
+      },
+      "industryOptionsChecked": 8,
+      "curatedCombinationsChecked": 12,
+      "fakeIndustryOptionsChecked": 100,
+      "viewports": [
+        "1440x1000",
+        "1280x720",
+        "390x844"
+      ],
+      "screenshots": [
+        "04-current-ui-select.png",
+        "04-current-ui-brief.png",
+        "04-current-ui-details.png",
+        "04-current-ui-mobile.png"
+      ],
+      "passed": true
+    },
+    {
+      "file": "05-现有UI-紧凑弹窗.html",
+      "rootTokens": {
+        "bg": "#eff3f9",
+        "blue": "#2f6bff"
+      },
+      "industryOptionsChecked": 8,
+      "curatedCombinationsChecked": 12,
+      "fakeIndustryOptionsChecked": 100,
+      "viewports": [
+        "1440x1000",
+        "1280x720",
+        "390x844"
+      ],
+      "screenshots": [
+        "05-current-ui-select.png",
+        "05-current-ui-brief.png",
+        "05-current-ui-details.png",
+        "05-current-ui-mobile.png"
+      ],
+      "passed": true
+    },
+    {
+      "file": "06-现有UI-分栏弹窗.html",
+      "rootTokens": {
+        "bg": "#eff3f9",
+        "blue": "#2f6bff"
+      },
+      "industryOptionsChecked": 8,
+      "curatedCombinationsChecked": 12,
+      "fakeIndustryOptionsChecked": 100,
+      "viewports": [
+        "1440x1000",
+        "1280x720",
+        "390x844"
+      ],
+      "screenshots": [
+        "06-current-ui-select.png",
+        "06-current-ui-brief.png",
+        "06-current-ui-details.png",
+        "06-current-ui-mobile.png"
+      ],
+      "passed": true
+    }
+  ],
+  "externalRequests": [],
+  "errors": [],
+  "passed": true
+}
