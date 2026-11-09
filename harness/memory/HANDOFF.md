@@ -1,5 +1,65 @@
 # 工作交接
 
+## 2026-11-09 最新：分栏开场已接入系统
+
+正式从 /start 进入项目一，/game 对空存档自动开场，有旧档先选续玩或新建。实际测试 /project-one-preview 的开始与重开共用 public/project-one-onboarding.js。目录由 api/game-data/project-one-onboarding 投影自服务端 12 个场景，正式与测试各自通过既有会话存储持久化所选版本。NPC 底稿仅由服务端按角色加入上下文。专项、构建和浏览器证据在 evidence/project-one-onboarding-2026-11-09/。远程数据库、真实模型和部署未验收，批量生成入库仍待完成。既有 P1-TEST-003 仍可复现。
+
+## 2026-11-06 最新：写实照片静止、一次开场图形、只下发公开资料
+
+用户嫌插画风与晃动，明确要写实；根误把动画举例理解成loading，用户立即否定，随后选“弹窗打开时的一次性图形动画”。没有加载/延迟/等待实现。04共享模板照片静止、弹窗不位移，logo描环1.2s一次，开场即可选择。内置image_gen原图assets/onboarding-hero-photo-v2.png，提示词IMAGE-PROMPT-PHOTO-V2.md，构建v2 WebP内嵌。旧AI插画保留历史不再引用。
+
+Luna分别拥有template/engine和public模块，根实际Review：demo-public.js为12场景显式公开白名单，重写公开概要/审计facts与detail源值，未知状态/场景/内容漂移阻止发布；内部现状/接口/阈值/待沟通正文不进HTML，原demo-data底稿仍留source。engine仅公开状态二次过滤。根canary、build、真实Chrome36组合、100目录项、1440/1280短屏/390、静止/一次动画/无切页延迟/嵌入JSON与DOM检查通过；QA排序假设已修，0HTTP/脚本错误。证据VERIFICATION-PHOTO-PUBLIC.md、verification-current-ui.json。当前index与ZIP更新；正式/实际测试产品、DB/模型/存档不改。用户催尽快交付，不再做额外视觉变体。
+
+## 2026-11-06 最新：现有UI图文与轻动效增强已交付
+
+用户认可第二轮现有UI/下拉方向，要求稍丰富与AI配图。内置image_gen生成1张通用蓝白3D客户沟通图，原图assets/onboarding-hero-ai.png，完整提示词IMAGE-PROMPT.md，约65KB WebP内嵌；共用04模板加图文欢迎区/渐变细边/柔光和轻入场/4px浮动，减少动效可停。Luna独占模板，根读实际文件修正grid导致配图裁切并加实际decode/contain/动效CSS验收。最终build和Chrome每款12组合/100额外目录项/三视口/图像/返回详情键盘等通过，0HTTP/脚本错误。最新证据VERIFICATION-ILLUSTRATED.md/verification-current-ui.json和截图，index/ZIP亦更新。保留原生下拉/资料/五人/逻辑，不改正式或实际测试产品、DB、模型配置或现有对局；后续集成仍待用户明确范围，不能声称AI客户项目库已生成。
+
+## 2026-11-06 最新：按当前UI与下拉重做，第二轮待选
+
+用户否定首轮三款，必须适配现在UI且行业/业务下拉。已按真实project1-prototype-v9.html最终样式和隔离截图，输出04-现有UI-标准弹窗.html、05紧凑、06分栏；共用04-current-ui.html及同一data/engine，背景当前UI静态截图内嵌，两个原生select支持长目录。新index仅推荐04–06，首轮及index-first-round.html保留历史，不能把首轮技术通过说成用户认可。
+
+三名Luna各拥有engine/build、template、verify脚本，根实际检查并修正动态图片计数、图标换行和四项事实卡。最终build/verify-current-ui.cjs与比较页浏览器检查通过：36条组合路径、每款临时100行业option几何尺寸不变、1440/1280×720/390、图片/详情返回/完成/键盘动效，0HTTP/脚本错误。证据输出目录VERIFICATION-CURRENT-UI.md/verification-current-ui.json/screenshots；源脚本、照片、背景均内嵌，用户可离线打开。仅outputs+台账，产品与用户对局未改；后续等待第二轮布局选择再定真实产品与AI库范围。保留原未提交产品修改。
+
+## 2026-11-06 三款开场HTML已交付，等待视觉选择
+
+最新用户已授权开始示例HTML，覆盖下方同日“HTML尚未获准”的历史。输出outputs/project-one-onboarding-demos-20261106：index比较入口和三份约244KB可独立离线打开的HTML（作战简报/商务工作台/行业场景），source共用8行业6业务12组合与交互，照片内嵌；资料只覆盖虚构客户侧公开需求，不替玩家生成供方能力。五人姓名照片保留、职务按行业示例映射；公开技术详情与待沟通事项可展开，不泄露隐藏指标或人物诉求。
+
+4个Luna按共用engine/data/build及三个模板独占分工，根检查实际文件并修正跨模板DOM/详情dl、首屏提示、返回图标、人物与事实卡版式。最终build及Chrome逐款12组合、1440/390、五图解码、选择清除/保留/返回/完成、详情/Escape、焦点循环/动效检查通过；0外部请求/0脚本错误。证据输出目录VERIFICATION.md/verification.json/screenshots；verify.cjs可重现，make-gallery.cjs生成比较入口。不要把本地示例误报为正式玩家/实际测试端已接入，未动产品服务/DB/模型/存档；P1-ONBOARDING-005仍In Progress。下一步待用户选择视觉，再落实正式和实际测试同一版本场景源及专业AI底稿生成发布，不把演示目录自动当最终目录。原有未提交产品修改全部保留。
+
+## 2026-11-06 行业/业务开场方案待定稿（历史：HTML阶段已在上方更新）
+
+最新明确：以现有client-info R1–R17项目信息表为骨架做更完整、专业的AI版客户底稿，支撑技术细节对话。方案已加技术环境/接口/规模/实施/验收、常见追问依据与按角色披露；开场只摘要，不把高层变技术专家，不生成供方能力，缺失事实待核实。尚未生成或改表，先前HTML阶段仍按用户要求待方案定稿。
+
+最新澄清优先：只生成客户侧资料，我方产品、案例、能力由玩家真实公司带入。业务选择是客户需求匹配标签，不生成我方档案、不新增必填公司资料。方案中原“我方资料”条目已删除替换；后续HTML勿展示虚构我方方案/优势。原目录、职务适配等未由本澄清自动批准。
+
+最新用户请求先定方案再做HTML。本轮仅读源码/查公开资料并保存plans/PROJECT_ONE_INDUSTRY_ONBOARDING_PROPOSAL.md，P1-ONBOARDING-005为Open。已有分类/模板表与生成JSON能力可复用，缺生成入库/发布/版本快照及两端场景消费。远程库存未知，不宣称空库或已生成。建议两步大弹窗、8行业/6数字化业务、五人姓名照片固定/职务适配、开始训练后计时、已存档直接续关；这些仍待用户确认。下一步先确认主营范围及人物策略，再做3款同内容可交互HTML，不提前接真实DB/模型或改正式游戏。保留所有此前未提交变更。
+
+## 2026-11-06 王德福引荐流程已落地
+
+最新状态覆盖下方同日“尚未实施”的探索历史。两端已有“通过引荐联系”入口、use_referral权威记录与共享资格、微信/普通邀约确定接受、正式行程解析、旧档/刷新/幂等/渠道和模型误判保护。无介绍人NPC，不加关系分/免费线索，不代替准备和实际拜访。
+
+用户费用澄清：“发送沿用原成本，邀约不额外扣点”。本路径chargedActionPoints只累计实际原发送/附件成本；预览按会话/引荐ID结算水位恢复对账，不重复扣/退款；reuseOnly低AP只能复用。已有电话内邀约0增量。原非引荐预览AP体系不全局重构。
+
+主线程独立4项引荐专项与相关回归、最终tsc/完整lint/最终Next+tsup/harness/diff通过；独立review最后重跑UI确认无剩余本批P1/P2。完整证据evidence/project-one-referral-2026-11-06/VERIFICATION.md。旧test-preview-test-controls:255仍0!==21，P1-TEST-003保留。未真实登录浏览器/AI/远程DB联调、未部署/启动/提交；现有JSON支持扩展无新SQL。重启项目刷新两端后可用，保留此前quiz/报告等修改。
+
+## 2026-11-06 入场职务和引荐提示
+
+本批修改正式game页/CSS、测试public HTML与五人人物主档：开局职务、仅王德福可引荐标识及用途，facts去掉本人职务前缀但保留职责/关系与其他信息原获取方式。新增test-project-one-entry-info.ts覆盖真实state搜索和2AP。用户澄清引荐为系统外的人介绍玩家认识王德福，介绍人不需要出现，不是王德福介绍张建国。后续状态流尚未实施；探索见plans/PROJECT_ONE_REFERRAL_EXPLORATION.md，建议targetNpcId=P1-003/sourceKind=external的服务端授权接王德福微信/有效预约，不再各自随机拒绝，不新增介绍人NPC/支持度，不伪造已拜访。成本/有效期/次数未定。保留原有quiz相关修改，不提交/部署，不自动重启用户已关闭服务。最终验证结果见本批evidence记录。
+
+最终主线程验证：相关专项、TypeScript、稳定文件全量lint、最终Next生产构建、tsup与harness/diff检查通过。旧test-preview-test-controls快照断言失败，经撤去本批渲染改动的内存反证仍失败，P1-TEST-003待查；不将它记为通过。pnpm9缓存不可用，用既有本地二进制；build/provider因沙箱子进程/本机HTTP限制在沙箱外重试通过。未浏览器完整对局或远程联调。
+
+## 2026-11-06 最终测评报告需求
+
+本轮核验：主线程已复核实际源码、原表与参考PDF，审阅新增规范及治理diff；harness-check与治理文档diff --check通过。仅文档修改，未运行应用构建或业务测试。
+
+用户提供17页测评PDF，要求最终报告类似且指标基本对齐原表B/C。已核对PDF总览、4–17内容页及Excel B/C，目标规范见 `harness/plans/SALES_ASSESSMENT_REPORT_SPEC.md`，SCORE-REPORT-003为Open。PDF六维与Excel不同，以Excel为指标依据、PDF作呈现参考；当前五维不可直接改名冒充六维。
+
+后续先设计行为证据、A指标取值/统计、B/C计算/版本、等级及缺证据处理，再接结果报告。可复用final_report、证据账本、拜访纪要、review及打印；现存metrics-data目录/公式文本不等于已接通报告引擎。本批未改业务代码、原Excel、DB、旧分数或服务，保留原有未提交修改；规范完成不等于评分迁移或PDF生成完成。
+
+## 2026-11-03 再次全灰本地修复完成
+
+quiz_busy_recurrence worker拥有public HTML/quiz-ui，根改account-isolation的长timeout假timer，已实际diff复核并独立6项回归、旧轮询内存反证、tsc、完整lint+最终定向lint、最后Next+tsup构建通过。证据activity-quiz-busy-recurrence-2026-11-03.md。服务按用户要求保持关闭，运行时需启动并刷新才用新脚本，未真实浏览器/DB/模型联调。当前新修复未commit/push，原c4ee984不回退。
+
 ## 2026-11-02 连续活动同步修复本地完成
 
 worker修改public HTML、quiz-ui与preview-recovery-ui，根已读实际请求/恢复/按钮与测试diff，独立6项专项、tsc、Next+tsup构建通过。完整lint无错误、harness与diffcheck通过，020本地完成。未实际用户浏览器/DB验证或服务重启部署。GET恢复仍可走原到期settlement，不描述为绝对纯只读。保护原未提交改动。

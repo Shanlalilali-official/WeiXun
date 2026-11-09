@@ -11,6 +11,7 @@ import {
 import { getProgressionMultiplier } from '@/lib/game/acceptance-mode';
 import { assertMultiplayerRoomRunning } from '@/lib/game/multiplayer';
 import { getProjectOneNpc } from '@/lib/game/project-one';
+import { resolveProjectOneOnboarding } from '@/lib/game/project-one-onboarding';
 import { appendCustomerActivityDiagnostic, applyCustomerActivityEvaluation, completeCustomerActivityProposalDetection, createProjectOneState, getGameOutcome, normalizeProjectOneState, synchronizeProjectTimer, toPlayerVisibleGameOutcome, type GameOutcome, type GameRuntimeState } from '@/lib/game/state';
 import type { GameReview } from '@/lib/contracts/game';
 import {
@@ -72,12 +73,14 @@ const REVIEW_EVENT_TYPES = [
   'npc.handoff.sent',
   'npc.handoff.received',
   'contact.completed',
+  'referral.granted',
   'wechat.accepted',
   'wechat.rejected',
   'wechat.pending',
   'wechat.later',
   'appointment.pending',
   'appointment.accepted',
+  'appointment.reused',
   'appointment.countered',
   'appointment.cancelled',
   'appointment.missed',
@@ -241,8 +244,12 @@ export async function createGameSession(
   scenarioCode: string,
   progressionMultiplier = 1,
   replaceExisting = false,
+  onboardingScenarioId?: string,
 ) {
   if (scenarioCode !== 'project-1') throw new Error('SCENARIO_NOT_SUPPORTED');
+  // Resolve before the replacement RPC so an invalid choice cannot remove an existing save.
+  const onboardingScenario = onboardingScenarioId ? resolveProjectOneOnboarding(onboardingScenarioId) : undefined;
+  if (onboardingScenarioId && !onboardingScenario) throw new Error('ONBOARDING_SCENARIO_NOT_FOUND');
   const supabase = createServerClient();
   const { data: scenario, error: scenarioError } = await supabase
     .from('project_scenarios')
@@ -257,7 +264,7 @@ export async function createGameSession(
     : null);
   if (!resolvedScenario) throw new Error('SCENARIO_NOT_CONFIGURED');
 
-  const initialState = createProjectOneState(progressionMultiplier);
+  const initialState = createProjectOneState(progressionMultiplier, undefined, onboardingScenario);
   const { data, error } = await supabase.rpc('create_or_replace_game_session', {
     p_user_id: userId,
     p_user_name: displayName,
@@ -1336,18 +1343,20 @@ const REVIEW_EVENT_FIELDS: Record<string, readonly string[]> = {
   'npc.handoff.sent': ['sourceEventId', 'promiseKey', 'sourceNpcId', 'targetNpcId', 'summary'],
   'npc.handoff.received': ['sourceEventId', 'sourceNpcId', 'targetNpcId', 'summary'],
   'contact.completed': ['npcId', 'channel', 'outcome'],
-  'wechat.accepted': ['npcId', 'status'],
-  'wechat.rejected': ['npcId', 'status'],
-  'wechat.pending': ['npcId', 'status'],
-  'wechat.later': ['npcId', 'status'],
+  'referral.granted': ['npcId', 'referralId', 'sourceKind'],
+  'wechat.accepted': ['npcId', 'status', 'alreadyAdded', 'chargedActionPoints'],
+  'wechat.rejected': ['npcId', 'status', 'chargedActionPoints'],
+  'wechat.pending': ['npcId', 'status', 'chargedActionPoints'],
+  'wechat.later': ['npcId', 'status', 'chargedActionPoints'],
   'appointment.pending': [
-    'npcId', 'appointmentId', 'status', 'channel', 'extractedFields', 'defaultedFields', 'conditionCount',
+    'npcId', 'appointmentId', 'status', 'channel', 'extractedFields', 'defaultedFields', 'conditionCount', 'chargedActionPoints',
   ],
   'appointment.accepted': [
-    'npcId', 'appointmentId', 'action', 'conditionCount', 'conditionsSatisfied',
+    'npcId', 'appointmentId', 'action', 'conditionCount', 'conditionsSatisfied', 'chargedActionPoints',
   ],
+  'appointment.reused': ['npcId', 'appointmentId', 'status', 'chargedActionPoints'],
   'appointment.countered': [
-    'npcId', 'appointmentId', 'status', 'channel', 'extractedFields', 'defaultedFields', 'conditionCount',
+    'npcId', 'appointmentId', 'status', 'channel', 'extractedFields', 'defaultedFields', 'conditionCount', 'chargedActionPoints',
   ],
   'appointment.cancelled': ['npcId', 'appointmentId', 'action', 'conditionCount', 'conditionsSatisfied'],
   'appointment.missed': ['npcId', 'appointmentId', 'status'],

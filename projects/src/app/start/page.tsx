@@ -199,7 +199,9 @@ export default function StartPage() {
               {available && <span className="absolute inset-x-8 top-0 h-[2px] bg-gradient-to-r from-transparent via-[#2f6bff] to-transparent opacity-0 transition-opacity group-hover:opacity-100" />}
               <div className="flex items-start justify-between gap-2"><span className="text-[9px] font-black tracking-[.14em] text-[#8795aa]">PROJECT 0{project.projectId ?? index + 1}</span><span className={`rounded-full border px-2 py-1 text-[9px] font-extrabold ${available ? 'border-[#c8ecdf] bg-[#e6f8f1] text-[#0f7a59]' : 'border-[#e2eaf4] bg-[#f1f5fa] text-[#68758c]'}`}>{available ? '可开始' : '暂未开放'}</span></div>
               <h2 className="mt-3 text-base font-bold text-[#17223a]">{project.name}</h2><div className="mt-1 flex items-center gap-1.5 text-[10px] text-[#68758c]"><span>{project.difficultyLabel}</span><span className="text-[#d9951a]">{'★'.repeat(project.difficulty)}<span className="text-[#d8e0eb]">{'★'.repeat(5 - project.difficulty)}</span></span></div>
-              <div className="mt-4 text-2xl font-black leading-none text-[#b97a10]">{project.budget}<span className="ml-1 text-[11px] font-semibold text-[#8795aa]">万预算</span></div>
+              {available
+                ? <div className="mt-4 text-sm font-semibold text-[#52627c]">按客户行业和主营业务匹配场景</div>
+                : <div className="mt-4 text-2xl font-black leading-none text-[#b97a10]">{project.budget}<span className="ml-1 text-[11px] font-semibold text-[#8795aa]">万预算</span></div>}
               <button onClick={() => available && setSelected(project)} disabled={!available} className={`mt-4 w-full rounded-[10px] border px-3 py-2.5 text-[11px] font-extrabold transition ${available ? 'border-[#2b64ee] bg-gradient-to-b from-[#4080ff] via-[#2b64ee] to-[#2355d6] text-white shadow-[0_7px_18px_rgba(47,107,255,.24)] hover:-translate-y-0.5 hover:shadow-[0_10px_24px_rgba(47,107,255,.34)]' : 'cursor-not-allowed border-[#d5deeb] bg-[#f5f8fc] text-[#96a3b5]'}`}>{available ? '查看项目一' : '暂未开放'}</button>
             </article>;
           })}
@@ -245,6 +247,11 @@ export default function StartPage() {
                 {/* 内容区 - 可滚动 */}
                 <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">
 
+                {selected.id === 'project-1' && effectivePlayMode === 'solo' ? (
+                  <p className="mb-4 rounded-xl border border-[#e9eff7] bg-[#f7fafd] p-4 text-xs leading-6 text-[#52627c]">
+                    进入项目一后可以继续已有存档。开始新游戏时，请选择客户行业和你的主营业务，再查看对应的项目简报和联系人。
+                  </p>
+                ) : <>
                 {/* 项目信息 */}
                 <div className="mb-4 rounded-xl border border-[#e9eff7] bg-[#f7fafd] p-4">
                   <div className="mb-3 text-[10px] font-bold uppercase tracking-wider text-[#68758c]">项目信息</div>
@@ -317,6 +324,8 @@ export default function StartPage() {
                     </div>
                   </div>
                 </div>
+
+                </>}
 
                 {canSelectMode && <div className="mx-5 mb-2 rounded-xl border border-[#e2eaf4] bg-[#f7fafd] p-4 sm:mx-6">
                   <div className="text-[11px] font-bold text-[#33445f]">游戏模式</div>

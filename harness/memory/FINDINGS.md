@@ -1,5 +1,56 @@
 # 调查发现
 
+## 2026-11-09 两端开场验证与远程边界
+
+正式入口创建对局和实际测试创建会话均在确认开始时提交场景 ID。公开状态投影和预览恢复投影剥离内部底稿。浏览器测试使用实际生产构建、实际公开目录 API 与模拟的存档响应，验证同一场景、失败重试、续玩和移动端。远程场景库只读尝试连接失败，不能确认库存。Next 生产构建和本地回环浏览器验证在自动审批通过后完成。
+
+## 2026-11-06 公开信息不能只隐藏待确认标签
+
+实查原demo-data的overview/facts也含内部与待核实清单，原HTML嵌入了完整场景JSON。已加显式公开白名单模块并构建仅投影，engine再防御过滤；source底稿保留不分发。根canary验证私密字段/新条目不默认公开、未知状态和场景集合漂移失败；浏览器验证嵌入数据与白名单完全一致且DOM无待确认内容。另QA原生ArrowDown曾依赖scenario排序，公开投影排序改变后需按实际business option顺序选首项；修正后全通过。
+
+## 2026-11-06 配图已实际生成并本地内嵌，grid图片容器须限制尺寸
+
+内置image_gen产出1536×1024图已保存workspace assets/onboarding-hero-ai.png及提示词，不是手写SVG或外网占位图。Sharp仅缩放/编码为1000px WebP约65KB用于离线内嵌。根实际截图发现grid子img百分比高度可被固有尺寸撑开并裁切，改明确容器内绝对定位+contain+浮动留白后重验通过；减少动效CSS实际使动画时长归零级。证据输出目录VERIFICATION-ILLUSTRATED.md。无真实客户资料或对局外传。
+
+## 2026-11-06 现有UI适配须以最终渲染为准，原生下拉可扩充长目录
+
+用户否定首轮独立配色与平铺卡片。当前project1-prototype-v9.html存在后部CSS覆盖，仅读顶部tokens不足还原最终前端；根在隔离浏览器屏蔽fetch捕获真实默认game作参考。第二轮直接沿用该视觉体系，根真实Chrome验证新增100个行业option不改变下拉选择页几何尺寸，且无资料测试项不生成场景。最终04–06逐款12组合/三视口验收通过，证据输出目录VERIFICATION-CURRENT-UI.md。原生目录扩充不等于100份AI场景资料已生成。
+
+## 2026-11-06 独立开场原型的最终浏览器证据
+
+仅输出目录制作三份共用数据/引擎的离线HTML。主线程实际构建与Chrome file://逐款12组合、1440/390验收通过，0外部请求/0脚本错误；比较页6个目标链接和手机无横向溢出亦通过。根Review纠正了“动态人物节点在构建时按静态img计数”的无效校验，并在浏览器实际核验五张图片解码；修正dl包装与三个主题CSS契约、动效开关方向和截图过渡帧。证据outputs/project-one-onboarding-demos-20261106/VERIFICATION.md。所有场景为本地虚构演示，不构成远程AI生成或数据库状态证据；没有新的产品链路完成结论。
+
+## 2026-11-06 用户所指现有项目信息表已定位
+
+`projects/src/app/designer/client-info/page.tsx:15`及`lib/designer/excel-data.ts:114`有甲方项目R1–R17，含规模/采购/投运/技术难点与要求/预算/验收等。页面当前默认state与Excel本地草稿不等同已接入NPC的服务端事实库。用户要求以此骨架生成专业客户档案，方案已补通用/业务技术字段、按角色知情和公开范围、数字/约束一致性与技术追问依据；远程内容未读、未执行生成。
+
+## 2026-11-06 定制场景不能只换开场文案
+
+只读核查已有industries/product_categories/scenario_templates定义，旧setup硬编码混有行业和组织性质，生成API不持久化。正式开局仅取场景ID/难度后仍使用固定state/人物/通知；preview另有固定MockData与同一静态通知；模板目前主要被竞品配置使用。故需同一客户快照贯通背景、预算、NPC语境和竞品/场景约束，不能只在弹窗显示行业化文案；我方方案由玩家真实公司带入。行业覆盖医院/学校时旧主管副总经理等职务需要明确适配策略。远程库存和部署未实查。来源与路径见本轮方案。
+
+## 2026-11-06 引荐独立Review的实际缺口
+
+shared helper/预览service注入误判实测证实P1-REFERRAL-004：非拜访“邀请”误放行、明确取消落到AI后仍建accepted预约；以及0AP已有预约被HTML canAfford挡住、成功commit丢包后本地AP漏扣。初次普通正向parity不能覆盖这些边界。采用明确reuseOnly受控复用、服务端引荐费用总额和本地单次水位对账；保留电话已接通零额外邀约费用。此为用户两端一致要求内的必要修复，不代表重构其他测试端AP/计时或已做远程验收。
+
+## 2026-11-06 引荐端到端实现前复核
+
+正式命令route已统一鉴权、归属、CAS、HMAC seed和事务提交，simulation_state JSON保留扩展字段；预览session同样有JSON/短租约/请求哈希/命令幂等。现有SQL command/event字段是text，未见需为本次新增JSON字段单独加表。正式chat在邀约识别前先做回复/已读不回AI判断，若只改state接受概率仍可能被沉默或模型失败挡住；预览同理还依赖AI给appointment草稿。本轮需把已授权普通邀请接入确定性路径，连通真实入口、响应投影和刷新恢复，不能只测纯函数。远程数据库/持久提示词本批未实查或修改。
+
+## 2026-11-06 入场与引荐实际链路
+
+正式game卡片未展示已有title；实际测试通过iframe加载public HTML，其人物卡显示联系人、公开搜索为DemoOnlyApi，故本批需同步HTML与主档。用户澄清本轮方向是系统外介绍人→王德福，介绍人不用出现；既有王德福referralNpcIds=['P1-001']是不同方向的旧配置，不能误用。正式/测试契约和状态无外部引荐记录，request_wechat/invite仍按原联系/概率，测试也无可信外部引荐凭据。默认“不提供私下引荐”指向外转介，不据此自动改用户提示词。探索见plans/PROJECT_ONE_REFERRAL_EXPLORATION.md；远程配置/数据库未实查。
+
+## 2026-11-06 报告参考与实际指标链路
+
+- 用户PDF为17页图像型文档，文字抽取为空；已本地渲染并查看总览和4–17页完整内容。第4页六维是执行力、决策力、能量、赋能、情商、提升空间；原Excel C1–C6是分析决策、建立关系、价值呈现、情商、提问挖掘、提升成长，不能视为同一指标体系。
+- 原表B0–B40共41条、C0–C14共15条，包含风格项、汇总项和备用项。备用项不能因目录存在就输出伪造有效分数。C0原表错误与D-052已采用新规则须区分，原表未改。
+- 实查 `metrics-data.ts` B/C字典、`lib/designer/excel-data.ts`模板导出、`metrics-validation.ts`及`game/state.ts:getGameOutcome`：目录/公式文本存在，但实际结算沿五维及40/30/20/10组件。结果页可复用证据账本、拜访纪要、复盘和打印；本次未发现B/C端到端报告生成。
+- 本轮仅需求规范和治理记录，未实查外部数据库、未重启服务、未生成真实学员分数。来源路径、哈希和建议见 `harness/plans/SALES_ASSESSMENT_REPORT_SPEC.md`。
+
+## 2026-11-03 前次解灰覆盖局限与慢请求复发根因
+
+019覆盖请求结束后的disabled恢复，未覆盖后台sync自身一直等待。旧源码VM内存反证：推进2.501秒触发sync并defer，requestBusy=true且fieldset/四选项disabled。新版答题自动sync统一跳过，必要GET30秒与活动30/complete180秒截止清理；已commit但响应挂起场景重试先GET核对，不重复答案POST。根review修掉retry generation漏声明、previousRecoveryError捕获晚于清空的缺陷。VM recovery envelope.version按真实协议固定1，previewVersion另行递增；account-isolation假timer不能把30秒timeout立刻执行。所有验证是本地脚本，非截图运行态或真实模型/数据库联调。
+
 ## 2026-11-02 活动同步恢复缺口已复现
 
 真实HTML脚本VM复现第二活动pending同步409：底层apiCall返回null、错误被泛化、无弹窗恢复入口。另同key只更新start/submit/quiz，新增retry若不单独更新会在syncBusy清理后残灰，错误文本清除也不会更新DOM。修复把error纳入key并更新各retry，409沿既有GET有界恢复；503保留具体服务端错误，普通失败可实际点击重试到成功，dirty草稿恢复保留。GET可能走原到期任务结算，并非绝对无副作用；不重放活动写命令。只有8月旧本地log，没有截图时刻请求，不能断言本次实际HTTP原因。

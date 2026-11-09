@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { emailAttachmentSchema } from '@/lib/contracts/ai';
+import { projectOneOnboardingIdSchema } from '@/lib/contracts/project-one-onboarding';
 
 const customerActivityCommandBaseSchema = {
   taskId: z.string().trim().min(1).max(512),
@@ -39,6 +40,7 @@ export type CustomerActivityMutation = z.infer<typeof customerActivityMutationSc
 export const createGameSessionRequestSchema = z.object({
   scenarioCode: z.literal('project-1'),
   replaceExisting: z.boolean().default(false),
+  onboardingScenarioId: projectOneOnboardingIdSchema.optional(),
 });
 
 export const relationshipActionRequestSchema = z.object({
@@ -82,6 +84,12 @@ export const requestWechatGameCommandSchema = z.object({
   ...commandBaseSchema,
   type: z.literal('request_wechat'),
   payload: z.object({ npcId: npcIdSchema, message: textSchema }),
+});
+
+export const useReferralGameCommandSchema = z.object({
+  ...commandBaseSchema,
+  type: z.literal('use_referral'),
+  payload: z.object({ npcId: z.literal('P1-003') }),
 });
 
 export const inviteGameCommandSchema = z.object({
@@ -276,6 +284,7 @@ export const proposeBidRuleGameCommandSchema = z.object({
 export const gameCommandSchema = z.discriminatedUnion('type', [
   contactGameCommandSchema,
   requestWechatGameCommandSchema,
+  useReferralGameCommandSchema,
   inviteGameCommandSchema,
   updateAppointmentGameCommandSchema,
   prepareGameCommandSchema,

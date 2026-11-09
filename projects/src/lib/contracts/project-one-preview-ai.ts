@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { publicCustomerActivityQuizSchema } from '@/lib/game/customer-activity-quiz';
+import { externalReferralSchema } from '@/lib/game/external-referral';
+import { projectOneOnboardingIdSchema, projectOnePublicBriefSchema } from '@/lib/contracts/project-one-onboarding';
 
 export const previewNpcIdSchema = z.enum(['P1-001', 'P1-002', 'P1-003', 'P1-004', 'P1-005']);
 export type PreviewNpcId = z.infer<typeof previewNpcIdSchema>;
@@ -7,6 +9,9 @@ export type PreviewNpcId = z.infer<typeof previewNpcIdSchema>;
 export const previewChannelSchema = z.enum(['email', 'wechat', 'work_phone']);
 export const previewVisitTaskSchema = z.enum(['提问', '质疑', '挖坑']);
 export const previewInvitationStatusSchema = z.enum(['none', 'accepted', 'rejected', 'later']);
+export const previewExternalReferralsSchema = z.object({
+  'P1-003': externalReferralSchema.optional(),
+}).strict();
 export const previewAppointmentStatusSchema = z.enum(['pending', 'accepted', 'rejected', 'later', 'completed', 'cancelled']);
 export const previewTestAppointmentStatusSchema = z.enum(['none', 'pending', 'accepted', 'rejected', 'later', 'completed', 'cancelled']);
 export const previewEndReasonSchema = z.enum([
@@ -70,8 +75,12 @@ const previewAppointmentAdjustmentsSchema = z.array(previewAppointmentAdjustment
 });
 
 export const previewAiRequestSchema = z.discriminatedUnion('action', [
+  commonRequestSchema.extend({ action: z.literal('start_session'), onboardingScenarioId: projectOneOnboardingIdSchema }).superRefine((value, context) => {
+    if (value.previewSessionId) context.addIssue({ code: z.ZodIssueCode.custom, message: '开始新场景不能复用既有预览会话', path: ['previewSessionId'] });
+  }),
+  commonRequestSchema.extend({ action: z.literal('use_referral'), npcId: z.literal('P1-003') }),
   commonRequestSchema.extend({ action: z.literal('plan'), text: textSchema, npcId: previewNpcIdSchema.optional() }),
-  commonRequestSchema.extend({ action: z.literal('message'), npcId: previewNpcIdSchema, text: textSchema, channel: previewChannelSchema, attachment: optionalAttachmentSchema }),
+  commonRequestSchema.extend({ action: z.literal('message'), npcId: previewNpcIdSchema, text: textSchema, channel: previewChannelSchema, attachment: optionalAttachmentSchema, reuseOnly: z.boolean().optional() }),
   commonRequestSchema.extend({ action: z.literal('wechat_request'), npcId: previewNpcIdSchema, text: textSchema }),
   commonRequestSchema.extend({ action: z.literal('phone_connect'), npcId: previewNpcIdSchema, text: textSchema }),
   commonRequestSchema.extend({ action: z.literal('visit_preparation'), npcId: previewNpcIdSchema, text: textSchema }),
@@ -161,7 +170,10 @@ export type PreviewNpcTestState = z.infer<typeof previewNpcTestStateSchema>;
 export const previewAiResponseSchema = z.object({
   previewSessionId: z.string().regex(/^[A-Za-z0-9_-]{20,128}$/),
   version: z.number().int().min(0),
-  action: z.enum(['plan', 'message', 'wechat_request', 'phone_connect', 'visit_preparation', 'brief_visit', 'start_visit', 'visit_turn', 'end_visit', 'test_adjust_npcs', 'test_adjust_appointments', 'customer_activity_start', 'customer_activity_save', 'customer_activity_submit', 'customer_activity_answer', 'customer_activity_complete_quiz', 'customer_activity_end_conversation', 'customer_activity_sync', 'reset']),
+  action: z.enum(['start_session', 'use_referral', 'plan', 'message', 'wechat_request', 'phone_connect', 'visit_preparation', 'brief_visit', 'start_visit', 'visit_turn', 'end_visit', 'test_adjust_npcs', 'test_adjust_appointments', 'customer_activity_start', 'customer_activity_save', 'customer_activity_submit', 'customer_activity_answer', 'customer_activity_complete_quiz', 'customer_activity_end_conversation', 'customer_activity_sync', 'reset']),
+  /** The browser only receives the public brief; the dossier remains server-side. */
+  projectOneBrief: projectOnePublicBriefSchema.optional(),
+  referrals: previewExternalReferralsSchema.optional(),
   content: z.string().max(2_000).nullable().optional(),
   /** Message delivery state. The internal reason for a read-without-reply is never returned here. */
   responseAction: previewMessageResponseActionSchema.optional(),
@@ -177,6 +189,10 @@ export const previewAiResponseSchema = z.object({
   appointments: z.array(previewAppointmentSchema).max(5).optional(),
   attachment: attachmentResultSchema.optional(),
   wechatAccepted: z.boolean().optional(),
+  alreadyAdded: z.boolean().optional(),
+  appointmentReused: z.boolean().optional(),
+  /** This response used the referral ledger for its AP cost (possibly zero for a reuse). */
+  referralCostRecorded: z.boolean().optional(),
   strengths: z.array(z.string().max(300)).max(4).optional(),
   risks: z.array(z.string().max(300)).max(4).optional(),
   nextStep: z.string().max(300).optional(),

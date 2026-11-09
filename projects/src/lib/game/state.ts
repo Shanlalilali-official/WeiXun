@@ -1,8 +1,18 @@
 import type { EmailAttachment, NpcTurnEvaluation } from '@/lib/contracts/ai';
+import { projectOneOnboardingSnapshotSchema, projectOnePublicBriefSchema, type ProjectOneOnboardingSnapshot, type ProjectOnePublicBrief } from '@/lib/contracts/project-one-onboarding';
 import type { ProjectOneVisitTask } from '@/lib/designer/project-one-five-person';
 import { PROJECT_ONE_FIVE_PERSON_NPCS } from '@/lib/designer/project-one-five-person';
 import { verifyNpcEvaluationSources } from '@/lib/ai/npc-evaluation-sources';
 import type { GameCommand } from '@/lib/contracts/game';
+import {
+  canUseExternalReferralForInvitation,
+  canUseExternalReferralForWechat,
+  chargeExternalReferral,
+  grantExternalReferral,
+  hasExternalReferral,
+  readExternalReferrals,
+  type ExternalReferralMap,
+} from '@/lib/game/external-referral';
 import {
   CUSTOMER_ACTIVITY_CONVERSATION_MAX_LENGTH,
   CUSTOMER_ACTIVITY_CONVERSATION_MAX_MESSAGES,
@@ -478,6 +488,10 @@ export const PROJECT_TIMER_RECOVERY_ACTION_POINTS = 5;
 
 export interface GameRuntimeState {
   scenarioCode: string;
+  /** Server-only frozen source material selected while creating this save. */
+  onboardingScenario?: ProjectOneOnboardingSnapshot;
+  /** Public projection of onboardingScenario, safe for player API responses. */
+  projectOneBrief?: ProjectOnePublicBrief;
   progressionMultiplier: number;
   currentRound: number;
   maxRounds: number;
@@ -522,6 +536,8 @@ export interface GameRuntimeState {
   outcomeEvidence: OutcomeEvidenceLedger;
   complianceRisks: ComplianceRiskEvent[];
   publicResearch: Record<string, GamePublicResearchRecord>;
+  /** An out-of-game introduction that has been used to establish contact. */
+  referrals: ExternalReferralMap;
   competitorState: CompetitorRuntimeState;
   competitorClaims: CompetitorClaimRecord[];
   submissionReady: boolean;
@@ -624,6 +640,7 @@ export type PlayerVisibleGameState = Omit<
   | 'customerActivities'
   | 'customerActivityDetectionQueue'
   | 'customerActivityDiagnostics'
+  | 'onboardingScenario'
 > & {
   /** Five player-facing expressions derived from hidden relationship values. */
   npcExpressions: Record<string, PlayerVisibleNpcExpression>;
@@ -652,6 +669,8 @@ export interface GiftCommandEvaluation {
 }
 
 export interface ExecuteGameCommandOptions {
+  /** Trusted server wall-clock used for persisted grant timestamps. */
+  now?: number;
   giftEvaluation?: GiftCommandEvaluation;
   /** Trusted server-side competitor proposal; invalid values use the normal deterministic fallback. */
   competitorStageAction?: CompetitorStageActionCandidate;
@@ -1368,6 +1387,15 @@ function recoverTerminalRoomEndQuizzes(value: unknown, terminalRoomEnd: boolean)
 
 /** Pure legacy migration: no Date.now() and no wall-clock phase advancement. */
 export function normalizeProjectOneState(state: ProjectOneStateInput): GameRuntimeState {
+  const onboardingCandidate = state.onboardingScenario
+    ? projectOneOnboardingSnapshotSchema.safeParse(state.onboardingScenario)
+    : undefined;
+  const onboardingScenario = onboardingCandidate?.success ? onboardingCandidate.data : undefined;
+  const publicBriefCandidate = state.projectOneBrief
+    ? projectOnePublicBriefSchema.safeParse(state.projectOneBrief)
+    : undefined;
+  const projectOneBrief = onboardingScenario?.brief
+    ?? (publicBriefCandidate?.success ? publicBriefCandidate.data : undefined);
   const contacts = Object.fromEntries(PROJECT_ONE_NPCS.map((npc) => {
     const existing = state.npcContacts?.[npc.id];
     return [npc.id, {
@@ -1411,6 +1439,8 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
   const customerActivityDiagnostics = normalizeCustomerActivityDiagnostics(state.customerActivityDiagnostics);
   const normalized: GameRuntimeState = {
     ...state,
+    onboardingScenario,
+    projectOneBrief,
     progressionMultiplier: state.progressionMultiplier ?? 1,
     // Stage fields remain stable save/audit aliases. New progression is driven
     // exclusively by projectTimer, never by a client-controlled phase.
@@ -1462,6 +1492,7 @@ export function normalizeProjectOneState(state: ProjectOneStateInput): GameRunti
     outcomeEvidence: state.outcomeEvidence ?? { publicValue: [], personalBenefit: [] },
     complianceRisks: state.complianceRisks ?? [],
     publicResearch: normalizePublicResearchRecords(state.publicResearch),
+    referrals: readExternalReferrals(state.referrals),
     competitorState: normalizeCompetitorState(state.competitorState),
     competitorClaims: normalizePlayerVisibleCompetitorClaims(state.competitorClaims),
     submissionReady: false,
@@ -1523,9 +1554,14 @@ export function reconcileNarrativeDiscoveries(state: GameRuntimeState, assistant
   return { ...state, unlockedNpcIds: deriveUnlockedNpcIds(state.unlockedClues) };
 }
 
-export function createProjectOneState(progressionMultiplier = 1, _legacyNow?: number): GameRuntimeState {
+export function createProjectOneState(
+  progressionMultiplier = 1,
+  _legacyNow?: number,
+  onboardingScenario?: ProjectOneOnboardingSnapshot,
+): GameRuntimeState {
   const initial: ProjectOneStateInput = {
     scenarioCode: PROJECT_ONE_CODE,
+    ...(onboardingScenario ? { onboardingScenario, projectOneBrief: onboardingScenario.brief } : {}),
     progressionMultiplier,
     currentRound: 1,
     maxRounds: PROJECT_ONE_MAX_ROUNDS,
@@ -1543,6 +1579,7 @@ export function createProjectOneState(progressionMultiplier = 1, _legacyNow?: nu
     unlockedClues: [],
     conversationMemories: {},
     npcContacts: Object.fromEntries(PROJECT_ONE_NPCS.map((npc) => [npc.id, defaultContact(npc.id)])),
+    referrals: {},
     projectTimer: {
       durationMs: PROJECT_TIMER_DURATION_MS,
       elapsedMs: 0,
@@ -2397,6 +2434,8 @@ function playerVisibleNpcExpression(pleasantness: number): PlayerVisibleNpcExpre
 /** Never serialize hidden competitor progress or AI stage actions to a player. */
 export function toPlayerVisibleGameState(state: GameRuntimeState): PlayerVisibleGameState {
   const playerState = { ...state } as Partial<GameRuntimeState>;
+  // The dossier is server-only prompt context and must not cross a player API boundary.
+  delete playerState.onboardingScenario;
   delete playerState.npcAffinity;
   delete playerState.npcAttitudes;
   delete playerState.supplierSupport;
@@ -2415,6 +2454,7 @@ export function toPlayerVisibleGameState(state: GameRuntimeState): PlayerVisible
     // These records represent public facts the player explicitly searched;
     // never synthesize profiles for people whose search was not completed.
     publicResearch: normalizePublicResearchRecords(state.publicResearch),
+    referrals: readExternalReferrals(state.referrals),
     // Claims are NPC statements already heard by the player. Hidden competitor
     // pressure, position and stage actions remain in competitorState/actions.
     competitorClaims: normalizePlayerVisibleCompetitorClaims(state.competitorClaims),
@@ -2960,8 +3000,8 @@ function assertEveningVisitLimit(state: GameRuntimeState, appointment: GameAppoi
   if (alreadyScheduled) throw new Error('EVENING_VISIT_LIMIT_REACHED');
 }
 
-function resolveInvitationPayload(
-  state: GameRuntimeState,
+export function resolveInvitationPayload(
+  state: Pick<GameRuntimeState, 'currentRound'>,
   payload: Extract<GameCommand, { type: 'invite' }>['payload'],
 ) {
   const text = (payload.rawText || payload.purpose || '').trim();
@@ -3022,7 +3062,11 @@ function createAppointmentFromCommand(
   const emailAttachments = payload.emailAttachments ?? [];
   const resolved = resolveInvitationPayload(state, payload);
   const contact = state.npcContacts[payload.npcId];
-  if (!contact || contact.status === 'known' || (!contact.hasReplied && contact.status !== 'online')) {
+  const referred = hasExternalReferral(state.referrals, payload.npcId);
+  const referredInvitation = referred
+    && canUseExternalReferralForInvitation(state.referrals, payload.npcId, resolved.invitationText);
+  if (referred && !referredInvitation) throw new Error('EXTERNAL_REFERRAL_INVITATION_NOT_ELIGIBLE');
+  if (!contact || contact.status === 'known' || (!contact.hasReplied && contact.status !== 'online' && !referred)) {
     throw new Error('TWO_WAY_CONTACT_REQUIRED');
   }
   if (!state.unlockedNpcIds.includes(payload.npcId)) throw new Error('NPC_LOCKED');
@@ -3038,7 +3082,7 @@ function createAppointmentFromCommand(
     throw new Error('EMAIL_ATTACHMENT_NOT_AVAILABLE');
   }
   const chance = invitationChance(state, command);
-  const accepted = shouldNpcRespond(`${command.commandId}:accepted`, chance);
+  const accepted = referredInvitation || (!referred && shouldNpcRespond(`${command.commandId}:accepted`, chance));
   const countered = !accepted && shouldNpcRespond(`${command.commandId}:countered`, 65);
   const status: AppointmentStatus = accepted ? 'accepted' : countered ? 'countered' : 'rejected';
   const counteredStartMinute = resolved.startMinute;
@@ -3087,6 +3131,13 @@ function createAppointmentFromCommand(
     }],
   };
   return { state: next, appointment };
+}
+
+function findReusableAcceptedAppointment(
+  state: GameRuntimeState,
+  npcId: string,
+): GameAppointment | undefined {
+  return state.appointments.find((appointment) => appointment.npcId === npcId && appointment.status === 'accepted');
 }
 
 function prepareForVisit(
@@ -3538,6 +3589,29 @@ export function executeGameCommand(
   let eventPayload: Record<string, unknown> = { commandId: command.commandId };
 
   switch (command.type) {
+    case 'use_referral': {
+      const npcId = command.payload.npcId;
+      if (!state.unlockedNpcIds.includes(npcId)) throw new Error('NPC_LOCKED');
+      const alreadyGranted = hasExternalReferral(state.referrals, npcId);
+      const referrals = grantExternalReferral(state.referrals, npcId, command.commandId, options.now ?? Date.now());
+      const contact = state.npcContacts[npcId];
+      state = {
+        ...state,
+        referrals,
+        // Establish the introduction without manufacturing a reply or changing
+        // support, pleasantness, effective-contact evidence, or clue state.
+        npcContacts: {
+          ...state.npcContacts,
+          [npcId]: contact.status === 'known' ? { ...contact, status: 'connected' } : contact,
+        },
+      };
+      const referral = referrals['P1-003'];
+      if (!referral) throw new Error('EXTERNAL_REFERRAL_UNAVAILABLE');
+      result = { referral, alreadyGranted };
+      eventType = 'referral.granted';
+      eventPayload = { ...eventPayload, npcId, referralId: referral.id, sourceKind: 'external' };
+      break;
+    }
     case 'contact': {
       if (!state.unlockedNpcIds.includes(command.payload.npcId)) throw new Error('NPC_LOCKED');
       state = consumeCommunicationTime(state, command.payload.channel);
@@ -3567,12 +3641,28 @@ export function executeGameCommand(
       const npcId = command.payload.npcId;
       if (!state.unlockedNpcIds.includes(npcId)) throw new Error('NPC_LOCKED');
       const contact = state.npcContacts[npcId];
-      if (!contact || contact.status !== 'connected') throw new Error('NPC_NOT_CONNECTED');
-      if (contact.wechatStatus === 'accepted') throw new Error('WECHAT_ALREADY_ADDED');
-      state = consumeGameTime(state, 0, { pointCost: PROJECT_ONE_COMMUNICATION_POINTS.wechat });
+      if (!contact) throw new Error('NPC_NOT_CONNECTED');
+      if (contact.wechatStatus === 'accepted') {
+        result = { npcId, status: 'accepted', alreadyAdded: true };
+        eventType = 'wechat.accepted';
+        eventPayload = { ...eventPayload, npcId, status: 'accepted', alreadyAdded: true, chargedActionPoints: 0 };
+        break;
+      }
+      if (contact.status !== 'connected') throw new Error('NPC_NOT_CONNECTED');
+      const referred = hasExternalReferral(state.referrals, npcId);
+      const chargedActionPoints = PROJECT_ONE_COMMUNICATION_POINTS.wechat;
+      state = consumeGameTime(state, 0, { pointCost: chargedActionPoints });
+      if (referred) {
+        state = { ...state, referrals: chargeExternalReferral(state.referrals, npcId, chargedActionPoints) };
+      }
       const support = state.npcAttitudes[npcId]?.support ?? 35;
-      const accepted = shouldNpcRespond(`${command.commandId}:wechat`, 42 + Math.max(0, support - 35));
+      const referralWechatEligible = referred
+        && canUseExternalReferralForWechat(state.referrals, npcId, command.payload.message);
+      const accepted = referred
+        ? referralWechatEligible
+        : shouldNpcRespond(`${command.commandId}:wechat`, 42 + Math.max(0, support - 35));
       const wechatStatus: NpcContactState['wechatStatus'] = accepted ? 'accepted'
+        : referred ? 'rejected'
         : shouldNpcRespond(`${command.commandId}:pending`, 35) ? 'pending'
           : shouldNpcRespond(`${command.commandId}:later`, 50) ? 'later' : 'rejected';
       // Connect exactly once on acceptance. The resulting snapshot is the
@@ -3592,15 +3682,36 @@ export function executeGameCommand(
       };
       result = { npcId, status: wechatStatus };
       eventType = `wechat.${wechatStatus}`;
-      eventPayload = { ...eventPayload, npcId, status: wechatStatus };
+      eventPayload = { ...eventPayload, npcId, status: wechatStatus, chargedActionPoints };
       break;
     }
     case 'invite': {
+      const referredInvitation = canUseExternalReferralForInvitation(
+        state.referrals,
+        command.payload.npcId,
+        command.payload.rawText ?? command.payload.purpose ?? '',
+      );
+      const reusedAppointment = referredInvitation ? findReusableAcceptedAppointment(state, command.payload.npcId) : undefined;
+      if (reusedAppointment) {
+        result = { appointment: reusedAppointment, reused: true };
+        eventType = 'appointment.reused';
+        eventPayload = {
+          ...eventPayload,
+          npcId: reusedAppointment.npcId,
+          appointmentId: reusedAppointment.id,
+          status: reusedAppointment.status,
+          chargedActionPoints: 0,
+        };
+        break;
+      }
       const continuingActivePhoneCall = command.payload.channel === 'work_phone'
         && state.activePhoneCall?.npcId === command.payload.npcId;
+      const chargedActionPoints = continuingActivePhoneCall ? 0 : PROJECT_ONE_COMMUNICATION_POINTS[command.payload.channel];
       if (!continuingActivePhoneCall) state = consumeCommunicationTime(state, command.payload.channel);
       const created = createAppointmentFromCommand(state, command);
-      state = created.state;
+      state = referredInvitation && chargedActionPoints > 0
+        ? { ...created.state, referrals: chargeExternalReferral(created.state.referrals, command.payload.npcId, chargedActionPoints) }
+        : created.state;
       result = { appointment: created.appointment };
       eventType = `appointment.${created.appointment.status}`;
       eventPayload = {
@@ -3608,6 +3719,7 @@ export function executeGameCommand(
         appointmentId: created.appointment.id,
         status: created.appointment.status,
         channel: command.payload.channel,
+        chargedActionPoints,
         extractedFields: created.appointment.extractedFields ?? [],
         defaultedFields: created.appointment.defaultedFields ?? [],
         conditionCount: created.appointment.conditions.length,

@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
     const gameSessionId = searchParams.get('game_session_id');
     let npcAffinity: Record<string, number> = {};
     let personalInterestUnlocked = false;
+    let titlesByNpcId: Record<string, string> = {};
 
     if (gameSessionId) {
       const guard = authGuard(request);
@@ -20,6 +21,8 @@ export async function GET(request: NextRequest) {
         const gameSession = await getOwnedGameSession(gameSessionId, guard.session.userId);
         npcAffinity = gameSession.state.npcAffinity;
         personalInterestUnlocked = gameSession.state.unlockedClues.includes('personal_interest');
+        titlesByNpcId = Object.fromEntries((gameSession.state.onboardingScenario?.brief.people ?? [])
+          .map((person) => [person.id, person.title]));
       } catch {
         return NextResponse.json({ error: '对局不存在或无权访问' }, { status: 404 });
       }
@@ -30,7 +33,7 @@ export async function GET(request: NextRequest) {
         project_id: npc.projectId,
         category: npc.category,
         name: npc.name,
-        title: npc.title,
+        title: titlesByNpcId[npc.id] ?? npc.title,
         gender: npc.gender,
         age: npc.age,
         hometown: npc.hometown,

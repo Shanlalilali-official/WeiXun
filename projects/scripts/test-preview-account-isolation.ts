@@ -170,7 +170,12 @@ function createRuntime(options: {
     Event,
     Date,
     Math,
-    setTimeout: (callback: () => void) => { callback(); return 0; },
+    setTimeout: (callback: () => void, delay = 0) => {
+      // Run UI scheduling immediately without turning a request deadline into
+      // an immediate abort. Timeout behavior has its own controlled VM tests.
+      if (delay < 30_000) callback();
+      return 0;
+    },
     clearTimeout: () => undefined,
     setInterval: () => 0,
     clearInterval: () => undefined,

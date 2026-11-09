@@ -11,6 +11,7 @@ import { loadActivityDecisionConfigForMatching as loadActivityDecisionConfig } f
 import { DEFAULT_ACTIVITY_DECISION_CONFIG } from '@/lib/game/customer-activities';
 import { previewErrorDiagnosticFields, type PreviewErrorDiagnosticContext } from '@/lib/game/preview-error-diagnostics';
 import { getPreviewRecoveryResponse } from './handler';
+import { resolveProjectOneOnboarding } from '@/lib/game/project-one-onboarding';
 
 export const runtime = 'nodejs';
 
@@ -127,12 +128,25 @@ export async function POST(request: NextRequest) {
       npcId: 'npcId' in parsed.data ? parsed.data.npcId : undefined,
       commandId: parsed.data.commandId,
     };
+    // Resolve before acquire() so an unknown scenario never creates a durable
+    // session/command row. `start_session` is intentionally initial-only; its
+    // schema already rejects a supplied previewSessionId.
+    const onboardingSnapshot = parsed.data.action === 'start_session'
+      ? resolveProjectOneOnboarding(parsed.data.onboardingScenarioId)
+      : undefined;
+    if (parsed.data.action === 'start_session' && !onboardingSnapshot) {
+      return NextResponse.json({ error: '所选项目场景不存在或已下线，请重新选择。' }, { status: 400 });
+    }
     if (['test_adjust_npcs', 'test_adjust_appointments'].includes(parsed.data.action) && !isFastDebugEnabled()) {
       return NextResponse.json({ error: '测试调节仅在测试环境开放' }, { status: 403 });
     }
-    const promptConfig = await loadProjectOnePromptConfig()
-      .then((stored) => stored.config)
-      .catch(() => DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
+    // Creating a frozen scenario is deterministic and does not invoke a model;
+    // avoid an unrelated designer-config database read on this initial command.
+    const promptConfig = parsed.data.action === 'start_session'
+      ? DEFAULT_PROJECT_ONE_PROMPT_CONFIG
+      : await loadProjectOnePromptConfig()
+        .then((stored) => stored.config)
+        .catch(() => DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
     const closesCustomerActivityConversation = parsed.data.action === 'phone_connect'
       || parsed.data.action === 'visit_turn'
       || parsed.data.action === 'end_visit'
@@ -143,7 +157,7 @@ export async function POST(request: NextRequest) {
       : DEFAULT_ACTIVITY_DECISION_CONFIG;
     const execute = () => runWithFastTestObservability(
       guard.session!.userId,
-      () => previewAiService.executePersistent(guard.session!.userId, parsed.data, previewSessionRepository, promptConfig, activityDecisionConfig),
+      () => previewAiService.executePersistent(guard.session!.userId, parsed.data, previewSessionRepository, promptConfig, activityDecisionConfig, onboardingSnapshot),
     );
     const acceptsStream = request.headers.get('accept')?.includes('text/event-stream');
     const streamableAction = parsed.data.action === 'phone_connect'

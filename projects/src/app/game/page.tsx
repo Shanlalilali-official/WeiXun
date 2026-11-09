@@ -25,6 +25,9 @@ import {
   X,
 } from 'lucide-react';
 import { isCurrentPreparationType, type GamePublicResearchRecord, type GameRuntimeState } from '@/lib/game/state';
+import type { ProjectOnePublicBrief } from '@/lib/contracts/project-one-onboarding';
+import { loadProjectOneOnboarding } from '@/lib/game/load-project-one-onboarding';
+import { hasExternalReferral } from '@/lib/game/external-referral';
 import { isLegacyCompetitorPlaceholder, type CompetitorProfile } from '@/lib/contracts/competitors';
 import { CustomerActivityPlanner } from '@/components/customer-activity-planner';
 import { BID_RULE_PROPOSAL_COST } from '@/lib/game/bid-rules';
@@ -624,9 +627,11 @@ function GameInner() {
   const competitorSessionRef = useRef('');
   const competitorProfilesLoadedRef = useRef(false);
   const [savePickerReady, setSavePickerReady] = useState(false);
+  const [saveListLoaded, setSaveListLoaded] = useState(false);
   const [activeSaves, setActiveSaves] = useState<GameSaveView[]>([]);
   const [savePickerError, setSavePickerError] = useState('');
   const [loadingSave, setLoadingSave] = useState(false);
+  const [createdSessionId, setCreatedSessionId] = useState('');
   const [npcs, setNpcs] = useState<NpcProfile[]>([]);
   const [designerImageAssets, setDesignerImageAssets] = useState<DesignerImageAssetMap>({});
   const [selectedNpc, setSelectedNpc] = useState<string | null>(null);
@@ -680,6 +685,7 @@ function GameInner() {
   const commandBusyRef = useRef(false);
   const retryCommandRef = useRef<{ signature: string; commandId: string } | null>(null);
   const retryChatRef = useRef<{ signature: string; commandId: string } | null>(null);
+  const onboardingAutoOpenedRef = useRef(false);
 
   const refreshCustomerActivitiesAfter = (delayMs = 0) => window.setTimeout(() => {
     setCustomerActivityRefreshKey((current) => current + 1);
@@ -858,6 +864,10 @@ function GameInner() {
   const remainingAtSync = projectTimer ? timerRemainingAtServerProjection(projectTimer) : 1_200_000;
   const remainingGameTime = Math.max(0, remainingAtSync - localTimerElapsed);
   const coins = gameState?.actionPoints ?? 0;
+  // This is the persisted, public projection for the selected save. It is
+  // intentionally reset whenever a different server state is opened.
+  const projectOneBrief: ProjectOnePublicBrief | undefined = gameState?.projectOneBrief;
+  const hasWangExternalReferral = hasExternalReferral(gameState?.referrals, 'P1-003');
   const appointments = getAppointments(gameState);
   const preparations = getPreparations(gameState);
   const notifications = getNotifications(gameState);
@@ -1013,6 +1023,7 @@ function GameInner() {
       if (!saveResponse.ok) throw new Error(saveData?.error || '存档列表加载失败');
       if (!cancelled) {
         setActiveSaves(Array.isArray(saveData?.saves) ? saveData.saves : []);
+        setSaveListLoaded(true);
         setSavePickerReady(true);
       }
       return;
@@ -1191,16 +1202,42 @@ function GameInner() {
       setSelectedNpc(resumedNpcId);
       setWorkspaceMode(restored.state.activeMeeting?.npcId || activePhoneCall ? 'conversation' : 'global_plan');
       setCommunicationChannel(getActivePhoneCall(restored.state)?.npcId ? 'work_phone' : 'email');
+      setCreatedSessionId('');
+      return true;
     } catch (error) {
       setSavePickerError(error instanceof Error ? error.message : '存档读取失败');
+      return false;
     } finally {
       setLoadingSave(false);
     }
   };
 
-  const startNewGame = async () => {
+  const recoverAmbiguousCreate = async (previousSaveId: string | undefined) => {
+    try {
+      const headers = { 'Content-Type': 'application/json', 'x-session': localStorage.getItem('weixun_session') || '' };
+      const response = await fetch(`/api/game/sessions?scenarioCode=${encodeURIComponent(location)}`, { headers });
+      const data = await response.json().catch(() => null);
+      const saves: GameSaveView[] = response.ok && Array.isArray(data?.saves) ? data.saves : [];
+      setActiveSaves(saves);
+      const candidate = saves[0];
+      // A replacement is only recoverable when the authoritative list now
+      // points at a new save. Never re-POST blindly after an ambiguous network
+      // failure, because that could overwrite the just-created scenario.
+      if (!candidate || (previousSaveId && candidate.id === previousSaveId)) return false;
+      const opened = await openSave(candidate.id);
+      if (!opened) setCreatedSessionId(candidate.id);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const startNewGame = async (onboardingScenarioId: string) => {
     const replacing = activeSaves.length > 0;
-    if (replacing && !window.confirm('开始新游戏会永久覆盖当前进度，原存档无法恢复。确定继续吗？')) return;
+    const previousSaveId = activeSaves[0]?.id;
+    if (replacing && !window.confirm('开始新游戏会永久覆盖当前进度，原存档无法恢复。确定继续吗？')) {
+      throw new Error('已取消覆盖，原存档保持不变。');
+    }
     setLoadingSave(true);
     setSavePickerError('');
     try {
@@ -1208,7 +1245,7 @@ function GameInner() {
       const response = await fetch('/api/game/sessions', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ scenarioCode: location, replaceExisting: replacing }),
+        body: JSON.stringify({ scenarioCode: location, replaceExisting: replacing, onboardingScenarioId }),
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.gameSession) throw new Error(
@@ -1218,12 +1255,45 @@ function GameInner() {
             ? '已有进行中的对局，请确认覆盖后重试'
             : data?.error || '新游戏创建失败',
       );
-      await openSave(data.gameSession.id);
+      const opened = await openSave(data.gameSession.id);
+      if (!opened) setCreatedSessionId(data.gameSession.id);
     } catch (error) {
-      setSavePickerError(error instanceof Error ? error.message : '新游戏创建失败');
+      const message = error instanceof Error ? error.message : '新游戏创建失败';
+      if (await recoverAmbiguousCreate(previousSaveId)) return;
+      setSavePickerError(message);
       setLoadingSave(false);
+      throw new Error(message);
     }
   };
+
+  const openOnboarding = async () => {
+    setSavePickerError('');
+    const onboardingToken = localStorage.getItem('weixun_session') || '';
+    try {
+      const onboarding = await loadProjectOneOnboarding();
+      onboarding.open({
+        onStart: async (brief) => {
+          if ((localStorage.getItem('weixun_session') || '') !== onboardingToken) {
+            throw new Error('登录身份已变更，请关闭开场并重新进入项目。');
+          }
+          await startNewGame(brief.id);
+        },
+        // Dismissing the shared modal has no persistence side effect.
+        onClose: () => undefined,
+      });
+    } catch (error) {
+      setSavePickerError(error instanceof Error ? error.message : '开场界面暂时无法打开，请重试。');
+    }
+  };
+
+  // A first-time solo player enters the shared opening immediately after the
+  // authoritative save list confirms there is no resumable save. Cancelling
+  // it is terminal for this visit; the explicit button remains available.
+  useEffect(() => {
+    if (onboardingAutoOpenedRef.current || location !== 'project-1' || requestedSessionId || gameState || !savePickerReady || !saveListLoaded || activeSaves.length > 0 || createdSessionId) return;
+    onboardingAutoOpenedRef.current = true;
+    void openOnboarding();
+  }, [activeSaves.length, createdSessionId, gameState, location, requestedSessionId, saveListLoaded, savePickerReady]);
 
   const runCommand = async (type: string, payload: Record<string, unknown> = {}) => {
     if (!gameSessionId || !gameState || commandBusyRef.current || streaming) return false;
@@ -1253,6 +1323,9 @@ function GameInner() {
         throw new Error(data?.error || '操作失败，请稍后重试');
       }
       const nextState = data?.state ?? data?.gameSession?.state;
+      if (type === 'use_referral' && !hasExternalReferral(asRecord(nextState)?.referrals, 'P1-003')) {
+        throw new Error('EXTERNAL_REFERRAL_NOT_CONFIRMED');
+      }
       if (nextState) applyServerState(nextState);
       retryCommandRef.current = null;
       if (type === 'propose_bid_rule') {
@@ -1274,6 +1347,10 @@ function GameInner() {
           setWorkspaceMode('conversation');
           setWechatRequestDraft('');
         }
+      } else if (type === 'use_referral') {
+        setWechatRequestDraft('您好，我通过项目外部引荐联系到您，想添加工作微信，后续就项目需求向您请教。');
+        setWorkspaceMode('wechat_request');
+        setCommandFeedback('已通过引荐建立联系，可以申请工作微信或按原流程邀约拜访。');
       } else {
         setCommandFeedback(commandResultMessage(type, data?.result));
       }
@@ -1316,6 +1393,12 @@ function GameInner() {
         return false;
       }
       const code = error instanceof Error ? error.message : '';
+      if (type === 'use_referral') {
+        setCommandFeedback(code === 'EXTERNAL_REFERRAL_NOT_CONFIRMED'
+          ? '服务端尚未确认王德福的外部引荐，请同步后重试。'
+          : '本次引荐登记未完成，请重试。');
+        return false;
+      }
       const userMessage: Record<string, string> = {
         WORK_PLAN_NEEDS_DETAIL: '计划描述过于简单，请补充目标、证据或下一步。',
         PREPARATION_NEEDS_DETAIL: '拜访准备还不够具体，请补充对象、问题、证据和下一步。',
@@ -1617,6 +1700,17 @@ function GameInner() {
     }
   };
 
+  const submitExternalReferral = async () => {
+    if (selectedNpc !== 'P1-003') return;
+    if (hasExternalReferral(gameState?.referrals, 'P1-003')) {
+      setCommandFeedback('已通过引荐建立联系，可以申请工作微信或按原流程邀约拜访。');
+      setWechatRequestDraft('您好，我通过项目外部引荐联系到您，想添加工作微信，后续就项目需求向您请教。');
+      setWorkspaceMode('wechat_request');
+      return;
+    }
+    await runCommand('use_referral', { npcId: 'P1-003' });
+  };
+
   const sendSticker = (name: string) => {
     const sticker = WECHAT_STICKERS.find((item) => item.name === name);
     if (!sticker || !selectedNpc || communicationChannel !== 'online' || (selectedContact?.wechatStatus !== 'accepted' && selectedContact?.status !== 'online')) return;
@@ -1780,9 +1874,9 @@ function GameInner() {
           <button type="button" className={styles.projectSummaryCard} onClick={() => setShowProjectNotice(true)} aria-label="打开项目招标通知">
             <span className={styles.projectSummaryIcon}><Building2 className="h-4 w-4" /></span>
             <span className={styles.projectSummaryCopy}>
-              <span className={styles.projectSummaryEyebrow}>项目背景 · 点击查看通知</span>
-              <strong>{projectNotice?.title ?? scene.name}</strong>
-              <small>{projectNotice?.summary ?? scene.description} · 预算 {projectNotice?.budget ?? `${scene.budget} 万元`}</small>
+              <span className={styles.projectSummaryEyebrow}>项目背景 · 点击查看详情</span>
+              <strong>{projectOneBrief?.projectName ?? projectNotice?.title ?? scene.name}</strong>
+              <small>{projectOneBrief ? `${projectOneBrief.clientName} · ${projectOneBrief.overview}` : `${projectNotice?.summary ?? scene.description} · 预算 ${projectNotice?.budget ?? `${scene.budget} 万元`}`}</small>
             </span>
             <ChevronRight className={styles.projectSummaryArrow} />
           </button>
@@ -1821,7 +1915,7 @@ function GameInner() {
           <div className={styles.organizationCanvas}>
             <div className={styles.organizationCaption}>接触状态与公开信息数量会更新在对应卡片</div>
              <svg className={styles.organizationLines} viewBox="0 0 600 490" preserveAspectRatio="none" aria-hidden="true"><path d="M300 130V151H150V168 M300 151H450V168 M150 287V307H450 M450 287V307 M150 307V326 M450 307V326" /></svg>
-            <div className={styles.organizationGrid}>{organizationRows.map((row, rowIndex) => <div className={styles.organizationRow} key={`org-row-${rowIndex}`}>{row.map((npc) => { const infoCount = publicInfoItems(npc.id).length; const unread = npcUnread(npc.id); return <button key={npc.id} onClick={() => openContact(npc.id)} disabled={Boolean(activeMeeting && activeMeeting.npcId !== npc.id)} className={`${styles.personNode} ${selectedNpc === npc.id ? styles.personNodeSelected : ''} disabled:cursor-not-allowed disabled:opacity-45`}><div className={styles.personHead}><PersonPortrait npcId={npc.id} name={npc.name} imageAssets={designerImageAssets} className={styles.personAvatar} sizes="55px" /><span className={styles.personIdentity}><span className={styles.personName}>{npc.name}</span></span>{unread > 0 && <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-red-500" />}</div><div className={styles.personStatus}><i className={styles.statusDot} />{contactStatus(npc.id)}</div><div className={styles.personMeta}><span>{infoCount} 条公开信息</span>{appointments.some((item) => item.npcId === npc.id && ['pending', 'accepted', 'countered'].includes(item.status)) && <span className={styles.appointmentTag}>已有预约</span>}</div></button>; })}</div>)}</div>
+            <div className={styles.organizationGrid}>{organizationRows.map((row, rowIndex) => <div className={styles.organizationRow} key={`org-row-${rowIndex}`}>{row.map((npc) => { const infoCount = publicInfoItems(npc.id).length; const unread = npcUnread(npc.id); const canBeIntroduced = npc.id === 'P1-003'; return <button key={npc.id} onClick={() => openContact(npc.id)} disabled={Boolean(activeMeeting && activeMeeting.npcId !== npc.id)} className={`${styles.personNode} ${selectedNpc === npc.id ? styles.personNodeSelected : ''} disabled:cursor-not-allowed disabled:opacity-45`}><div className={styles.personHead}><PersonPortrait npcId={npc.id} name={npc.name} imageAssets={designerImageAssets} className={styles.personAvatar} sizes="55px" /><span className={styles.personIdentity}><span className={styles.personName}>{npc.name}</span><span className={styles.personTitle}>{npc.title}</span></span>{unread > 0 && <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-red-500" />}</div><div className={styles.personStatus}><i className={styles.statusDot} />{contactStatus(npc.id)}</div><div className={styles.personMeta}><span>{infoCount} 条公开信息</span>{canBeIntroduced && <span className={styles.referralBadge} title="可通过他人引荐认识王德福，添加微信并邀约拜访">可引荐</span>}{npc.id === 'P1-003' && hasWangExternalReferral && <span className={styles.appointmentTag}>已通过引荐</span>}{appointments.some((item) => item.npcId === npc.id && ['pending', 'accepted', 'countered'].includes(item.status)) && <span className={styles.appointmentTag}>已有预约</span>}</div></button>; })}</div>)}</div>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 px-4 py-3 text-[10px] text-slate-500"><span>人物层级通过连线表示；已获取信息会随项目状态更新。</span>{selectedNpc && <button onClick={() => void openOrResearchPublicInfo(selectedNpc)} disabled={Boolean(commandBusy) || Boolean(activeMeeting)} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 font-semibold text-blue-700 disabled:opacity-40">搜索公开信息 · 2行动点</button>}</div>
         </section>
@@ -1829,7 +1923,7 @@ function GameInner() {
           {selectedNpc && <div className={`${styles.workspaceHeader} flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4`}>
             <div className="flex items-center gap-3">
               {selectedNpc ? <PersonPortrait npcId={selectedNpc} name={selectedNpcName} imageAssets={designerImageAssets} className={styles.contactAvatar} sizes="54px" /> : <div className={styles.contactAvatar}><UserRound className="h-5 w-5" /></div>}
-              <div><div className="text-sm font-bold">{selectedNpcName}</div><div className="text-[11px] text-slate-500">联系人 · {contactStatus(selectedNpc)}</div></div>
+              <div><div className="text-sm font-bold">{selectedNpcName}</div><div className="text-[11px] text-slate-500">{selectedProfile?.title ?? '联系人'} · {contactStatus(selectedNpc)}</div>{selectedNpc === 'P1-003' && <div className="mt-1 text-[10px] text-amber-700">{hasWangExternalReferral ? '已通过引荐建立联系，可申请工作微信并按原流程邀约拜访' : '可由他人引荐认识王德福，添加微信并邀约拜访'}</div>}</div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {activeMeeting?.npcId === selectedNpc && <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-semibold text-emerald-700">{VISIT_LABELS[activeMeeting.visitType]} · {activeMeeting.turnCount}/{activeMeeting.maxTurns}轮</span>}
@@ -1838,7 +1932,10 @@ function GameInner() {
             </div>
           </div>}
 
-          {selectedNpc && !activeMeeting && <div className={styles.actionStrip}>
+          {selectedNpc && !activeMeeting && <div className={`${styles.actionStrip} ${selectedNpc === 'P1-003' ? styles.actionStripWithReferral : ''}`}>
+            {selectedNpc === 'P1-003' && (hasWangExternalReferral
+              ? <span className="self-center text-center text-[10px] font-semibold text-emerald-700">已通过引荐建立联系</span>
+              : <button onClick={() => void submitExternalReferral()} disabled={!gameSessionId || !gameState || Boolean(commandBusy) || streaming} className={`${styles.actionButton} rounded-lg border border-amber-200 bg-amber-50 px-2 font-semibold text-amber-900 disabled:opacity-40`}>{commandBusy === 'use_referral' ? '登记中…' : '通过引荐联系'}</button>)}
             <button onClick={async () => { if (phoneCallIsActive && communicationChannel !== 'email' && !await endPhoneCall()) return; setCommunicationChannel('email'); setInput(''); setWorkspaceMode('conversation'); }} disabled={Boolean(commandBusy) || streaming} className={`${styles.actionButton} ${workspaceMode === 'conversation' && communicationChannel === 'email' ? styles.actionButtonActive : ''}`}><Mail className="h-4 w-4" /><span>邮件</span></button>
             <button onClick={async () => { setCommunicationChannel('work_phone'); setInput(''); setWorkspaceMode('conversation'); }} disabled={Boolean(commandBusy) || streaming} className={`${styles.actionButton} ${workspaceMode === 'conversation' && communicationChannel === 'work_phone' ? styles.actionButtonActive : ''}`}><Phone className="h-4 w-4" /><span>电话</span></button>
             <button onClick={async () => { if (phoneCallIsActive && communicationChannel !== 'online' && !await endPhoneCall()) return; setInput(''); if (selectedContact?.wechatStatus === 'accepted' || selectedContact?.status === 'online') { setCommunicationChannel('online'); setWorkspaceMode('conversation'); } else { setWechatRequestDraft(''); setWorkspaceMode('wechat_request'); } }} disabled={Boolean(commandBusy) || streaming} className={`${styles.actionButton} ${workspaceMode === 'wechat_request' || (workspaceMode === 'conversation' && communicationChannel === 'online') ? styles.actionButtonActive : ''}`}><MessageCircle className="h-4 w-4" /><span>{selectedContact?.wechatStatus === 'accepted' || selectedContact?.status === 'online' ? '微信' : '申请微信'}</span></button>
@@ -1877,6 +1974,7 @@ function GameInner() {
                     <div><div className="text-xs font-semibold tracking-[0.14em] text-blue-600">联系人概览</div><h2 className="mt-1 text-lg font-bold text-slate-900">{selectedNpcName} · 联系人概览</h2><p className="mt-1 text-xs text-slate-500">联系人 · {contactStatus(selectedNpc)}</p></div>
                     <div className="rounded-xl bg-blue-50 px-4 py-3 text-center"><strong className="block text-lg text-blue-800">{publicInfoItems(selectedNpc).length}</strong><span className="text-[10px] text-blue-700">条已获得信息</span></div>
                   </div>
+                  {selectedNpc === 'P1-003' && hasWangExternalReferral && <div role="status" className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs leading-5 text-emerald-800">已通过引荐建立联系。可申请工作微信，也可按原拜访邀约流程继续安排。</div>}
                   <div className="mt-4 border-t border-slate-100 pt-4">
                     <div className="text-xs font-bold text-slate-800">已获得的信息</div>
                     {publicInfoItems(selectedNpc).length > 0
@@ -2062,13 +2160,12 @@ function GameInner() {
         <Modal title="项目采购通知" onClose={() => setShowProjectNotice(false)}>
           <div className={styles.noticeMasthead}>
             <div className="text-xs font-semibold tracking-[0.16em] text-blue-700">模拟采购项目 · 项目通知</div>
-            <h2 className="mt-2 text-xl font-bold text-slate-900">{projectNotice?.title ?? scene.name}</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">{projectNotice?.summary ?? scene.description}</p>
-            <div className="mt-4 flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-white px-3 py-1.5 font-semibold text-slate-700">预算：{projectNotice?.budget ?? `${scene.budget} 万元`}</span><span className="rounded-full bg-white px-3 py-1.5 font-semibold text-slate-700">项目类型：销售攻关实训</span></div>
+            <h2 className="mt-2 text-xl font-bold text-slate-900">{projectOneBrief?.projectName ?? projectNotice?.title ?? scene.name}</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">{projectOneBrief?.overview ?? projectNotice?.summary ?? scene.description}</p>
+            <div className="mt-4 flex flex-wrap gap-2 text-xs">{projectOneBrief ? <span className="rounded-full bg-white px-3 py-1.5 font-semibold text-slate-700">客户：{projectOneBrief.clientName}</span> : <span className="rounded-full bg-white px-3 py-1.5 font-semibold text-slate-700">预算：{projectNotice?.budget ?? `${scene.budget} 万元`}</span>}<span className="rounded-full bg-white px-3 py-1.5 font-semibold text-slate-700">项目类型：销售攻关实训</span></div>
           </div>
           <div className="mt-5 space-y-4">
-            {(projectNotice?.sections ?? []).map((section) => <section key={section.heading} className="rounded-xl border border-slate-200 bg-white p-4"><h3 className="text-sm font-bold text-slate-900">{section.heading}</h3><div className="mt-2 space-y-2">{section.content.map((line, index) => <p key={`${section.heading}-${index}`} className="text-sm leading-6 text-slate-600">{line}</p>)}</div></section>)}
-            {(!projectNotice || projectNotice.sections.length === 0) && <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-600">{scene.description}</p>}
+            {projectOneBrief ? <><section className="rounded-xl border border-slate-200 bg-white p-4"><h3 className="text-sm font-bold text-slate-900">项目目标</h3><div className="mt-2 space-y-2">{projectOneBrief.goals.map((goal, index) => <p key={`${projectOneBrief.id}-goal-${index}`} className="text-sm leading-6 text-slate-600">{goal}</p>)}</div></section>{projectOneBrief.details.map((section) => <section key={section.title} className="rounded-xl border border-slate-200 bg-white p-4"><h3 className="text-sm font-bold text-slate-900">{section.title}</h3><dl className="mt-2 space-y-2">{section.items.map((item) => <div key={`${section.title}-${item.label}`} className="text-sm leading-6 text-slate-600"><dt className="font-semibold text-slate-700">{item.label}</dt><dd>{item.value}</dd></div>)}</dl></section>)}</> : <>{(projectNotice?.sections ?? []).map((section) => <section key={section.heading} className="rounded-xl border border-slate-200 bg-white p-4"><h3 className="text-sm font-bold text-slate-900">{section.heading}</h3><div className="mt-2 space-y-2">{section.content.map((line, index) => <p key={`${section.heading}-${index}`} className="text-sm leading-6 text-slate-600">{line}</p>)}</div></section>)}{(!projectNotice || projectNotice.sections.length === 0) && <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-600">{scene.description}</p>}</>}
           </div>
           <p className="mt-4 text-[11px] leading-5 text-slate-400">本通知用于模拟实训。具体需求、决策路径和采购条件以项目沟通中确认的信息为准。</p>
         </Modal>
@@ -2149,8 +2246,9 @@ function GameInner() {
               {savePickerError && <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{savePickerError}</div>}
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <button onClick={() => activeSaves[0] && void openSave(activeSaves[0].id, true)} disabled={loadingSave || !activeSaves[0]} className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-35"><ChevronRight className="h-4 w-4" />继续游戏</button>
-                <button onClick={() => void startNewGame()} disabled={loadingSave} className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40"><Play className="h-4 w-4" />开始新游戏</button>
+                <button onClick={() => void openOnboarding()} disabled={loadingSave || Boolean(createdSessionId)} className="flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-3.5 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40"><Play className="h-4 w-4" />开始新游戏</button>
               </div>
+              {createdSessionId && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950"><span>新存档已创建，但联系人资料尚未加载完成。请重试进入；不会再次覆盖存档。</span><button type="button" onClick={() => void openSave(createdSessionId)} disabled={loadingSave} className="rounded-lg border border-amber-300 bg-white px-3 py-2 font-semibold text-amber-900 disabled:opacity-40">重试进入新存档</button></div>}
               {activeSaves[0] && <p className="mt-3 text-center text-[11px] text-amber-700">开始新游戏会先要求确认，确认后覆盖当前存档。</p>}
             </div>
           </div>

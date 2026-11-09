@@ -1,5 +1,61 @@
 # 动态问题台账
 
+## P1-ONBOARDING-005 行业/业务定制开场与预生成场景
+
+- 状态：In Progress（分栏开场已接入正式与实际测试；批量 AI 生成和独立场景库发布待实现）；最后检查：2026-11-09。
+- 系统接入：两端使用同一公开目录与版本化场景，确认后快照存入既有会话持久化路径，续玩恢复；NPC 只取得本职知情范围内的内部资料。首批使用 12 组已审计的本地预置场景。验收见 evidence/project-one-onboarding-2026-11-09/VERIFICATION.md，远程库存、写入和部署未验收。
+- 用户需求：进入项目一选客户行业/我方业务，直接取AI提前生成的DB背景，再展示项目简报和照片/姓名/职务；先定方案再做多份HTML。
+- 需求澄清：客户侧高适配，供方情况由玩家结合真实公司考虑；业务标签只匹配客户需求，取消预生成我方产品/案例/交付能力，不增加必填公司资料。客户NPC/未来评价须遵守此边界。
+- 新增明确：现有client-info表R1–R17做完整专业AI版，补技术环境/接口/容量/实施/验收等客户事实，支持NPC细聊；按角色披露，缺项待核实，不生成我方能力。当前仅扩充方案，未实施。
+- 本地证据：schema已有分类和scenario_templates；旧setup选项硬编码且混组织性质/行业，生成API仅返回JSON；正式start/repository仍创建固定项目一状态，正式/preview通知及人物固定，缺匹配/发布/版本快照贯通。远程分类/场景库存未实查，不判定为空。
+- 前轮完成：只读核查和公开资料调研，方案PROJECT_ONE_INDUSTRY_ONBOARDING_PROPOSAL.md。最新用户“可以开始做示例html”，已批准输出目录内3款同内容可交互原型；示例不冻结完整业务目录，不代表真实AI生成/发布/数据库接入完成。视觉选定后再实施正式与测试同一场景源。
+- 本轮证据：outputs/project-one-onboarding-demos-20261106含3个独立HTML和index入口，共用资料/交互；主线程实际Review、build和Chrome每款12组合/桌面手机/详情五图返回/键盘动效验收通过，0脚本错误/0外部请求，见该目录VERIFICATION.md和verification.json。剩余为用户选择视觉、定产品范围，再做生成/审核发布/匹配快照与双端同源；不得把本项标为整体Resolved。
+- 最新反馈与结果：首轮仅技术验证通过，用户明确三款均不接受，须沿用当前前端UI、行业/业务用下拉菜单。已读实际HTML/CSS并隔离捕获当前参考图，第二轮标准/紧凑/分栏04–06及新版index完成。根Review、build、Chrome每款12组合/临时100行业option不增尺寸、桌面短屏手机/五图与返回详情键盘等通过，0HTTP/脚本错误。证据输出目录VERIFICATION-CURRENT-UI.md与verification-current-ui.json。用户尚未选择第二轮；仍不标整体Resolved，产品/场景库缺口不变。
+- 新增授权与结果：用户“是这个意思”，认可当前UI+下拉方向，要求“更花哨一点点”及AI配图。独立示例已加内置image_gen生成图（workspace原图/提示词及WebP内嵌）、细描边/柔光/入场与4px浮动；根Review修正裁切，最终build/Chrome配图解码与停止动效、36组合/长目录/三视口等通过，证据输出目录VERIFICATION-ILLUSTRATED.md。不推定产品上线或三布局最终选定。
+- 最新纠正已落实：写实照片v2且静止；不要加载，用户选开场一次图形（1.2s，无等待）；所有需沟通且非公开内容从摘要/事实/详情及HTML内嵌JSON移除，只嵌入审计白名单。完整source底稿保留。根canary/build/Chrome36组合与三视口等通过，VERIFICATION-PHOTO-PUBLIC.md。历史4px浮动与待确认详情不再是当前行为。
+
+## P1-REFERRAL-004 引荐实现的一致性与断线完整性边界
+
+- 状态：Resolved（本地）；最后检查：2026-11-06；来源：本轮独立只读Review与实际helper/service复现。
+- 已确认：泛“邀请/邀约”词把微信邀请/历史/取消/内部会议当拜访，收紧时又漏标准直接问句；预览在shared=false后仍可由模型误判accepted写预约；已有预约0AP前端预检挡住免费复用；服务端已提交但回包丢失时，测试端本地收费可能漏账。预览测试覆盖微信状态也不能替代新引荐路径的服务端渠道状态。
+- 修复范围：shared正反例与预览确定性预约闸门；reuseOnly请求仅能复用，失败不执行普通消息；本引荐路径的权威累计费用和本地结算水位对账，按账号/会话/记录隔离，不退款、不重复扣点。已接通电话内邀请不重复收费，原非引荐AP机制不扩重构。
+- 原主线由Luna实现；完整性修复升级Terra，formal拥有shared/state/正式route；Terra接预览与UI费用/恢复整合，原UI交接后独占文件。完成后需主线程重跑专项与独立复核，不以初次主线通过关闭问题。
+- 最终：shared正反例、模型误判不落预约、真实渠道与reuseOnly、累计原发送成本/本地水位已落地；根4项引荐专项/相关回归/最终类型lintbuild通过。最后0AP UI假阳性和费用toast修后根与独立review重跑通过，无剩余本批P1/P2。证据evidence/project-one-referral-2026-11-06/VERIFICATION.md。用户确认邀约不额外扣点，收费仅原发送成本。
+
+## P1-ENTRY-001 入场职务与王德福引荐提示
+
+- 状态：Resolved（本地）；最后检查：2026-11-06。
+- 证据：正式卡片无职务；测试HTML卡片显示联系人；主档facts含岗位与职责，referralNpcIds尚无独立游戏命令。
+- 本批：两端开局职务、引荐标识与用途、职务/搜集内容拆分；探索完整引荐状态流，不自动扩大实施。
+
+- 本地实现：正式game页/CSS、测试HTML、五人主档及entry专项；用户澄清为系统外介绍人→王德福，标识说明已修正。最终验证见evidence/project-one-entry-2026-11-06/VERIFICATION.md。
+- 验证：主线程VM/entry/正式五人/正式工作流/预览AI/quizUI/计时/指标/provider、TypeScript/最终全量lint/最终Next+tsup与harness通过。完整引荐状态流仍由P1-REFERRAL-002跟踪，旧快照测试由P1-TEST-003跟踪，未以展示完成关闭这些缺口。
+
+## P1-TEST-003 预览测试控制面板快照专项失败
+
+- 状态：Open；最后检查：2026-11-09，旧专项仍为同一 0 !== 21。
+- 实查：test-preview-test-controls.ts:255 support=0，期望21；本批不改API/快照逻辑。根将本批联系人渲染函数内存恢复为HEAD后仍复现，证据evidence/project-one-entry-2026-11-06/reproduce-existing-test-failure.cjs。
+- 下一步：检查既有mock timer、恢复请求、apiCall响应形状与snapshot契约；本批仅登记，不扩为无关修复。正式/预览核心、quizUI与本次entry专项均通过。
+
+## P1-REFERRAL-002 引荐尚未接入微信与拜访授权
+
+- 状态：Resolved（本地）；最后检查：2026-11-06。
+- 历史基线：正式/测试无系统外引荐凭据，原referralNpcIds仅向外转介。当前已实现shared external-referral.ts、两端契约/state/service/真实入口/UI/JSON恢复；系统外介绍人→王德福，不显示介绍人或新增支持门槛。
+- 结果：确定性微信与有效普通邀约、行程同源、已有预约复用、零额外邀约费、原发送成本对账。根专项/相关回归/最终类型lintbuild/harness及独立复审通过，证据evidence/project-one-referral-2026-11-06/VERIFICATION.md。未远程DB/模型/浏览器完整联调或部署。
+
+## SCORE-REPORT-003 最终报告需对齐原表 B/C 指标
+
+- 状态：Open；最后检查：2026-11-06。来源：用户提供测评PDF并明确最终报告指标基本与原表B/C一致。
+- 实际证据：`projects/src/lib/metrics-data.ts`有B0–B40/C0–C14目录和公式文本；`metrics-validation.ts`仅作语法/引用检查；实际`game/state.ts:getGameOutcome`使用当前五维与价值/支持证据组合，未贯通B/C全量计算。`app/result/page.tsx`有五维图表、证据与浏览器打印，未发现专用B/C报告生成链路。
+- 已完成：参考PDF主要内容页和原Excel核对，目标规范 `harness/plans/SALES_ASSESSMENT_REPORT_SPEC.md` 整理。历史SCORE-001五维实施记录保留，不能作为本项完成证据。
+- 下一步：建立行为到A指标的证据及统计口径、B/C计算与版本快照，再生成对应图表和解读；等级、缺证据处理和详细分组需形成明确设计。本轮未改评分、数据库或历史结果。
+
+## ACTIVITY-QUIZ-021 选项持续禁用复发
+
+- 状态：Resolved（本地）；最后检查：2026-11-03。
+- 实证：旧HTML answering每2.5秒sync，deferred请求使requestBusy持续true并锁fieldset/四选项；019仅验证finally结束不足覆盖。新版取消答题自动sync，仍保留服务端答案/截止权威。
+- 实现：public/project1-prototype-v9.html统一自动sync guard、POST/GET超时、超时后显式恢复对账、恢复错误可见；quiz-ui覆盖慢请求/GET/已提交响应丢失不重发/同文清错，account-isolation修正假timer不即时触发30秒截止。根6项专项、反证、tsc/lint/build通过，证据activity-quiz-busy-recurrence-2026-11-03.md。服务关闭，未live联调。
+
 ## ACTIVITY-SYNC-020 第二个活动提示同步失败
 
 - 状态：Resolved（本地）；最后检查：2026-11-02。

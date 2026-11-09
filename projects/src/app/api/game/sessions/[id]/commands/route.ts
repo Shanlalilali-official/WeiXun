@@ -109,7 +109,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     if (settledSession.state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
     if (settledSession.state.version !== parsed.data.expectedVersion) throw new Error('STATE_VERSION_CONFLICT');
     const executionState = synchronizeProjectTimer(settledSession.state, Date.now(), true);
-    let execution = executeGameCommand(executionState, probabilityCommand, workflowEvaluation);
+    let execution = executeGameCommand(executionState, probabilityCommand, { ...workflowEvaluation, now: Date.now() });
     if (parsed.data.type === 'end_visit' && executionState.activeMeeting) {
       const meeting = executionState.activeMeeting;
       const transcript = await getNpcChannelConversation(id, meeting.npcId, 'offline');

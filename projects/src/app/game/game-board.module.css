@@ -59,6 +59,7 @@
 .personAvatar{width:44px;height:44px}
 .personName{font-size:13px}
 .personTitle{font-size:9px}
+.referralBadge{border-radius:999px;padding:2px 6px;background:#fff4dc;color:#9a6500;font-size:8px;font-weight:800}
 .personStatus{margin-top:8px;font-size:9px}
 .personMeta{margin-top:5px;font-size:8px}
 .organizationColumn>div:last-child{flex:none;padding:9px 12px;font-size:9px}
@@ -71,6 +72,8 @@
 .workspaceHeader strong,.workspaceHeader h2{font-size:12px}
 .workspaceHeader p,.workspaceHeader span{font-size:9px}
 .actionStrip{flex:none;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;padding:9px 11px;border-bottom:1px solid #e7edf6}
+.actionStripWithReferral{grid-template-columns:repeat(6,minmax(0,1fr))}
+@media(max-width:780px){.actionStrip.actionStripWithReferral{grid-template-columns:repeat(3,minmax(0,1fr))}}
 .actionButton{min-height:38px;gap:5px;border-radius:9px;padding:7px 3px;font-size:9px}
 .actionButton svg{width:14px;height:14px}
 .npcPlanPanel{flex:none;padding:9px 12px}

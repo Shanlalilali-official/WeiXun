@@ -6,13 +6,15 @@ import vm from 'node:vm';
 const html = readFileSync(resolve(process.cwd(), 'public/project1-prototype-v9.html'), 'utf8');
 let source = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)?.[1];
 assert.ok(source, '预览页缺少应用脚本');
-const reproduceStaleBusy = process.env.WEIXUN_REPRODUCE_STALE_QUIZ_BUSY === '1';
-if (reproduceStaleBusy) {
+const reproduceQuizSyncLock = process.env.WEIXUN_REPRODUCE_QUIZ_SYNC_LOCK === '1';
+if (reproduceQuizSyncLock) {
   const before = source;
-  source = source
-    .replace('activeRequestAction=\'\';state.aiStatus=\'\';save();syncCustomerActivityQuizControls();if(options.renderPending===false', 'activeRequestAction=\'\';state.aiStatus=\'\';save();if(options.renderPending===false')
-    .replace('customerActivityRenderedTaskKey===key){syncCustomerActivityQuizControls(task);customerActivitySetStatus(', 'customerActivityRenderedTaskKey===key){customerActivitySetStatus(');
-  assert.notEqual(source, before, '内存反证已移除 API finally 与 same-key 快捷路径的解锁逻辑');
+  source = source.replace(
+    /(if\(remaining<=0&&customerActivityLastTimeoutQuizId!==task\.id&&customerActivityAction===''&&!requestBusy\)void customerActivityCompleteQuiz\(task,true\);)(\r?\n\s*\}else if\(task\?\.status==='submitted')/,
+    "$1\r\n   else if(!requestBusy&&Date.now()-customerActivityLastSyncAt>=2500){customerActivityLastSyncAt=Date.now();void refreshCustomerActivityQueue()}\r\n  }else if(task?.status==='submitted'",
+  );
+  source = source.replace(/\s*const activeTask=currentCustomerActivity\(\);\s*if\(!force&&activeTask\?\.status==='submitted'&&activeTask\.quiz\?\.status==='answering'\)return false;/, '');
+  assert.notEqual(source, before, '内存反证已重新插入答题期每2.5秒同步');
 }
 const planner = readFileSync(resolve(process.cwd(), 'src/components/customer-activity-planner.tsx'), 'utf8');
 assert.match(planner, /提交方案，进入情境问答/);
@@ -153,15 +155,57 @@ const runtimeControl: {
   deferredComplete: Promise<void> | null;
   conflictNextSync: boolean;
   recoveryReadCount: number;
-} = { evaluationOnComplete: null, deferNextSync: false, releaseDeferredSync: null, deferredSync: null, deferNextComplete: false, releaseDeferredComplete: null, deferredComplete: null, conflictNextSync: false, recoveryReadCount: 0 };
-const fetch = async (_url: string, init?: { body?: string; method?: string }) => {
+  hangNextAction: string | null;
+  commitThenHangNextAction: string | null;
+  hangingRequestSignal: AbortSignal | null;
+  activityRequestTimeoutId: number | null;
+  activityRequestTimeoutMs: number | null;
+  activityRequestTimeoutCallback: (() => void) | null;
+} = { evaluationOnComplete: null, deferNextSync: false, releaseDeferredSync: null, deferredSync: null, deferNextComplete: false, releaseDeferredComplete: null, deferredComplete: null, conflictNextSync: false, recoveryReadCount: 0, hangNextAction: null, commitThenHangNextAction: null, hangingRequestSignal: null, activityRequestTimeoutId: null, activityRequestTimeoutMs: null, activityRequestTimeoutCallback: null };
+let nextTimerId = 1;
+const fetch = async (_url: string, init?: { body?: string; method?: string; signal?: AbortSignal }) => {
   if (init?.method === 'GET') {
     runtimeControl.recoveryReadCount += 1;
+    if (runtimeControl.hangNextAction === 'preview_recovery') {
+      runtimeControl.hangNextAction = null;
+      runtimeControl.hangingRequestSignal = init?.signal ?? null;
+      await new Promise<void>((_resolve, reject) => {
+        const signal = runtimeControl.hangingRequestSignal;
+        if (!signal) return reject(new Error('timeout test requires a recovery AbortSignal'));
+        if (signal.aborted) return reject(new Error('recovery aborted'));
+        signal.addEventListener('abort', () => reject(new Error('recovery aborted')), { once: true });
+      });
+    }
     const npcIds = ['P1-001', 'P1-002', 'P1-003', 'P1-004', 'P1-005'];
     return { ok: true, status: 200, async json() { return { success: true, data: { previewSessionId: 'quiz-preview-session', version: 100 + runtimeControl.recoveryReadCount, conversations: Object.fromEntries(npcIds.map((id) => [id, []])), appointments: [], wechat: {}, activeMeeting: null, customerActivities: { version: 1, tasks: JSON.parse(JSON.stringify(serverState.tasks)) }, npcTestStates: npcIds.map((npcId) => ({ npcId, support: 42, pleasantness: 60, effectiveContactCount: 2, node: 'N2' })), approvedVisitPreparationNpcIds: [] } }; } };
   }
   const request = JSON.parse(init?.body || '{}') as TestRequest;
   requests.push(request);
+  const commitThenHang = runtimeControl.commitThenHangNextAction === request.action;
+  if (commitThenHang) {
+    runtimeControl.commitThenHangNextAction = null;
+    if (request.action === 'customer_activity_answer') {
+      serverState.tasks = serverState.tasks.map((task) => task.id !== request.taskId || !task.quiz || !request.questionId ? task : {
+        ...task,
+        quiz: { ...task.quiz, answers: { ...task.quiz.answers, [request.questionId]: request.optionId ?? null } },
+      });
+    } else if (request.action === 'customer_activity_complete_quiz') {
+      serverState.tasks = serverState.tasks.map((task) => task.id !== request.taskId || !task.quiz ? task : {
+        ...task, quiz: { ...task.quiz, status: 'completed', completedAt: Math.min(now, task.quiz.deadlineAt) },
+        ...(runtimeControl.evaluationOnComplete ? { evaluation: runtimeControl.evaluationOnComplete } : {}),
+      });
+    }
+  }
+  if (runtimeControl.hangNextAction === request.action || commitThenHang) {
+    runtimeControl.hangNextAction = null;
+    runtimeControl.hangingRequestSignal = init?.signal ?? null;
+    await new Promise<void>((_resolve, reject) => {
+      const signal = runtimeControl.hangingRequestSignal;
+      if (!signal) return reject(new Error('timeout test requires an AbortSignal'));
+      if (signal.aborted) return reject(new Error('request aborted'));
+      signal.addEventListener('abort', () => reject(new Error('request aborted')), { once: true });
+    });
+  }
   if (request.action === 'customer_activity_sync' && runtimeControl.conflictNextSync) {
     runtimeControl.conflictNextSync = false;
     return { ok: false, status: 409, async json() { return { error: 'PREVIEW_SESSION_VERSION_CONFLICT' }; } };
@@ -203,7 +247,7 @@ const fetch = async (_url: string, init?: { body?: string; method?: string }) =>
         success: true,
         previewSessionId: 'quiz-preview-session',
         version: requests.length,
-        data: { customerActivities: { version: requests.length, tasks: JSON.parse(JSON.stringify(serverState.tasks)) }, serverNow: now },
+        data: { customerActivities: { version: 1, tasks: JSON.parse(JSON.stringify(serverState.tasks)) }, serverNow: now },
       };
     },
   };
@@ -216,9 +260,15 @@ globalThis.__customerActivityQuizHooks={
   setIndex(index){customerActivityQuizIndex=index;customerActivityModalLocked=false;presentCustomerActivityPlanner(true)},
   markSeen(taskId){customerActivitySeenIds.add(taskId);customerActivityModalLocked=false;customerActivityRenderedTaskKey='';modalRoot.innerHTML='';presentCustomerActivityPlanner(true)},
   setDraft(text){customerActivityDraft=text;customerActivityDirty=true;const field=document.getElementById('customer-activity-draft');if(field)field.value=text},
+  setActivityError(message){customerActivityError=message;presentCustomerActivityPlanner(true)},
   sync(){return refreshCustomerActivityQueue()},
+  forceSync(){return refreshCustomerActivityQueue({force:true})},
+  recover(){return recoverPreviewSession({force:true})},
   deferSync(){runtimeControl.deferNextSync=true;runtimeControl.deferredSync=new Promise(resolve=>{runtimeControl.releaseDeferredSync=resolve})},
   releaseSync(){runtimeControl.releaseDeferredSync?.();runtimeControl.releaseDeferredSync=null},
+  hangNext(action){runtimeControl.hangNextAction=action},
+  commitThenHangNext(action){runtimeControl.commitThenHangNextAction=action},
+  fireActivityRequestTimeout(){const callback=runtimeControl.activityRequestTimeoutCallback;runtimeControl.activityRequestTimeoutId=null;runtimeControl.activityRequestTimeoutMs=null;runtimeControl.activityRequestTimeoutCallback=null;callback?.()},
   deferComplete(){runtimeControl.deferNextComplete=true;runtimeControl.deferredComplete=new Promise(resolve=>{runtimeControl.releaseDeferredComplete=resolve})},
   releaseComplete(){runtimeControl.releaseDeferredComplete?.();runtimeControl.releaseDeferredComplete=null},
   start(){return customerActivityStart(currentCustomerActivity())},
@@ -242,8 +292,22 @@ const context = vm.createContext({
   Math,
   Date: ClockDate,
   crypto: { randomUUID: () => 'quiz-command-id' },
-  setTimeout: () => 0,
-  clearTimeout() {},
+  setTimeout: (callback: () => void, delay = 0) => {
+    const timerId = nextTimerId++;
+    if (delay === 30_000 || delay === 180_000) {
+      runtimeControl.activityRequestTimeoutId = timerId;
+      runtimeControl.activityRequestTimeoutMs = delay;
+      runtimeControl.activityRequestTimeoutCallback = callback;
+    }
+    return timerId;
+  },
+  clearTimeout(timerId: number) {
+    if (runtimeControl.activityRequestTimeoutId === timerId) {
+      runtimeControl.activityRequestTimeoutId = null;
+      runtimeControl.activityRequestTimeoutMs = null;
+      runtimeControl.activityRequestTimeoutCallback = null;
+    }
+  },
   setInterval: () => 0,
   clearInterval() {},
   requestAnimationFrame: () => 0,
@@ -258,10 +322,16 @@ const hooks = vm.runInContext('globalThis.__customerActivityQuizHooks', context)
   setIndex: (index: number) => void;
   markSeen: (taskId: string) => void;
   setDraft: (text: string) => void;
+  setActivityError: (message: string) => void;
   start: () => Promise<void>;
   sync: () => Promise<boolean>;
+  forceSync: () => Promise<boolean>;
+  recover: () => Promise<boolean | symbol>;
   deferSync: () => void;
   releaseSync: () => void;
+  hangNext: (action: string) => void;
+  commitThenHangNext: (action: string) => void;
+  fireActivityRequestTimeout: () => void;
   deferComplete: () => void;
   releaseComplete: () => void;
   tick: () => void;
@@ -302,31 +372,74 @@ async function main() {
   assert.equal(modalRoot.fieldset.disabled, false, '当前题的 fieldset 初始可交互');
   for (let optionIndex = 0; optionIndex < 4; optionIndex += 1) assert.equal(modalRoot.elements.get(`customer-activity-option-${optionIndex}`)?.disabled, false, '四个选项初始均可点击');
 
-  const answersBeforeSync = structuredClone(currentQuiz().answers);
-  hooks.deferSync();
-  const syncRequest = hooks.sync();
-  for (let attempt = 0; attempt < 100 && !hooks.snapshot().requestBusy; attempt += 1) await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(hooks.snapshot().requestBusy, true, '实际活动同步请求进入全局 busy');
-  assert.equal(modalRoot.fieldset.disabled, true, '后台同步期间暂时禁用 fieldset');
-  assert.equal(modalRoot.elements.get('customer-activity-option-0')?.disabled, true, '后台同步期间暂时禁用选项');
-  hooks.releaseSync();
-  assert.equal(await syncRequest, true);
-  assert.equal(hooks.snapshot().requestBusy, false);
-  if (reproduceStaleBusy) {
-    assert.equal(modalRoot.fieldset.disabled, true, '反证：requestBusy=false 后 fieldset 仍卡在禁用态');
-    assert.equal(modalRoot.elements.get('customer-activity-option-0')?.disabled, true, '反证：requestBusy=false 后选项仍全灰');
-    console.log('内存反证复现：同题同答案的同步请求已完成且 requestBusy=false，但 fieldset/选项仍 disabled');
+  if (reproduceQuizSyncLock) hooks.deferSync();
+  now += 2_501;
+  hooks.tick();
+  await new Promise((resolve) => setImmediate(resolve));
+  if (reproduceQuizSyncLock) {
+    assert.equal(requests.filter((request) => request.action === 'customer_activity_sync').length, 1, '内存反证：旧的答题期定时器发送同步 POST');
+    assert.equal(hooks.snapshot().requestBusy, true, '内存反证：旧的答题期定时器发起悬挂的 customer_activity_sync');
+    assert.equal(modalRoot.fieldset.disabled, true, '内存反证：悬挂的后台同步禁用 fieldset');
+    assert.equal(modalRoot.elements.get('customer-activity-option-0')?.disabled, true, '内存反证：悬挂的后台同步使选项持续全灰');
+    console.log('内存反证复现：旧答题轮询可令 customer_activity_sync 悬挂并使四个选项持续灰色');
     return;
   }
-  assert.equal(modalRoot.fieldset.disabled, false, '同一份问答与答案经 sync → API finally → queue finally 后立即解锁');
-  assert.equal(modalRoot.elements.get('customer-activity-option-0')?.disabled, false, '同一 key 不重绘时四选项仍恢复可点');
-  assert.deepEqual(currentQuiz().answers, answersBeforeSync, '同步期间服务端问答答案保持不变');
-
+  assert.equal(requests.filter((request) => request.action === 'customer_activity_sync').length, 0, '答题期定时器不再发送只读同步 POST');
+  assert.equal(hooks.snapshot().requestBusy, false, '后台到期检查不会占用活动请求');
+  assert.equal(modalRoot.fieldset.disabled, false, '长时间未完成的后台同步不会锁住 fieldset');
+  assert.equal(modalRoot.elements.get('customer-activity-option-0')?.disabled, false, '长时间未完成的后台同步不会锁住选项');
+  const syncCountBeforeForce = requests.filter((request) => request.action === 'customer_activity_sync').length;
+  assert.equal(await hooks.sync(), false, '焦点、可见性和首屏同步入口都受答题期保护');
+  assert.equal(requests.filter((request) => request.action === 'customer_activity_sync').length, syncCountBeforeForce, '答题进行中不会出现后台同步 POST');
+  hooks.hangNext('customer_activity_sync');
+  const hangingManualSync = hooks.forceSync();
+  for (let attempt = 0; attempt < 100 && !hooks.snapshot().requestBusy; attempt += 1) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(hooks.snapshot().requestBusy, true, '明确手动同步时请求期间锁住写入');
+  assert.equal(runtimeControl.activityRequestTimeoutId !== null, true, '活动同步请求设置 30 秒上限');
+  assert.equal(runtimeControl.activityRequestTimeoutMs, 30_000, '活动同步使用 30 秒请求上限');
+  hooks.fireActivityRequestTimeout();
+  assert.equal(await hangingManualSync, false, '悬挂的手动同步在超时后结束');
+  assert.equal(hooks.snapshot().requestBusy, false, '超时清除全局 busy');
+  assert.match(hooks.snapshot().error, /等待超时.*服务端状态可能已更新/, '超时提示说明状态可能已更新，避免自动重放');
+  assert.equal(modalRoot.fieldset.disabled, false, '手动同步超时后恢复题目');
+  assert.equal(modalRoot.elements.get('customer-activity-option-0')?.disabled, false, '手动同步超时后选项可继续使用');
+  assert.equal(runtimeControl.activityRequestTimeoutId, null, '请求结束清除超时计时器');
+  assert.equal(await hooks.forceSync(), true, '测试恢复 GET 前清除前一条同步错误');
+  hooks.hangNext('preview_recovery');
+  const hangingRecovery = hooks.recover();
+  for (let attempt = 0; attempt < 100 && !hooks.snapshot().requestBusy; attempt += 1) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(hooks.snapshot().requestBusy, true, '权威恢复 GET 也显示忙碌状态');
+  assert.equal(runtimeControl.activityRequestTimeoutId !== null, true, '恢复 GET 设置 30 秒上限');
+  assert.equal(runtimeControl.activityRequestTimeoutMs, 30_000, '权威恢复 GET 使用 30 秒请求上限');
+  hooks.fireActivityRequestTimeout();
+  assert.equal(await hangingRecovery, false, '悬挂的权威恢复 GET 在超时后结束');
+  assert.equal(hooks.snapshot().requestBusy, false, '恢复 GET 超时清除全局 busy');
+  assert.equal(modalRoot.elements.get('customer-activity-option-0')?.disabled, false, '恢复 GET 超时也不锁住选项');
+  assert.match(modalRoot.innerHTML, /预览会话恢复等待超时/, '恢复 GET 失败会在活动弹窗内显示错误');
+  assert.match(modalRoot.innerHTML, /重试同步/, '恢复 GET 失败会提供明确的同步重试入口');
+  assert.equal(runtimeControl.activityRequestTimeoutId, null, '恢复 GET 结束清除超时计时器');
+  const answerWritesBeforeDirectRecovery = requests.filter((request) => request.action === 'customer_activity_answer').length;
+  assert.equal(await hooks.recover(), true, '直接权威 GET 恢复成功，不经过会先清错误的活动 retry handler');
+  assert.doesNotMatch(modalRoot.innerHTML, /预览会话恢复等待超时/, '成功 GET 清除与 previewRecoveryError 同文的弹窗错误');
+  assert.equal(requests.filter((request) => request.action === 'customer_activity_answer').length, answerWritesBeforeDirectRecovery, '直接 GET 恢复不重发答案 POST');
+  hooks.setActivityError('答案保存失败，请重试。');
+  assert.equal(await hooks.recover(), true, '已有答案错误时也可直接完成权威 GET 恢复');
+  assert.equal(hooks.snapshot().error, '答案保存失败，请重试。', '恢复成功保留与恢复错误不同的答案错误');
+  hooks.setActivityError('');
+  hooks.hangNext('preview_recovery');
+  const retryableRecovery = hooks.recover();
+  for (let attempt = 0; attempt < 100 && !hooks.snapshot().requestBusy; attempt += 1) await new Promise((resolve) => setImmediate(resolve));
+  hooks.fireActivityRequestTimeout();
+  assert.equal(await retryableRecovery, false, '再次模拟恢复超时以验证弹窗重试入口');
+  const answerWritesBeforeRecoveryRetry = requests.filter((request) => request.action === 'customer_activity_answer').length;
+  await click('customer-activity-quiz-retry');
+  assert.doesNotMatch(modalRoot.innerHTML, /预览会话恢复等待超时/, '手动权威恢复成功后清除同一恢复错误');
+  assert.equal(requests.filter((request) => request.action === 'customer_activity_answer').length, answerWritesBeforeRecoveryRetry, '没有待保存答案时，恢复重试只读取权威 GET，不发答案 POST');
   now += 30_000;
   hooks.reloadView();
-  assert.match(modalRoot.innerHTML, /1:30/, '刷新后按服务端 deadline 显示剩余时间');
+  assert.match(modalRoot.innerHTML, /1:28/, '刷新后按服务端 deadline 显示剩余时间，后台未影响倒计时');
   await click('customer-activity-option-0');
-  assert.equal(requests.at(-1)?.action, 'customer_activity_answer');
+  assert.equal(requests.at(-1)?.action, 'customer_activity_answer', '手动同步超时后仍可发出权威答案保存');
   const answerRequest = requests.at(-1);
   assert.deepEqual({ ...answerRequest, expectedVersion: 0 }, {
     action: 'customer_activity_answer', taskId: 'quiz-task', questionId: 'q1', optionId: 'q1-o1',
@@ -344,9 +457,16 @@ async function main() {
   assert.equal(requests.at(-1)?.optionId, null, '跳过本题也向服务端记录 null');
   assert.match(modalRoot.innerHTML, /情境推演（假设）：问题二？/);
 
-  failNextAction = 'customer_activity_answer';
-  await click('customer-activity-option-1');
-  assert.match(hooks.snapshot().error, /模拟网络故障|暂时不可用|答案未能保存/);
+  hooks.commitThenHangNext('customer_activity_answer');
+  const timedOutAnswer = modalRoot.elements.get('customer-activity-option-1')?.click();
+  assert.ok(timedOutAnswer, '找到答案选项');
+  for (let attempt = 0; attempt < 100 && !hooks.snapshot().requestBusy; attempt += 1) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(hooks.snapshot().requestBusy, true, '悬挂答案 POST 持有 busy 直到请求超时');
+  assert.equal(runtimeControl.activityRequestTimeoutMs, 30_000, '答案保存有 30 秒上限');
+  hooks.fireActivityRequestTimeout();
+  await waitForIdle();
+  assert.match(hooks.snapshot().error, /等待超时.*服务端状态可能已更新/, '答案 POST 超时提示可能已提交');
+  assert.equal(serverState.tasks[0]?.quiz?.answers.q2, 'q2-o2', '反事实场景：模拟服务端已经保存答案但响应挂起');
   assert.ok(hooks.snapshot().pending, '保存失败时保留当前选项，供重试');
   assert.match(modalRoot.innerHTML, /aria-checked="true"/);
   assert.match(modalRoot.innerHTML, /重试保存或提交/);
@@ -354,8 +474,10 @@ async function main() {
   assert.equal(modalRoot.elements.get('customer-activity-quiz-skip')?.disabled, true, '保存失败时先重试再跳过，避免静默覆盖选择');
   await click('customer-activity-quiz-previous');
   assert.match(modalRoot.innerHTML, /情境推演（假设）：问题二？/, '未保存选择期间导航保持在当前题');
+  const answerWritesBeforeRetry = requests.filter((request) => request.action === 'customer_activity_answer' && request.questionId === 'q2').length;
   await click('customer-activity-quiz-retry');
   assert.equal(currentQuiz().answers.q2, 'q2-o2', '重试成功后确认服务端已保存答案');
+  assert.equal(requests.filter((request) => request.action === 'customer_activity_answer' && request.questionId === 'q2').length, answerWritesBeforeRetry, '用户明确重试先 GET 对账；发现服务端已经保存时不重复 POST 答案');
 
   hooks.reloadView();
   assert.match(modalRoot.innerHTML, /情境推演（假设）：问题一？/, '刷新后定位到第一个未选择的情境题');

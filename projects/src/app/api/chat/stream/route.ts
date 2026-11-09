@@ -23,9 +23,11 @@ import { authGuard } from '@/lib/auth/guard';
 import { npcChatRequestSchema } from '@/lib/contracts/ai';
 import type { GameCommand } from '@/lib/contracts/game';
 import { getProjectOneNpc, type ContactChannel } from '@/lib/game/project-one';
+import { projectOneOnboardingPrompt } from '@/lib/game/project-one-onboarding';
 import { BID_RULES, getProcurementRuleAccess } from '@/lib/game/bid-rules';
 import { loadActivityDecisionConfigForMatching as loadActivityDecisionConfig } from '@/lib/designer/customer-activity-config-repository';
 import { isCustomerActivityReplyContext, isHospitalityCustomerActivityContext, isNaturalLanguageCustomerActivityInvitation, isNaturalLanguageInvitation } from '@/lib/game/invitation-intent';
+import { canUseExternalReferralForInvitation, chargeExternalReferral, hasExternalReferral } from '@/lib/game/external-referral';
 import {
   commitGameCommand,
   appendGameEvent,
@@ -262,8 +264,12 @@ export async function POST(req: NextRequest) {
   if (isCustomerActivityBlockingGameActions(initialState)) return jsonResponse('CUSTOMER_ACTIVITY_PLANNING_ACTIVE', 409);
   if (!initialState.unlockedNpcIds.includes(npcId)) return jsonResponse('NPC尚未解锁', 403);
 
-  const npc = getProjectOneNpc(npcId);
-  if (!npc) return jsonResponse('NPC不存在', 404);
+  const baseNpc = getProjectOneNpc(npcId);
+  if (!baseNpc) return jsonResponse('NPC不存在', 404);
+  // The frozen onboarding role takes precedence over the bundled default in
+  // every prompt and identity guard for this session.
+  const onboardingPerson = initialState.onboardingScenario?.brief.people.find((person) => person.id === npcId);
+  const npc = onboardingPerson ? { ...baseNpc, title: onboardingPerson.title } : baseNpc;
   const contact = initialState.npcContacts[npcId];
   const meeting = initialState.activeMeeting;
   const requestedChannel = parsed.data.channel === 'wechat' ? 'online' : parsed.data.channel;
@@ -304,38 +310,6 @@ export async function POST(req: NextRequest) {
     return jsonResponse('ATTACHMENT_CHANNEL_INVALID', 409);
   }
 
-  if (channel !== 'offline') {
-    const cooldownUntil = contact.channelCooldownUntil[channel] ?? 0;
-    if (cooldownUntil > initialState.simulatedClockMinutes) {
-      return jsonResponse('CHANNEL_COOLDOWN_ACTIVE', 409, { cooldownUntil });
-    }
-    if (!(channel === 'work_phone' && initialState.activePhoneCall?.npcId === npcId)) {
-      try {
-        // Pure preflight: avoid invoking the model when the action cannot fit in
-        // today's capacity or the player cannot afford the entire action.
-        consumeChatCommunicationTime(initialState, channel, attachments.length > 0);
-      } catch (error) {
-        return jsonResponse(error instanceof Error ? error.message : 'TIME_RESOURCE_INSUFFICIENT', 409);
-      }
-    }
-  }
-
-  let attachmentTreatments: ChatAttachmentTreatment[] = [];
-  if (attachments.length > 0) {
-    attachmentTreatments = await decideChatAttachments({
-      npcId,
-      channel: channel as 'email' | 'online',
-      playerText: message,
-      attachments,
-    });
-  }
-
-  // Decide a written delivery outcome before treating any wording as an
-  // invitation. A read-without-reply must stay silent and must never be
-  // converted into an accepted, declined, or counter-offered appointment.
-  const messageResponseDecision = channel === 'email' || channel === 'online'
-    ? await decideFormalMessageResponse({ npcId, channel, playerMessage: message })
-    : { responseAction: 'reply' as const };
   let recentHistory;
   try {
     recentHistory = await getNpcConversation(gameSessionId, npcId, 12);
@@ -348,15 +322,63 @@ export async function POST(req: NextRequest) {
   }));
   const activityReplyContextActive = isCustomerActivityReplyContext(message, recentActivityConversation);
   const hospitalityActivityContext = isHospitalityCustomerActivityContext(message, recentActivityConversation);
+  const externalReferralInvitation = channel !== 'offline'
+    && intent !== 'call_connect'
+    && canUseExternalReferralForInvitation(initialState.referrals, npcId, message)
+    && !activityReplyContextActive;
+  const existingReferralAppointment = externalReferralInvitation
+    ? initialState.appointments.find((item) => item.npcId === npcId && item.status === 'accepted')
+    : undefined;
+
+  if (channel !== 'offline') {
+    const cooldownUntil = contact.channelCooldownUntil[channel] ?? 0;
+    if (!existingReferralAppointment && cooldownUntil > initialState.simulatedClockMinutes) {
+      return jsonResponse('CHANNEL_COOLDOWN_ACTIVE', 409, { cooldownUntil });
+    }
+    if (!existingReferralAppointment && !(channel === 'work_phone' && initialState.activePhoneCall?.npcId === npcId)) {
+      try {
+        // Pure preflight: avoid invoking the model when the action cannot fit in
+        // today's capacity or the player cannot afford the entire action.
+        consumeChatCommunicationTime(initialState, channel, attachments.length > 0);
+      } catch (error) {
+        return jsonResponse(error instanceof Error ? error.message : 'TIME_RESOURCE_INSUFFICIENT', 409);
+      }
+    }
+  }
+
+  let attachmentTreatments: ChatAttachmentTreatment[] = [];
+  if (attachments.length > 0) {
+    attachmentTreatments = externalReferralInvitation
+      ? attachments.map((attachment) => ({
+        ...attachment,
+        viewed: false,
+        impact: `客户已收到《${attachment.fileName}》，但本轮未查看；附件正文未参与判断。`,
+      }))
+      : await decideChatAttachments({
+        npcId,
+        channel: channel as 'email' | 'online',
+        playerText: message,
+        attachments,
+      });
+  }
+
+  // Decide a written delivery outcome before treating any wording as an
+  // invitation. A read-without-reply must stay silent and must never be
+  // converted into an accepted, declined, or counter-offered appointment.
+  const messageResponseDecision = externalReferralInvitation
+    ? { responseAction: 'reply' as const }
+    : channel === 'email' || channel === 'online'
+    ? await decideFormalMessageResponse({ npcId, channel, playerMessage: message })
+    : { responseAction: 'reply' as const };
   const replyReviewDiagnostics: CustomerActivityReplyDiagnostic[] = [];
 
-  // Natural-language invitations use the same deterministic command path as
-  // the former dedicated UI. This keeps visit extraction, acceptance or
-  // counter-offers, action-point charging, notifications and idempotency under
-  // the server-side game state machine. The model still handles ordinary
-  // phone/email/WeChat conversation.
+  // Natural-language invitations use the deterministic command path so visit
+  // extraction, action-point charging, notifications and idempotency stay in
+  // the server-side game state machine. A trusted external referral makes an
+  // eligible Wang Defu invitation independent of model availability.
   if (channel !== 'offline'
     && intent !== 'call_connect'
+    && (!hasExternalReferral(initialState.referrals, npcId) || externalReferralInvitation)
     && messageResponseDecision.responseAction === 'reply'
     && !activityReplyContextActive
     && !isNaturalLanguageCustomerActivityInvitation(message)
@@ -374,21 +396,29 @@ export async function POST(req: NextRequest) {
       },
     };
     try {
-      const execution = executeGameCommand(initialState, invitationCommand);
+      const execution = executeGameCommand(initialState, invitationCommand, { now: Date.now() });
       const appointment = execution.result.appointment;
       const appointmentId = appointment && typeof appointment === 'object' && 'id' in appointment && typeof appointment.id === 'string'
         ? appointment.id
         : null;
-      const reply = appointmentId
+      const appointmentReused = execution.result.reused === true;
+      const reply = appointmentReused
+        ? '已有有效预约，本次沿用原安排；如需调整请走后续改约流程。'
+        : appointmentId
         ? initialState.notifications.find((item) => item.id === `invite-response:${appointmentId}`)?.body
           ?? execution.state.notifications.find((item) => item.id === `invite-response:${appointmentId}`)?.body
         : undefined;
-      const stateWithAttachmentCost = attachments.length > 0
-        ? consumeGameTime(execution.state, 0, { pointCost: 1 })
+      const attachmentActionPoints = !appointmentReused && attachments.length > 0 ? 1 : 0;
+      let stateWithAttachmentCost = attachmentActionPoints > 0
+        ? consumeGameTime(execution.state, 0, { pointCost: attachmentActionPoints })
         : execution.state;
-      // Invitation extraction and message-response classification may have
-      // waited on AI. Recheck the persisted deadline before this fast branch
-      // creates an appointment or writes a transcript.
+      if (externalReferralInvitation && attachmentActionPoints > 0) {
+        stateWithAttachmentCost = {
+          ...stateWithAttachmentCost,
+          referrals: chargeExternalReferral(stateWithAttachmentCost.referrals, npcId, attachmentActionPoints),
+        };
+      }
+      // Recheck the persisted deadline before the command writes a transcript.
       const latest = await synchronizeOwnedGameTimer(gameSessionId, userId);
       if (latest.state.status !== 'playing') throw new Error('GAME_ALREADY_FINISHED');
       if (latest.state.version !== expectedVersion) throw new Error('STATE_VERSION_CONFLICT');
@@ -401,6 +431,8 @@ export async function POST(req: NextRequest) {
         eventType: execution.eventType,
         eventPayload: {
           ...execution.eventPayload,
+          chargedActionPoints: (typeof execution.eventPayload.chargedActionPoints === 'number' ? execution.eventPayload.chargedActionPoints : 0)
+            + attachmentActionPoints,
           source: 'natural_language_chat',
           sourceChannel: channel,
           emailAttachmentCount: emailAttachmentList.length,
@@ -412,6 +444,7 @@ export async function POST(req: NextRequest) {
           deliveryStatus: 'replied',
           channel,
           invitation: true,
+          appointmentReused,
           emailAttachments: emailAttachmentList,
           attachments: attachmentTreatments,
         },
@@ -444,6 +477,7 @@ export async function POST(req: NextRequest) {
           deliveryStatus: 'replied',
           channel,
           invitation: true,
+          appointmentReused,
           emailAttachments: emailAttachmentList,
           attachments: attachmentTreatments,
           appointment: execution.result.appointment,
@@ -636,6 +670,15 @@ export async function POST(req: NextRequest) {
   const messages: ChatMessage[] = [
     { role: 'system', content: `${promptConfig.liveCustomerPrompt || CUSTOMER_PROMPT()}\n\n## 当前人物角色提示\n${rolePrompt}` },
     { role: 'system', content: npcSpeakerIdentityInstruction(npc, channel) },
+    ...(initialState.onboardingScenario
+      ? [{ role: 'system' as const, content: projectOneOnboardingPrompt(initialState.onboardingScenario, npcId) }]
+      : []),
+    ...(hasExternalReferral(initialState.referrals, npcId)
+      ? [{
+        role: 'system' as const,
+        content: '已核验事实：该联系人已通过一位未在系统中的外部工作关系引荐，与销售方建立联系。不要编造引荐人姓名，也不要据此改写支持度、愉悦度或其他关系指标。',
+      }]
+      : []),
     ...(playerProposedCustomerActivity
       ? [{ role: 'system' as const, content: customerActivityReplyInstruction(npc.category, hospitalityActivityContext) }]
       : []),
