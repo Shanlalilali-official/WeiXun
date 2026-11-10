@@ -1,14 +1,19 @@
 # 政企销售 AI 竞标实训游戏
 
-## 2026-10-30 工作交接
+面向政企和 B2B 销售的 AI 竞标实训平台。项目一通过客户对话、关系经营、竞品博弈和结算复盘训练销售过程。
 
-完整说明和日常操作请读 [交接与操作手册](docs/handover/README.md)，数据迁移请读 [恢复手册](docs/handover/DATA_RESTORE.md)，本次数据/验证范围请读 [交接核验记录](docs/handover/DELIVERY_REPORT.md)。页面/API清单、架构、配置、已知问题和故障排查均在同目录。
+## 分支说明
+
+- **`main`** 是仓库默认分支。克隆后默认进入这条分支。
+- **`handover/2026-11-02-preview`** 包含最新的项目一开场、客户活动语义识别和设计师提示词编辑。查看[交接分支的当前功能、入口和启动说明](https://github.com/Shanlalilali-official/WeiXun/blob/handover/2026-11-02-preview/README.md)。
+
+## 交接资料
+
+日常操作见[交接与操作手册](docs/handover/README.md)，数据迁移见[恢复手册](docs/handover/DATA_RESTORE.md)，2026-10-30 的交付范围见[交接核验记录](docs/handover/DELIVERY_REPORT.md)。
 
 ## Windows 一键启动
 
-双击项目根目录的 `start-project.bat`。脚本会检查环境与构建产物、启动 `http://127.0.0.1:5000/` 并自动打开浏览器。运行期间不要关闭命令行窗口；按 `Ctrl+C` 或关闭窗口即可停止服务。
-
-首次使用仍需先完成 `projects/.env.local` 配置并安装依赖。正常重启电脑后无需再次安装或配置，直接双击脚本即可。
+先在 `projects/` 配置 `.env.local` 并使用 pnpm 9.x 安装依赖，详见[应用配置说明](projects/README.md)。再双击项目根目录的 `start-project.bat`。脚本检查环境与构建产物，并打开浏览器。默认地址为 `http://127.0.0.1:5000/`。如果端口已被其他服务占用，以脚本输出的地址为准。
 
 本目录是项目治理与版本管理根目录。现有 Next.js 工程保留在 `projects/`，外层 `harness/` 用于管理目标、项目上下文、长期记忆、迭代计划和开发循环。
 
