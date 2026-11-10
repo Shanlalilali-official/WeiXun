@@ -46,6 +46,8 @@ type JevQuestion = {
   baselineInstructions: string;
   editable?: boolean;
   dynamicCandidates?: unknown;
+  runtimeBaselines?: Array<{ scope: string; instructions: string }>;
+  fixedBoundary?: string;
 };
 
 type JevTask = {
@@ -163,7 +165,7 @@ export default function JevConfigPage() {
   const selectedQuestion = selectedTask?.questions.find((question) => question.id === selectedQuestionId) ?? selectedTask?.questions[0];
   const selectedNpcProfile = npcProfiles.find((profile) => profile.id === selectedNpcId);
   const selectedCandidateProfile = candidateNpcProfiles.find((profile) => profile.id === selectedNpcId);
-  const hasTaskNpcProfile = Boolean(selectedTask?.state.fields.some((field) => ['npcProfile', 'candidateNpcProfiles'].includes(fieldKey(field))));
+  const hasTaskNpcProfile = Boolean(selectedTask?.state.fields.some((field) => ['npc', 'npcProfile', 'candidateNpcProfiles'].includes(fieldKey(field))));
   const hasTaskCandidateProfiles = Boolean(selectedTask?.state.fields.some((field) => fieldKey(field) === 'candidateNpcProfiles'));
   const selectedTaskConfig = selectedTask ? config.tasks[selectedTask.taskId] : undefined;
   const stateGuidance = selectedTaskConfig?.stateGuidance ?? '';
@@ -176,6 +178,11 @@ export default function JevConfigPage() {
     setNotice('');
     setConflict(false);
     try {
+      // Read deep links only in this client callback so the page remains safe
+      // to prerender without a useSearchParams Suspense boundary.
+      const query = new URLSearchParams(window.location.search);
+      const requestedTaskId = query.get('task') || '';
+      const requestedNpcId = query.get('npc') || '';
       const response = await fetch('/api/designer/jev-config', {
         headers: sessionHeaders(),
         cache: 'no-store',
@@ -193,12 +200,16 @@ export default function JevConfigPage() {
       setConfig(nextConfig);
       setSavedConfig(structuredClone(nextConfig));
       setRevision(Number.isInteger(result.revision) ? result.revision : 0);
-      setSelectedTaskId((current) => nextCatalog.some((task) => task.taskId === current) ? current : nextCatalog[0]?.taskId ?? '');
+      setSelectedTaskId((current) => nextCatalog.some((task) => task.taskId === requestedTaskId)
+        ? requestedTaskId
+        : nextCatalog.some((task) => task.taskId === current) ? current : nextCatalog[0]?.taskId ?? '');
       setSelectedQuestionId((current) => {
-        const task = nextCatalog.find((entry) => entry.taskId === selectedTaskId) ?? nextCatalog[0];
+        const task = nextCatalog.find((entry) => entry.taskId === requestedTaskId)
+          ?? nextCatalog.find((entry) => entry.taskId === selectedTaskId) ?? nextCatalog[0];
         return task?.questions.some((question) => question.id === current) ? current : task?.questions[0]?.id ?? '';
       });
       setSelectedNpcId((current) => {
+        if (nextNpcProfiles.some((profile) => profile.id === requestedNpcId)) return requestedNpcId;
         if (nextNpcProfiles.some((profile) => profile.id === current)) return current;
         return nextNpcProfiles[0]?.id ?? '';
       });
@@ -216,7 +227,7 @@ export default function JevConfigPage() {
   }, []);
 
   function updateStateGuidance(value: string) {
-    if (!selectedTask || config.decisionProvider !== 'jev') return;
+    if (!selectedTask) return;
     setConfig((current) => ({
       ...current,
       tasks: {
@@ -231,7 +242,7 @@ export default function JevConfigPage() {
   }
 
   function updateQuestionInstruction(value: string) {
-    if (!selectedTask || !selectedQuestion || config.decisionProvider !== 'jev') return;
+    if (!selectedTask || !selectedQuestion) return;
     setConfig((current) => ({
       ...current,
       tasks: {
@@ -249,7 +260,7 @@ export default function JevConfigPage() {
   }
 
   function restoreCurrentDefault() {
-    if (!selectedTask || config.decisionProvider !== 'jev') return;
+    if (!selectedTask) return;
     if (selectedQuestion) {
       updateQuestionInstruction('');
       setNotice('已将当前题目恢复为默认说明；保存后生效。');
@@ -309,8 +320,8 @@ export default function JevConfigPage() {
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-700"><BrainCircuit className="h-5 w-5" /></span>
             <div>
-              <h1 className="text-lg font-semibold text-slate-900">Jev 决策配置</h1>
-              <p className="mt-0.5 text-xs text-slate-500">查看决策上下文，并编辑状态补充说明与题目自定义说明。</p>
+            <h1 className="text-lg font-semibold text-slate-900">业务决策提示词</h1>
+              <p className="mt-0.5 text-xs text-slate-500">查看后端决策上下文，并编辑电话/邮件应答、拜访推进和活动开展等结构化判断说明。</p>
             </div>
           </div>
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
@@ -319,10 +330,16 @@ export default function JevConfigPage() {
             </span>
             <button
               onClick={restoreCurrentDefault}
-              disabled={loading || saving || !selectedTask || config.decisionProvider !== 'jev'}
+              disabled={loading || saving || !selectedTask}
               className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <RotateCcw className="h-4 w-4" />{selectedQuestion ? '恢复当前问题默认值' : '清空状态补充说明'}
+            </button>
+            <button
+              onClick={() => router.push('/designer/runtime-prompts')}
+              className="rounded-lg border border-violet-300 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-50"
+            >
+              编辑运行时业务规则 →
             </button>
             <button
               onClick={() => void save()}
@@ -338,7 +355,7 @@ export default function JevConfigPage() {
       <main className="mx-auto max-w-[1560px] px-4 py-5 sm:px-6 sm:py-6">
         <div className="mb-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-950">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
-          <p>状态字段说明、题目 key、类型与判定标准为只读。Jev 模式下，状态补充说明用于引导 Jev 如何理解状态；题目自定义说明填写后会替换默认说明，留空则沿用默认。</p>
+          <p>状态字段说明、题目 key、类型与判定标准为只读。状态补充说明和题目自定义说明会随 Jev 或现有 LLM 一并发送；填写后替换或补充默认说明，留空则沿用默认。</p>
         </div>
         <section className="mb-4 rounded-xl border border-blue-200 bg-white p-4 shadow-sm" aria-labelledby="decision-provider-heading">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -377,7 +394,7 @@ export default function JevConfigPage() {
           </fieldset>
           {config.decisionProvider === 'llm' && (
             <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-5 text-slate-600" role="status">
-              当前为 LLM 模式。下方状态补充说明和题目自定义说明是 Jev 专用配置，现已暂停应用；切回 Jev 后会恢复使用，配置内容不会被清除。
+              当前为 LLM 模式。下方状态补充说明和题目自定义说明仍会随同一 typed 请求发送；题目 key、类型、候选和服务端校验不受编辑影响。
             </p>
           )}
         </section>
@@ -567,15 +584,15 @@ export default function JevConfigPage() {
                       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                         <label htmlFor="jev-state-guidance" className="text-xs font-semibold text-slate-800">Jev state guidance</label>
                         <div className="flex items-center gap-2">
-                          <span className="text-[10px] text-slate-500">{config.decisionProvider === 'llm' ? 'LLM 模式下暂停应用' : '补充说明；不替代动态状态内容'}</span>
-                          <button type="button" onClick={() => updateStateGuidance('')} disabled={loading || saving || config.decisionProvider !== 'jev' || !stateGuidance} className="rounded px-1.5 py-1 text-[10px] font-medium text-slate-500 hover:bg-white hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-40">清空</button>
+                          <span className="text-[10px] text-slate-500">补充说明；不替代动态状态内容</span>
+                          <button type="button" onClick={() => updateStateGuidance('')} disabled={loading || saving || !stateGuidance} className="rounded px-1.5 py-1 text-[10px] font-medium text-slate-500 hover:bg-white hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-40">清空</button>
                         </div>
                       </div>
                       <textarea
                         id="jev-state-guidance"
                         value={stateGuidance}
                         onChange={(event) => updateStateGuidance(event.target.value)}
-                        disabled={loading || saving || config.decisionProvider !== 'jev'}
+                        disabled={loading || saving}
                         maxLength={8000}
                         placeholder="填写 Jev 解读这些状态字段时应遵循的补充原则。留空表示不添加额外说明。"
                         className="min-h-32 w-full resize-y rounded-lg border border-slate-300 bg-white p-3 text-xs leading-5 text-slate-800 outline-none placeholder:text-slate-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/15 disabled:cursor-not-allowed disabled:bg-slate-100"
@@ -604,20 +621,40 @@ export default function JevConfigPage() {
                         <div className="rounded-lg border border-slate-200 bg-white p-3">
                           <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">默认题目说明 · 只读</div>
                           <pre className="whitespace-pre-wrap break-words font-sans text-[11px] leading-5 text-slate-700">{selectedQuestion.baselineInstructions || '此题没有额外的默认说明。'}</pre>
+                          {selectedQuestion.runtimeBaselines && selectedQuestion.runtimeBaselines.length > 1 && (
+                            <div className="mt-3 border-t border-slate-100 pt-3">
+                              <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">实际调用范围 · 只读</div>
+                              <div className="space-y-2">
+                                {selectedQuestion.runtimeBaselines.map((baseline) => (
+                                  <div key={baseline.scope} className="rounded bg-slate-50 p-2">
+                                    <div className="text-[10px] font-semibold text-slate-600">{baseline.scope}</div>
+                                    <p className="mt-1 text-[11px] leading-5 text-slate-700">{baseline.instructions}</p>
+                                  </div>
+                                ))}
+                              </div>
+                              <p className="mt-2 text-[10px] leading-4 text-slate-500">同一自定义说明会附加到这些受控调用；题目键、候选、合规边界和服务端校验保持不变。</p>
+                            </div>
+                          )}
+                          {selectedQuestion.fixedBoundary && (
+                            <div className="mt-3 border-t border-slate-100 pt-3">
+                              <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400"><LockKeyhole className="h-3.5 w-3.5" />固定系统边界 · 只读</div>
+                              <p className="text-[11px] leading-5 text-slate-700">{selectedQuestion.fixedBoundary}</p>
+                            </div>
+                          )}
                         </div>
                       </div>
                       <div className="border-t border-slate-200 bg-blue-50/50 p-4">
                         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                          <label htmlFor="jev-question-instructions" className="text-xs font-semibold text-slate-800">Jev 自定义题目说明（填写后替换默认说明）</label>
-                          <span className="text-[10px] text-slate-500">{config.decisionProvider === 'llm' ? 'LLM 模式下暂停应用' : questionInstruction.trim() ? '当前使用自定义说明' : '留空时使用默认说明'}</span>
+                          <label htmlFor="jev-question-instructions" className="text-xs font-semibold text-slate-800">自定义题目说明（Jev / LLM 均生效）</label>
+                          <span className="text-[10px] text-slate-500">{questionInstruction.trim() ? '当前使用自定义说明' : '留空时使用默认说明'}</span>
                         </div>
                         <textarea
                           id="jev-question-instructions"
                           value={questionInstruction}
                           onChange={(event) => updateQuestionInstruction(event.target.value)}
-                          disabled={loading || saving || config.decisionProvider !== 'jev' || selectedQuestion.editable === false}
+                          disabled={loading || saving || selectedQuestion.editable === false}
                           maxLength={4000}
-                          placeholder={config.decisionProvider === 'llm' ? '当前使用 LLM 模式；切回 Jev 后可继续编辑此说明。' : selectedQuestion.editable === false ? '此问题暂不开放自定义说明。' : '留空则沿用上方默认题目说明。填写后将以此内容替换默认说明。'}
+                          placeholder={selectedQuestion.editable === false ? '此问题暂不开放自定义说明。' : '留空则沿用上方默认题目说明。填写后将以此内容替换默认说明。'}
                           className="min-h-36 w-full resize-y rounded-lg border border-slate-300 bg-white p-3 text-xs leading-5 text-slate-800 outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 disabled:cursor-not-allowed disabled:bg-slate-100"
                         />
                         <p className="mt-1 text-right text-[10px] text-slate-400">{questionInstruction.length}/4000 字</p>

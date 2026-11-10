@@ -23,6 +23,7 @@ import {
   startCustomerActivityPlanning,
   submitCustomerActivityPlan,
   toPublicCustomerActivityTask,
+  toPublicUnavailableCustomerActivityNotice,
   type CustomerActivityFeasibilityDecision,
   type CustomerActivityConversationMessage,
   type CustomerActivityOrganizationMember,
@@ -670,19 +671,17 @@ async function testSalesOnlyDetectionDiagnostics() {
     load: async () => ({ id: 'test-session', userId: 'test-user', state: storedState }),
     detect: async (args, dependencies) => {
       assert.deepEqual(args.messages, [salesOnlyMessage]);
-      dependencies?.onDiagnostic?.({
-        event: 'candidate_accepted',
-        reason: 'sales_proposal_enters_feasibility_without_customer_response',
-        activityType: 'technical_meeting',
-        messageId: salesOnlyMessage.messageId,
-        details: {
-          detection_source: 'deterministic_sales_proposal',
-          model_skipped_reason: 'sales_proposal_guaranteed_by_rule',
-          confidence: 1,
-          raw_output: 'must not be persisted',
+      return detectCustomerActivityProposals(args, {
+        invoker: async (modelMessages) => {
+          assert.ok(modelMessages[0]?.content.includes('活动提议语义识别器'));
+          return JSON.stringify({ activities: [{
+            type: 'technical_meeting',
+            initiator: 'sales',
+            proposal: { messageId: salesOnlyMessage.messageId, quote: '下周要不要开一次技术交流会' },
+          }] });
         },
+        onDiagnostic: dependencies?.onDiagnostic,
       });
-      return [salesOnlyCandidate];
     },
     decide: async (_candidate, _snapshot, config) => ({
       decision: 'allow', mode: 'ai', configRevision: config.revision, reason: '整体条件允许继续。',
@@ -698,8 +697,7 @@ async function testSalesOnlyDetectionDiagnostics() {
   const events = allowed.state.customerActivityDiagnostics ?? [];
   assert.ok(events.some((item) => item.event === 'detection_started'));
   const accepted = events.find((item) => item.event === 'candidate_accepted');
-  assert.equal(accepted?.details?.detection_source, 'deterministic_sales_proposal');
-  assert.equal(accepted?.details?.model_skipped_reason, 'sales_proposal_guaranteed_by_rule');
+  assert.equal(accepted?.details?.detection_source, 'llm_semantic_detection');
   assert.equal('raw_output' in (accepted?.details ?? {}), false, 'diagnostics never store arbitrary model output');
   assert.ok(events.some((item) => item.event === 'candidate_count' && item.details?.candidate_count === 1));
   const allowDecision = events.find((item) => item.event === 'threshold_decision');
@@ -708,6 +706,63 @@ async function testSalesOnlyDetectionDiagnostics() {
   assert.equal(events.at(-1)?.event, 'task_created');
   const publicState = toPlayerVisibleGameState(allowed.state);
   assert.equal('customerActivityDiagnostics' in publicState, false, 'internal activity diagnostics never cross the player projection');
+
+  const emptyModelDiagnostics: Array<{ event: string }> = [];
+  const modelEmpty = await detectCustomerActivityProposals({
+    conversationEnded: true, conversationId: 'phone:model-empty', npcId: 'P1-001', messages: [salesOnlyMessage],
+  }, {
+    invoker: async () => JSON.stringify({ activities: [] }),
+    onDiagnostic: (diagnostic) => emptyModelDiagnostics.push(diagnostic),
+  });
+  assert.deepEqual(modelEmpty, [], 'keyword-like text is not promoted when the semantic model returns no proposal');
+  assert.ok(emptyModelDiagnostics.some((item) => item.event === 'model_response'));
+  await assert.rejects(() => detectCustomerActivityProposals({
+    conversationEnded: true, conversationId: 'phone:model-error', npcId: 'P1-001', messages: [salesOnlyMessage],
+  }, { invoker: async () => { throw new Error('temporary detector outage'); } }),
+  (error) => error instanceof CustomerActivityDetectionError && error.code === 'provider_unavailable',
+  'a detector error does not promote a keyword-like message as fallback');
+
+  const withdrawnMessages = [
+    salesOnlyMessage,
+    { messageId: 'sales-only-withdrawal', speaker: 'sales' as const, text: '这次取消技术交流会，后续再确认。' },
+  ];
+  const withdrawnCandidates = await detectCustomerActivityProposals({
+    conversationEnded: true, conversationId: 'phone:model-withdrawal', npcId: 'P1-001', messages: withdrawnMessages,
+  }, { invoker: async () => JSON.stringify({ activities: [] }) });
+  assert.deepEqual(withdrawnCandidates, [], 'the model can classify a later seller withdrawal without creating a task');
+
+  const historicalMessage = {
+    messageId: 'sales-historical-meeting',
+    speaker: 'sales' as const,
+    text: '上周已经举办过一次技术交流会，效果不错。',
+  };
+  const historicalCandidates = await detectCustomerActivityProposals({
+    conversationEnded: true, conversationId: 'email:model-historical', npcId: 'P1-001', messages: [historicalMessage],
+  }, { invoker: async () => JSON.stringify({ activities: [] }) });
+  assert.deepEqual(historicalCandidates, [], 'a historical activity mention remains absent when the model finds no new proposal');
+
+  const idiomaticInvite = {
+    messageId: 'sales-idiomatic-meal-invite',
+    speaker: 'sales' as const,
+    text: '刘老师，周末找家小馆子坐坐，边尝尝当地菜边聊聊项目近况，您看合适吗？',
+  };
+  assert.equal(/技术交流会|技术研讨|吃(?:个|顿)?(?:饭|便饭)|用餐|聚餐|饭局|喝酒|喝一杯|小酌/u.test(idiomaticInvite.text), false,
+    'the idiomatic invite does not contain the existing activity keywords');
+  const idiomaticCandidates = await detectCustomerActivityProposals({
+    conversationEnded: true, conversationId: 'email:idiomatic-invite', npcId: 'P1-001', messages: [idiomaticInvite],
+  }, {
+    invoker: async (modelMessages) => {
+      assert.ok(modelMessages[0]?.content.includes('活动提议语义识别器'));
+      return JSON.stringify({ activities: [{
+        type: 'hospitality',
+        initiator: 'sales',
+        proposal: { messageId: idiomaticInvite.messageId, quote: idiomaticInvite.text },
+      }] });
+    },
+  });
+  assert.equal(idiomaticCandidates.length, 1, 'the model can classify an idiomatic meal invitation without a keyword match');
+  assert.equal(idiomaticCandidates[0]?.type, 'hospitality');
+  assert.equal(idiomaticCandidates[0]?.proposalMessageId, idiomaticInvite.messageId);
 
   const rejectedCandidate = {
     ...salesOnlyCandidate,
@@ -741,6 +796,23 @@ async function testSalesOnlyDetectionDiagnostics() {
   assert.equal(rejectDecision?.details?.threshold_decision, 'reject');
   assert.equal(rejectDecision?.reason, '组织整体支持条件未达到。');
   assert.equal(rejected.state.customerActivities.tasks.length, 0);
+  const publicUnavailable = toPublicUnavailableCustomerActivityNotice(rejected.state.customerActivities.decisions[0]!);
+  assert.deepEqual(Object.keys(publicUnavailable ?? {}), ['id', 'npcId', 'type', 'decidedAt'],
+    'the unavailable notice uses the narrow public projection only');
+  assert.equal(JSON.stringify(publicUnavailable).includes('组织整体支持条件未达到'), false,
+    'the public unavailable notice hides the internal feasibility reason');
+  const needMoreNotice = toPublicUnavailableCustomerActivityNotice({
+    ...rejected.state.customerActivities.decisions[0]!,
+    decision: 'need_more',
+    reason: '还需要补充条件。',
+  });
+  assert.equal(needMoreNotice, null,
+    'a legacy persisted need_more remains private and does not create a new unavailable notice');
+  assert.equal(toPublicUnavailableCustomerActivityNotice({
+    ...rejected.state.customerActivities.decisions[0]!,
+    decision: 'allow',
+    reason: '可以推进。',
+  }), null, 'allow decisions do not create an unavailable notice');
 
   let failedState = queueCustomerActivityDetection(createProjectOneState(), {
     conversationId: 'phone:detection-failure',
@@ -762,9 +834,33 @@ async function testSalesOnlyDetectionDiagnostics() {
     },
   });
   assert.equal(failed.state.customerActivityDetectionQueue.length, 1, 'failed detection remains retryable');
+  assert.equal(failed.state.customerActivities.decisions.length, 0,
+    'a provider failure does not persist a decision and therefore cannot create an unavailable notice');
   const failureDiagnostics = failed.state.customerActivityDiagnostics ?? [];
   assert.ok(failureDiagnostics.some((item) => item.event === 'model_error'));
   assert.ok(failureDiagnostics.some((item) => item.event === 'detection_failed'));
+
+  const failureVersion = failed.state.version;
+  let repeatedDetectorCalls = 0;
+  let repeatedCommitCalls = 0;
+  const repeatedFailure = await processPendingCustomerActivityDetections('test-session', 'test-user', {
+    load: async () => ({ id: 'test-session', userId: 'test-user', state: failedState }),
+    detect: async (_args, dependencies) => {
+      repeatedDetectorCalls += 1;
+      dependencies?.onDiagnostic?.({ event: 'model_error', reason: 'provider_unavailable' });
+      throw new CustomerActivityDetectionError('provider_unavailable');
+    },
+    commit: async (args) => {
+      repeatedCommitCalls += 1;
+      failedState = { ...args.state, version: failedState.version + 1 };
+      return { state: failedState, result: args.result ?? {}, replayed: false };
+    },
+  });
+  assert.equal(repeatedDetectorCalls, 1, 'the retry rechecks the still-queued conversation');
+  assert.equal(repeatedCommitCalls, 0, 'the same provider failure does not write another diagnostic checkpoint');
+  assert.equal(repeatedFailure.state.version, failureVersion, 'repeating the same failure does not bump the session version');
+  assert.equal(repeatedFailure.state.customerActivityDetectionQueue.length, 1,
+    'the conversation remains retryable after a deduplicated failure');
 
   let bounded = createProjectOneState();
   for (let index = 0; index < 105; index += 1) {
@@ -1530,7 +1626,11 @@ async function testHospitalityFormalServiceFlow() {
       load: async () => ({ id: `session-${key}`, userId: 'test-user', state: storedState }),
       detect: async (args) => detectCustomerActivityProposals(args, {
         invoker: async () => {
-          if (messages === salesMessages) return JSON.stringify({ activities: [] });
+          if (messages === salesMessages) return JSON.stringify({ activities: [{
+            type: 'hospitality',
+            initiator: 'sales',
+            proposal: { messageId: salesMessages[0]!.messageId, quote: salesMessages[0]!.text },
+          }] });
           const customerProposal = messages.find((message) => message.speaker === 'customer' && /吃饭|聚餐|饭局|喝酒/u.test(message.text));
           const salesConfirmation = messages.find((message) => message.speaker === 'sales' && /吃饭|聚餐|饭局|喝酒/u.test(message.text));
           assert.ok(customerProposal && salesConfirmation, 'the customer proposal and sales confirmation are present in the ended conversation');

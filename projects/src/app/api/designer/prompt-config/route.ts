@@ -16,7 +16,9 @@ export const runtime = 'nodejs';
 
 const saveSchema = z.object({
   expectedRevision: z.number().int().min(0),
-  config: projectOnePromptConfigSchema,
+  // Older prompt-library clients do not know later JSON fields. Their narrow
+  // saves remain valid and are merged with the current server record below.
+  config: projectOnePromptConfigSchema.partial(),
 }).strict();
 
 const REGISTERED_CHANNEL_IDS = Object.keys(PROJECT_ONE_CHANNEL_MODIFIERS) as ProjectOneChannelId[];
@@ -37,32 +39,47 @@ function hasOwn<T extends object>(value: T | null | undefined, key: PropertyKey)
  */
 export function mergeEditablePromptConfig(
   current: z.infer<typeof projectOnePromptConfigSchema>,
-  requested: z.infer<typeof projectOnePromptConfigSchema>,
+  requested: Partial<z.infer<typeof projectOnePromptConfigSchema>>,
 ): z.infer<typeof projectOnePromptConfigSchema> {
   const npcRolePrompts: Record<string, NpcRolePrompt> = {};
   const npcChannelExceptions: Record<string, Record<string, string>> = {};
+  const npcChannelDecisionPrompts: Record<string, Record<'email' | 'work_phone', string>> = {};
 
   for (const npcId of PROJECT_ONE_FIVE_PERSON_IDS) {
     if (hasOwn(current.npcRolePrompts, npcId)) {
       npcRolePrompts[npcId] = current.npcRolePrompts[npcId];
     }
-    if (hasOwn(requested.npcRolePrompts, npcId)) {
-      npcRolePrompts[npcId] = requested.npcRolePrompts[npcId];
+    const requestedRolePrompts = requested.npcRolePrompts;
+    if (requestedRolePrompts && hasOwn(requestedRolePrompts, npcId)) {
+      npcRolePrompts[npcId] = requestedRolePrompts[npcId];
     }
 
     const currentExceptions = current.npcChannelExceptions[npcId];
-    const requestedExceptions = requested.npcChannelExceptions[npcId];
+    const requestedExceptions = requested.npcChannelExceptions?.[npcId];
     const mergedExceptions: Record<string, string> = {};
     for (const channelId of REGISTERED_CHANNEL_IDS) {
       if (hasOwn(currentExceptions, channelId)) {
         mergedExceptions[channelId] = currentExceptions[channelId];
       }
-      if (hasOwn(requestedExceptions, channelId)) {
+      if (requestedExceptions && hasOwn(requestedExceptions, channelId)) {
         mergedExceptions[channelId] = requestedExceptions[channelId];
       }
     }
     if (Object.keys(mergedExceptions).length > 0) {
       npcChannelExceptions[npcId] = mergedExceptions;
+    }
+
+    const currentDecisionPrompts = current.npcChannelDecisionPrompts[npcId];
+    const requestedDecisionPrompts = requested.npcChannelDecisionPrompts?.[npcId];
+    const mergedDecisionPrompts: Partial<Record<'email' | 'work_phone', string>> = {};
+    for (const channelId of ['email', 'work_phone'] as const) {
+      if (hasOwn(currentDecisionPrompts, channelId)) mergedDecisionPrompts[channelId] = currentDecisionPrompts[channelId];
+      if (requestedDecisionPrompts && hasOwn(requestedDecisionPrompts, channelId)) {
+        mergedDecisionPrompts[channelId] = requestedDecisionPrompts[channelId];
+      }
+    }
+    if (Object.keys(mergedDecisionPrompts).length > 0) {
+      npcChannelDecisionPrompts[npcId] = mergedDecisionPrompts as Record<'email' | 'work_phone', string>;
     }
   }
 
@@ -73,6 +90,7 @@ export function mergeEditablePromptConfig(
     supportTierThresholds: requested.supportTierThresholds ?? current.supportTierThresholds,
     npcRolePrompts,
     npcChannelExceptions,
+    npcChannelDecisionPrompts,
   };
 }
 

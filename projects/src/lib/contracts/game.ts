@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { emailAttachmentSchema } from '@/lib/contracts/ai';
-import { projectOneOnboardingIdSchema } from '@/lib/contracts/project-one-onboarding';
+import { projectOneOnboardingIdSchema, projectOneOnboardingSelectionSchema } from '@/lib/contracts/project-one-onboarding';
 
 const customerActivityCommandBaseSchema = {
   taskId: z.string().trim().min(1).max(512),
@@ -41,6 +41,19 @@ export const createGameSessionRequestSchema = z.object({
   scenarioCode: z.literal('project-1'),
   replaceExisting: z.boolean().default(false),
   onboardingScenarioId: projectOneOnboardingIdSchema.optional(),
+  onboardingSelection: projectOneOnboardingSelectionSchema.optional(),
+}).superRefine((request, context) => {
+  if (request.onboardingSelection && request.onboardingScenarioId !== 'custom') {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['onboardingScenarioId'], message: '自定义选择需要使用 custom 场景标识' });
+  }
+  if (request.onboardingScenarioId === 'custom' && !request.onboardingSelection) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['onboardingSelection'], message: '自定义场景需要提供选择内容' });
+  }
+  if (request.onboardingSelection
+    && request.onboardingSelection.industryId !== 'custom'
+    && request.onboardingSelection.businessId !== 'custom') {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['onboardingSelection'], message: '两项预设选择应使用原有场景路径' });
+  }
 });
 
 export const relationshipActionRequestSchema = z.object({

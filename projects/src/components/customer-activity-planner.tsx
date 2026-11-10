@@ -5,6 +5,7 @@ import {
   CUSTOMER_ACTIVITY_PLANNING_MS,
   type CustomerActivityType,
   type PublicCustomerActivityTask,
+  type PublicUnavailableCustomerActivityNotice,
 } from '@/lib/game/customer-activities';
 import type { PublicCustomerActivityQuiz } from '@/lib/game/customer-activity-quiz';
 import {
@@ -22,6 +23,7 @@ type ActivityEnvelope = {
   serverNow?: number | string;
   version?: number;
   state?: unknown;
+  unavailableNotices?: PublicUnavailableCustomerActivityNotice[];
   error?: string;
 };
 
@@ -36,6 +38,21 @@ const ACTIVITY_LABELS: Record<CustomerActivityType, string> = {
   case_site_visit: '案例现场参观',
   company_visit: '客户参观我们公司',
   hospitality: '吃饭或喝酒邀约',
+};
+
+const ACTIVITY_REJECTION_VERBS: Record<CustomerActivityType, string> = {
+  technical_meeting: '召开技术交流会',
+  case_site_visit: '进行案例现场参观',
+  company_visit: '参观我们公司',
+  hospitality: '参加这次餐叙',
+};
+
+const NPC_NAMES: Record<string, string> = {
+  'P1-001': '张建国',
+  'P1-002': '李明辉',
+  'P1-003': '王德福',
+  'P1-004': '赵晓晨',
+  'P1-005': '刘思琪',
 };
 
 function epoch(value: unknown): number | null {
@@ -68,6 +85,10 @@ function seenStorageKey(sessionId: string): string {
   return `customer-activity-seen:${sessionId}`;
 }
 
+function unavailableNoticeSeenStorageKey(sessionId: string): string {
+  return `customer-activity-rejected-decision-seen:${sessionId}`;
+}
+
 function readSeenActivities(sessionId: string): Set<string> {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(seenStorageKey(sessionId)) || '[]');
@@ -85,9 +106,28 @@ function saveSeenActivities(sessionId: string, seen: Set<string>): void {
   }
 }
 
+function readSeenUnavailableNotices(sessionId: string): Set<string> {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(unavailableNoticeSeenStorageKey(sessionId)) || '[]');
+    return new Set(Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSeenUnavailableNotices(sessionId: string, seen: Set<string>): void {
+  try {
+    localStorage.setItem(unavailableNoticeSeenStorageKey(sessionId), JSON.stringify([...seen]));
+  } catch {
+    // The server remains authoritative if browser storage is unavailable.
+  }
+}
+
 export function CustomerActivityPlanner({ sessionId, refreshSignal = 0, onGameState }: Props) {
   const [activities, setActivities] = useState<ActivityWithQuiz[]>([]);
+  const [unavailableNotices, setUnavailableNotices] = useState<PublicUnavailableCustomerActivityNotice[]>([]);
   const [seen, setSeen] = useState<Set<string>>(new Set());
+  const [seenUnavailableNotices, setSeenUnavailableNotices] = useState<Set<string>>(new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [quizQuestionIndex, setQuizQuestionIndex] = useState(0);
@@ -144,6 +184,7 @@ export function CustomerActivityPlanner({ sessionId, refreshSignal = 0, onGameSt
     if (Number.isInteger(body.version)) versionRef.current = body.version as number;
     activitiesRef.current = body.activities as ActivityWithQuiz[];
     setActivities(body.activities as ActivityWithQuiz[]);
+    if (Array.isArray(body.unavailableNotices)) setUnavailableNotices(body.unavailableNotices);
     if (body.state !== undefined) onGameStateRef.current?.(body.state);
     setLoadError('');
     return true;
@@ -220,6 +261,7 @@ export function CustomerActivityPlanner({ sessionId, refreshSignal = 0, onGameSt
       initializedSessionRef.current = sessionId;
       setActivities([]);
       activitiesRef.current = [];
+      setUnavailableNotices([]);
       setActiveId(null);
       setDraft('');
       draftRef.current = '';
@@ -237,6 +279,7 @@ export function CustomerActivityPlanner({ sessionId, refreshSignal = 0, onGameSt
       setAssessmentStart(null);
       const restoredSeen = readSeenActivities(sessionId);
       setSeen(restoredSeen);
+      setSeenUnavailableNotices(readSeenUnavailableNotices(sessionId));
     }
     // Refreshes after a conversation ends must not clear a task the user is
     // already drafting. A different session gets a clean, server-restored view.
@@ -260,6 +303,10 @@ export function CustomerActivityPlanner({ sessionId, refreshSignal = 0, onGameSt
   }, [sync]);
 
   const active = useMemo(() => activities.find((item) => item.id === activeId) ?? null, [activities, activeId]);
+  const nextUnavailableNotice = useMemo(() => [...unavailableNotices]
+    .filter((notice) => !seenUnavailableNotices.has(notice.id))
+    .sort((left, right) => left.decidedAt - right.decidedAt)[0] ?? null,
+  [unavailableNotices, seenUnavailableNotices]);
   const activeStatus = active?.status;
   const activeDeadlineAt = active?.deadlineAt;
   const activeQuizStatus = active?.quiz?.status;
@@ -584,6 +631,36 @@ export function CustomerActivityPlanner({ sessionId, refreshSignal = 0, onGameSt
     window.addEventListener('keydown', blockCloseKeys, true);
     return () => window.removeEventListener('keydown', blockCloseKeys, true);
   }, [active]);
+
+  const dismissUnavailableNotice = () => {
+    if (!nextUnavailableNotice) return;
+    setSeenUnavailableNotices((current) => {
+      const next = new Set(current);
+      next.add(nextUnavailableNotice.id);
+      saveSeenUnavailableNotices(sessionId, next);
+      return next;
+    });
+  };
+
+  const hasUnseenActivity = activities.some((task) => task.status !== 'submitted' || !seen.has(task.id));
+  if (!active && !hasUnseenActivity && nextUnavailableNotice) {
+    const npcName = NPC_NAMES[nextUnavailableNotice.npcId] ?? '该客户';
+    const activityVerb = ACTIVITY_REJECTION_VERBS[nextUnavailableNotice.type] ?? '开展该活动';
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm" role="presentation">
+        <section className="w-full max-w-lg rounded-3xl border border-white/20 bg-white shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="customer-activity-rejected-title">
+          <header className="bg-[#0B1736] px-6 py-5 text-white sm:px-8">
+            <div className="text-[10px] font-bold tracking-[0.18em] text-blue-300">客户活动</div>
+            <h2 id="customer-activity-rejected-title" className="mt-2 text-xl font-bold">暂无法安排活动</h2>
+          </header>
+          <div className="space-y-5 p-5 sm:p-8">
+            <p className="text-sm leading-7 text-slate-800">由于一些原因，客户{npcName}表示暂时无法{activityVerb}</p>
+            <div className="flex justify-end"><button type="button" onClick={dismissUnavailableNotice} className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700">知道了</button></div>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   if (!active) {
     if (!loadError) return null;

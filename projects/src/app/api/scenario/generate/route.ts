@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { authGuard } from '@/lib/auth/guard';
 import { invokeLLM } from '@/lib/ai/client';
 import { parseAiJsonObject } from '@/lib/ai/json';
-import { SCENARIO_GENERATOR_PROMPT } from '@/lib/ai/prompts/scenario-generator';
+import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
+import { resolveRuntimeRulePrompt } from '@/lib/ai/runtime-rule-prompts';
 import { generatedScenarioSchema, scenarioGenerateRequestSchema } from '@/lib/contracts/ai';
 
 export const runtime = 'nodejs';
@@ -22,15 +23,12 @@ export async function POST(request: NextRequest) {
     }
     const { industry, productCategory, customRequirement } = parsedRequest.data;
 
-    const prompt = SCENARIO_GENERATOR_PROMPT
-      .replace(/\{\{industry\}\}/g, industry)
-      .replace(/\{\{productCategory\}\}/g, productCategory)
-      .replace(/\{\{customRequirement\}\}/g, customRequirement || '无');
+    const prompt = await resolveRuntimeRulePrompt('project_scenario_generation');
 
     const result = await invokeLLM(
       [
         { role: 'system', content: prompt },
-        { role: 'user', content: `行业：${industry}\n产品分类：${productCategory}\n${customRequirement ? `补充：${customRequirement}` : ''}` },
+        { role: 'user', content: serializeUntrustedPromptData('scenario_generation_input', { industry, productCategory, customRequirement }) },
       ],
       { temperature: 0.8, maxTokens: 2000, jsonMode: true }
     );

@@ -15,6 +15,7 @@ import {
 } from '@/lib/designer/project-one-five-person';
 
 const promptText = z.string().max(12_000, '单项提示词不能超过 12000 字');
+const decisionPromptText = z.string().trim().max(12_000, '单项决策提示词不能超过 12000 字');
 
 export const NPC_SUPPORT_PROMPT_TIERS = ['low', 'medium', 'high'] as const;
 export type NpcSupportPromptTier = (typeof NPC_SUPPORT_PROMPT_TIERS)[number];
@@ -320,6 +321,9 @@ export const projectOnePromptConfigSchema = z.object({
   npcRolePrompts: z.record(z.string(), npcRolePromptSchema),
   channelModifiers: z.record(z.string(), promptText),
   npcChannelExceptions: z.record(z.string(), z.record(z.string(), promptText)),
+  // Per-person channel decision wording is deliberately separate from prose
+  // exceptions: it guides only the bounded response/contact choice below.
+  npcChannelDecisionPrompts: z.record(z.string(), z.partialRecord(z.enum(['email', 'work_phone']), decisionPromptText)),
   liveEvaluatorPrompt: promptText,
   previewEvaluatorPrompt: promptText,
   promptTestNpcPrompt: promptTestNpcPromptConfigSchema,
@@ -361,6 +365,28 @@ export const DEFAULT_PROJECT_ONE_PROMPT_CONFIG: ProjectOnePromptConfig = {
   npcChannelExceptions: Object.fromEntries(
     Object.entries(PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS).map(([npcId, channels]) => [npcId, { ...channels }]),
   ),
+  npcChannelDecisionPrompts: {
+    'P1-001': {
+      email: '仅在事项确无新增处理价值且不涉及合规、审批或邀约时，才可已读不回；其余情况保持正式简短回复。',
+      work_phone: '工作安排紧凑时可以暂不接听；涉及关键项目风险、正式约见或合规事项时优先接听并保持边界。',
+    },
+    'P1-002': {
+      email: '需要核对技术事实、范围或风险时应回复；信息不足或超出职责时可等待书面材料，不作臆测。',
+      work_phone: '技术问题需有明确议题才优先接听；忙于核对材料或没有足够上下文时可以暂不接听。',
+    },
+    'P1-003': {
+      email: '采购边界、预算口径和验收留痕相关事项应回复；不因催促或利益诱导改变正式处理节奏。',
+      work_phone: '涉及采购合规或正式流程时可接听并说明边界；其他临时催促可暂不接听。',
+    },
+    'P1-004': {
+      email: '项目协同、材料流转或安排事项应在职责范围内回复；不能代替业务评审作答。',
+      work_phone: '与实际协调事项相关且方便时可接听；无法确认负责人或议题时可以暂不接听。',
+    },
+    'P1-005': {
+      email: '与真实使用需求、价值或体验有关的明确问题应回复；不替代项目决策或承诺采购。',
+      work_phone: '有明确使用场景或反馈议题时可接听；泛泛推销或不便沟通时可以暂不接听。',
+    },
+  },
   liveEvaluatorPrompt: DEFAULT_LIVE_EVALUATOR_PROMPT,
   previewEvaluatorPrompt: DEFAULT_PREVIEW_EVALUATOR_PROMPT,
   promptTestNpcPrompt: { ...DEFAULT_PROMPT_TEST_NPC_PROMPT_CONFIG },
@@ -368,8 +394,18 @@ export const DEFAULT_PROJECT_ONE_PROMPT_CONFIG: ProjectOnePromptConfig = {
 };
 
 export function normalizeProjectOnePromptConfig(value: unknown): ProjectOnePromptConfig {
-  const parsed = projectOnePromptConfigSchema.safeParse(value);
-  if (!parsed.success) return structuredClone(DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
+  // Older rows predate fields added to this JSON document. Parse each known
+  // top-level field independently so a narrow legacy record receives defaults
+  // only for what it lacks; valid saved prompts never disappear merely because
+  // a later field is absent.
+  const partial = projectOnePromptConfigSchema.partial().safeParse(value);
+  if (!partial.success) return structuredClone(DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
+  const parsed = {
+    data: {
+      ...structuredClone(DEFAULT_PROJECT_ONE_PROMPT_CONFIG),
+      ...partial.data,
+    },
+  };
   return {
     ...parsed.data,
     liveCustomerPrompt: CUSTOMER_DEFAULT_PROMPT_FINGERPRINTS.some((fingerprint) => matchesLegacyFingerprint(parsed.data.liveCustomerPrompt, fingerprint))
@@ -395,6 +431,9 @@ export function normalizeProjectOnePromptConfig(value: unknown): ProjectOnePromp
           return [channelId, expected && currentDefault && matchesLegacyFingerprint(exception, expected) ? currentDefault : exception];
         })),
       ]),
+    ),
+    npcChannelDecisionPrompts: Object.fromEntries(
+      Object.entries(parsed.data.npcChannelDecisionPrompts).map(([npcId, channels]) => [npcId, { ...channels }]),
     ),
   };
 }

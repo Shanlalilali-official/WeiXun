@@ -78,7 +78,16 @@
       throw new Error('开场目录暂不可用，请稍后重试。');
     }
 
-    return { industries: industries, businesses: businesses, scenarios: scenarios };
+    var rawPracticeTemplate = source.practiceTemplate;
+    if (!rawPracticeTemplate || typeof rawPracticeTemplate !== 'object') {
+      throw new Error('开场目录暂不可用，请稍后重试。');
+    }
+    var practiceTemplate = normalizeBrief(rawPracticeTemplate);
+    if (practiceTemplate.id !== 'custom' || practiceTemplate.people.length !== 5) {
+      throw new Error('开场目录暂不可用，请稍后重试。');
+    }
+
+    return { industries: industries, businesses: businesses, scenarios: scenarios, practiceTemplate: practiceTemplate };
   }
 
   function requestCatalog() {
@@ -112,6 +121,8 @@
       id: displayText(source.id),
       industryId: displayText(source.industryId),
       businessId: displayText(source.businessId),
+      industryLabel: displayText(source.industryLabel),
+      businessLabel: displayText(source.businessLabel),
       projectName: displayText(source.projectName),
       clientName: displayText(source.clientName),
       description: displayText(source.description),
@@ -281,9 +292,29 @@
     industrySelect.setAttribute('aria-describedby', 'project-one-onboarding-industry-hint-' + id);
     industrySelect.disabled = true;
     industrySelect.appendChild(makeOption('', '请选择客户行业'));
+    var customIndustryEntry = element('div', 'po-custom-entry');
+    customIndustryEntry.hidden = true;
+    var customIndustryLabel = element('label', 'po-custom-label', '自定义客户行业（必填）');
+    customIndustryLabel.htmlFor = 'project-one-onboarding-custom-industry-' + id;
+    var customIndustryInput = element('input', 'po-custom-input');
+    customIndustryInput.id = customIndustryLabel.htmlFor;
+    customIndustryInput.name = 'customIndustry';
+    customIndustryInput.type = 'text';
+    customIndustryInput.maxLength = 80;
+    customIndustryInput.autocomplete = 'off';
+    customIndustryInput.disabled = true;
+    customIndustryInput.setAttribute('aria-describedby', 'project-one-onboarding-custom-industry-hint-' + id);
+    var customIndustryHint = element('p', 'po-field-hint po-custom-hint', '只作为练习标签，不会补造特定客户资料。');
+    customIndustryHint.id = 'project-one-onboarding-custom-industry-hint-' + id;
+    customIndustryEntry.appendChild(customIndustryLabel);
+    customIndustryEntry.appendChild(customIndustryInput);
+    customIndustryEntry.appendChild(customIndustryHint);
+    var industryHint = element('p', 'po-field-hint', '请选择客户所属行业。');
+    industryHint.id = 'project-one-onboarding-industry-hint-' + id;
     industryField.appendChild(industryLabel);
     industryField.appendChild(industrySelect);
-    industryField.appendChild(element('p', 'po-field-hint', '请选择客户所属行业。'));
+    industryField.appendChild(customIndustryEntry);
+    industryField.appendChild(industryHint);
 
     var businessField = element('div', 'po-field');
     var businessLabel = element('label', '', '我方主营业务');
@@ -294,11 +325,28 @@
     businessSelect.setAttribute('aria-describedby', 'project-one-onboarding-business-hint-' + id);
     businessSelect.disabled = true;
     businessSelect.appendChild(makeOption('', '请先选择客户行业'));
+    var customBusinessEntry = element('div', 'po-custom-entry');
+    customBusinessEntry.hidden = true;
+    var customBusinessLabel = element('label', 'po-custom-label', '自定义主营业务（必填）');
+    customBusinessLabel.htmlFor = 'project-one-onboarding-custom-business-' + id;
+    var customBusinessInput = element('input', 'po-custom-input');
+    customBusinessInput.id = customBusinessLabel.htmlFor;
+    customBusinessInput.name = 'customBusiness';
+    customBusinessInput.type = 'text';
+    customBusinessInput.maxLength = 80;
+    customBusinessInput.autocomplete = 'off';
+    customBusinessInput.disabled = true;
+    customBusinessInput.setAttribute('aria-describedby', 'project-one-onboarding-custom-business-hint-' + id);
+    var customBusinessHint = element('p', 'po-field-hint po-custom-hint', '只作为练习标签，不会补造特定客户资料。');
+    customBusinessHint.id = 'project-one-onboarding-custom-business-hint-' + id;
+    customBusinessEntry.appendChild(customBusinessLabel);
+    customBusinessEntry.appendChild(customBusinessInput);
+    customBusinessEntry.appendChild(customBusinessHint);
     var businessHint = element('p', 'po-field-hint', '先选择客户行业，再选择主营业务。');
     businessHint.id = 'project-one-onboarding-business-hint-' + id;
-    industryField.querySelector('.po-field-hint').id = 'project-one-onboarding-industry-hint-' + id;
     businessField.appendChild(businessLabel);
     businessField.appendChild(businessSelect);
+    businessField.appendChild(customBusinessEntry);
     businessField.appendChild(businessHint);
 
     var selectionSummary = element(
@@ -436,7 +484,11 @@
       briefStage: briefStage,
       industrySelect: industrySelect,
       businessSelect: businessSelect,
-      industryHint: industryField.querySelector('.po-field-hint'),
+      customIndustryEntry: customIndustryEntry,
+      customIndustryInput: customIndustryInput,
+      customBusinessEntry: customBusinessEntry,
+      customBusinessInput: customBusinessInput,
+      industryHint: industryHint,
       businessHint: businessHint,
       selectionSummary: selectionSummary,
       catalogError: catalogError,
@@ -477,14 +529,15 @@
     return card;
   }
 
-  function renderBrief(instance, source, industry, business) {
+  function renderBrief(instance, source, industry, business, selection) {
     var refs = instance.refs;
     var brief = normalizeBrief(source);
     instance.currentBrief = brief;
+    instance.currentSelection = selection || undefined;
     refs.briefTitle.textContent = brief.projectName || '客户项目简报';
     refs.clientName.textContent = brief.clientName;
-    refs.industryTag.textContent = industry ? industry.label : '';
-    refs.businessTag.textContent = business ? business.label : '';
+    refs.industryTag.textContent = brief.industryLabel || (industry ? industry.label : '');
+    refs.businessTag.textContent = brief.businessLabel || (business ? business.label : '');
     refs.description.textContent = brief.description;
 
     clearChildren(refs.factsGrid);
@@ -554,22 +607,67 @@
     return brief;
   }
 
-  function setOptions(select, items, placeholderText) {
+  function setOptions(select, items, placeholderText, includeCustom) {
     clearChildren(select);
     select.appendChild(makeOption('', placeholderText));
     items.forEach(function (item) {
       select.appendChild(makeOption(item.id, item.label));
     });
+    if (includeCustom) select.appendChild(makeOption('custom', '自定义填写'));
+  }
+
+  function setCustomInputVisible(entry, input, visible) {
+    entry.hidden = !visible;
+    input.disabled = !visible;
+    input.required = visible;
+  }
+
+  function buildSelection(instance) {
+    var refs = instance.refs;
+    var selection = {
+      industryId: refs.industrySelect.value,
+      businessId: refs.businessSelect.value,
+    };
+    if (selection.industryId === 'custom') selection.customIndustry = refs.customIndustryInput.value.trim();
+    if (selection.businessId === 'custom') selection.customBusiness = refs.customBusinessInput.value.trim();
+    return selection;
+  }
+
+  function customPracticeBrief(selection, catalog) {
+    var template = catalog.practiceTemplate;
+    if (!template) return null;
+    var industry = selection.industryId === 'custom'
+      ? { id: 'custom', label: selection.customIndustry }
+      : optionFor(catalog.industries, selection.industryId);
+    var business = selection.businessId === 'custom'
+      ? { id: 'custom', label: selection.customBusiness }
+      : optionFor(catalog.businesses, selection.businessId);
+    if (!industry || !business) return null;
+    return {
+      id: 'custom',
+      industryId: selection.industryId,
+      businessId: selection.businessId,
+      industryLabel: industry.label,
+      businessLabel: business.label,
+      projectName: template.projectName,
+      clientName: template.clientName,
+      description: template.description,
+      overview: template.overview,
+      goals: template.goals,
+      facts: template.facts,
+      details: template.details,
+      people: template.people,
+    };
   }
 
   function setCatalogState(instance, catalog) {
     if (!instance.dialog.open) return;
     instance.catalog = catalog;
     var refs = instance.refs;
-    setOptions(refs.industrySelect, catalog.industries, '请选择客户行业');
+    setOptions(refs.industrySelect, catalog.industries, '请选择客户行业', true);
     refs.industrySelect.disabled = false;
     refs.businessSelect.disabled = true;
-    setOptions(refs.businessSelect, [], '请先选择客户行业');
+    setOptions(refs.businessSelect, [], '请先选择客户行业', true);
     refs.industryHint.textContent = '请选择客户所属行业。';
     refs.businessHint.textContent = '先选择客户行业，再选择主营业务。';
     refs.catalogError.hidden = true;
@@ -633,19 +731,26 @@
     var refs = instance.refs;
     if (!instance.catalog) return;
 
-    var industry = optionFor(instance.catalog.industries, refs.industrySelect.value);
-    var matchingBusinesses = industry
-      ? instance.catalog.businesses.filter(function (business) {
+    var industryId = refs.industrySelect.value;
+    var industryIsCustom = industryId === 'custom';
+    setCustomInputVisible(refs.customIndustryEntry, refs.customIndustryInput, industryIsCustom);
+    var industry = industryIsCustom
+      ? { id: 'custom', label: refs.customIndustryInput.value.trim() }
+      : optionFor(instance.catalog.industries, industryId);
+    var matchingBusinesses = !industry
+      ? []
+      : industryIsCustom
+        ? instance.catalog.businesses.slice()
+        : instance.catalog.businesses.filter(function (business) {
         return instance.catalog.scenarios.some(function (brief) {
           return brief.industryId === industry.id && brief.businessId === business.id;
         });
       })
-      : [];
-    var selectedBusiness = optionFor(matchingBusinesses, refs.businessSelect.value);
 
     if (!industry) {
       refs.businessSelect.disabled = true;
-      setOptions(refs.businessSelect, [], '请先选择客户行业');
+      setOptions(refs.businessSelect, [], '请先选择客户行业', true);
+      setCustomInputVisible(refs.customBusinessEntry, refs.customBusinessInput, false);
       refs.businessHint.textContent = '先选择客户行业，再选择主营业务。';
       refs.industryHint.textContent = '请选择客户所属行业。';
       refs.selectionSummary.textContent = '尚未选择。请选择客户行业和主营业务后继续。';
@@ -653,37 +758,41 @@
       return;
     }
 
-    if (!matchingBusinesses.length) {
-      refs.businessSelect.disabled = true;
-      setOptions(refs.businessSelect, [], '当前行业暂无可选业务');
-      refs.businessHint.textContent = '当前行业暂时没有可匹配的主营业务。';
-      refs.industryHint.textContent = industry.label;
-      refs.selectionSummary.textContent = '当前行业暂无可匹配的项目方向。';
-      refs.continueButton.disabled = true;
-      return;
-    }
-
     var previousBusiness = refs.businessSelect.value;
-    setOptions(refs.businessSelect, matchingBusinesses, '请选择主营业务');
-    if (matchingBusinesses.some(function (business) { return business.id === previousBusiness; })) {
+    setOptions(refs.businessSelect, matchingBusinesses, matchingBusinesses.length ? '请选择主营业务' : '暂无预设业务，可自定义填写', true);
+    if (previousBusiness === 'custom' || matchingBusinesses.some(function (business) { return business.id === previousBusiness; })) {
       refs.businessSelect.value = previousBusiness;
-      selectedBusiness = optionFor(matchingBusinesses, previousBusiness);
     } else {
       refs.businessSelect.value = '';
-      selectedBusiness = null;
     }
     refs.businessSelect.disabled = false;
-    refs.industryHint.textContent = industry.label;
-    refs.businessHint.textContent = selectedBusiness
-      ? '已选择匹配的主营业务。'
-      : '请选择一项主营业务查看对应客户简报。';
+    var businessId = refs.businessSelect.value;
+    var businessIsCustom = businessId === 'custom';
+    setCustomInputVisible(refs.customBusinessEntry, refs.customBusinessInput, businessIsCustom);
+    var selectedBusiness = businessIsCustom
+      ? { id: 'custom', label: refs.customBusinessInput.value.trim() }
+      : optionFor(matchingBusinesses, businessId);
+    var industryReady = !industryIsCustom || (industry.label.length > 0 && industry.label.length <= 80);
+    var businessReady = !businessIsCustom || Boolean(selectedBusiness && selectedBusiness.label.length > 0 && selectedBusiness.label.length <= 80);
+
+    refs.industryHint.textContent = industryIsCustom
+      ? '自定义行业以轻量练习形式展示，不包含特定客户事实。'
+      : industry.label;
+    refs.businessHint.textContent = businessIsCustom
+      ? '自定义业务以轻量练习形式展示，不预设我方产品或能力。'
+      : selectedBusiness
+        ? '已选择匹配的主营业务。'
+        : '请选择一项主营业务查看对应客户简报。';
 
     if (selectedBusiness) {
-      refs.selectionSummary.textContent = '已选择：' + industry.label + ' · ' + selectedBusiness.label + '。查看匹配的客户项目公开简报。';
+      refs.selectionSummary.textContent = '已选择：' + (industry.label || '自定义客户行业') + ' · ' + (selectedBusiness.label || '自定义主营业务') + '。'
+        + (industryIsCustom || businessIsCustom ? '查看不预设客户事实的轻量练习简报。' : '查看匹配的客户项目公开简报。');
     } else {
-      refs.selectionSummary.textContent = '已选择客户行业。请选择主营业务后查看客户项目公开简报。';
+      refs.selectionSummary.textContent = industryIsCustom && !industryReady
+        ? '请填写客户行业后继续。'
+        : '已选择客户行业。请选择主营业务后查看客户简报。';
     }
-    refs.continueButton.disabled = !selectedBusiness;
+    refs.continueButton.disabled = !industryReady || !selectedBusiness || !businessReady;
   }
 
   function toggleDetails(instance) {
@@ -721,7 +830,7 @@
     setStartStatus(instance, '正在开始训练…', false);
 
     try {
-      var result = await instance.callbacks.onStart(instance.currentBrief);
+      var result = await instance.callbacks.onStart(instance.currentBrief, instance.currentSelection);
       if (result === false) {
         setStartStatus(instance, '开始请求未完成，请重试。', true);
         setStarting(instance, false);
@@ -869,20 +978,34 @@
     refs.businessSelect.addEventListener('change', function () {
       updateSelection(instance);
     });
+    refs.customIndustryInput.addEventListener('input', function () {
+      updateSelection(instance);
+    });
+    refs.customBusinessInput.addEventListener('input', function () {
+      updateSelection(instance);
+    });
     refs.continueButton.addEventListener('click', function () {
       if (refs.continueButton.disabled || !instance.catalog) return;
-      var industry = optionFor(instance.catalog.industries, refs.industrySelect.value);
-      var business = optionFor(instance.catalog.businesses, refs.businessSelect.value);
-      var source = instance.catalog.scenarios.find(function (brief) {
-        return industry && business
-          && brief.industryId === industry.id
-          && brief.businessId === business.id;
-      });
+      var selection = buildSelection(instance);
+      var industry = selection.industryId === 'custom'
+        ? { id: 'custom', label: selection.customIndustry }
+        : optionFor(instance.catalog.industries, selection.industryId);
+      var business = selection.businessId === 'custom'
+        ? { id: 'custom', label: selection.customBusiness }
+        : optionFor(instance.catalog.businesses, selection.businessId);
+      var isCustom = selection.industryId === 'custom' || selection.businessId === 'custom';
+      var source = isCustom
+        ? customPracticeBrief(selection, instance.catalog)
+        : instance.catalog.scenarios.find(function (brief) {
+          return industry && business
+            && brief.industryId === industry.id
+            && brief.businessId === business.id;
+        });
       if (!source) {
         updateSelection(instance);
         return;
       }
-      renderBrief(instance, source, industry, business);
+      renderBrief(instance, source, industry, business, isCustom ? selection : undefined);
       setStage(instance, 'brief', true);
     });
     refs.backButton.addEventListener('click', function () {

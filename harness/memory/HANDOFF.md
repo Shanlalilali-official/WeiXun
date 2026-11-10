@@ -1,5 +1,28 @@
 # 工作交接
 
+## 2026-11-10 设计师业务规则提示词
+
+入口 `/designer/runtime-prompts`，对应授权 API `/api/designer/runtime-prompts`。`runtime-rule-prompt-catalog.ts` 汇总四个业务分组的定义，活跃调用通过 `resolveRuntimeRulePrompt` 读取，保存复用 `designer_prompt_configs` 的 `project-one-runtime-rules` 记录。实际活动识别、回复复核和方案评价均已接入。结构化问题指令单独在 `/designer/jev-config`，Jev 与 LLM 两种模式均读取覆盖。新增业务提示词时应同步登记默认正文和代码约束，并从运行调用读取。
+
+本地 `test-runtime-rule-prompts` 使用模拟数据库和模型请求验证权限、版本冲突、旧配置、活动识别覆盖和恢复。未对线上环境保存或发布。
+
+## 2026-11-10 活动语义识别
+
+`detectCustomerActivityProposals` 是正式与实际测试的共同入口。模型分类和证据校验在此完成，活动门槛继续使用会话冻结配置。`customer-activity-routing.ts` 在普通预约可能截走自然语言消息时做预检，结果可作为 NPC 话术提示。结束对话后的正式识别重试对同一会话同一错误只写一次审计，失败保留队列。
+
+核心、正式、预览、引荐、诊断及界面专项，TypeScript、改动范围 ESLint 和 Next/tsup 构建均已本地验证。使用的是模拟模型。真实模型和现场服务未联调。
+
+## 2026-11-10 邮件「吃个便饭」识别修复
+
+共享餐叙表达位于 `invitation-intent.ts`，活动候选生成也使用同一表达。截图原句曾在邀请判断和候选校验两处漏掉，现识别为 `hospitality`，正式与实际测试沿用既有门槛。使用新构建进行下一次邮件交互可走该规则。现场服务和原会话未实查。
+
+## 2026-11-10 项目一活动反馈、渠道判断提示词和自定义开场
+
+- 活动判定按用户澄清只有 `allow` 和 `reject`。正式活动 API 与实际测试响应为已保存的 `reject` 返回脱敏通知。正式策划组件和预览 HTML 使用同一文案，已接受策划优先。通知不改变任务或计时。
+- 设计师从首页进入业务决策提示词。在提示词库选择人物及邮件或电话，编辑该人物的后端判断偏好。人物偏好随原提示词配置版本保存，电话接听与邮件是否回复使用独立的固定选项。
+- 两端共享行业和主营业务的自定义输入。自定义简报使用本地通用练习资料，选择写入服务端会话快照。后续现场生成接 `ProjectOneOnboardingSelection`，仍需保留客户底稿与公开简报的边界。
+- 本地专项、类型检查、生产构建与 Chrome 模拟接口验收完成。远程配置、真实模型和部署仍待联调。P1-TEST-003 的预览调节快照和 TEST-LEGACY-001 的旧竞品 UI 断言仍可复现。
+
 ## 2026-11-09 最新：分栏开场已接入系统
 
 正式从 /start 进入项目一，/game 对空存档自动开场，有旧档先选续玩或新建。实际测试 /project-one-preview 的开始与重开共用 public/project-one-onboarding.js。目录由 api/game-data/project-one-onboarding 投影自服务端 12 个场景，正式与测试各自通过既有会话存储持久化所选版本。NPC 底稿仅由服务端按角色加入上下文。专项、构建和浏览器证据在 evidence/project-one-onboarding-2026-11-09/。远程数据库、真实模型和部署未验收，批量生成入库仍待完成。既有 P1-TEST-003 仍可复现。

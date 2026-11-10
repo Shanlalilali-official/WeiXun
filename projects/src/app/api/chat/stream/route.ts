@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { streamLLM, type ChatMessage } from '@/lib/ai/client';
 import { CUSTOMER_CONTEXT, CUSTOMER_PROMPT, type CustomerPromptContext } from '@/lib/ai/prompts/customer';
+import { resolveRuntimeRulePrompt } from '@/lib/ai/runtime-rule-prompts';
 import {
   generateNpcReplyWithIdentityGuard,
   npcSpeakerIdentityInstruction,
@@ -10,6 +11,7 @@ import {
   generateNpcReplyWithCustomerActivityGuard,
   type CustomerActivityReplyDiagnostic,
 } from '@/lib/ai/customer-activity-reply';
+import { classifyCurrentActivityForAppointment, resolveCustomerActivityReplyGuidance } from '@/lib/ai/customer-activity-routing';
 import { evaluateNpcTurn, sanitizeReadNoReplyEvaluation } from '@/lib/ai/npc-evaluation';
 import {
   appendViewedAttachmentsToPlayerMessage,
@@ -18,7 +20,7 @@ import {
   npcHistoryWithViewedAttachments,
   type ChatAttachmentTreatment,
 } from '@/lib/ai/chat-attachments';
-import { decideFormalMessageResponse, evaluateFormalVisitTurn } from '@/lib/ai/formal-visit-decision';
+import { decideFormalMessageResponse, decideFormalPhoneContact, evaluateFormalVisitTurn } from '@/lib/ai/formal-visit-decision';
 import { authGuard } from '@/lib/auth/guard';
 import { npcChatRequestSchema } from '@/lib/contracts/ai';
 import type { GameCommand } from '@/lib/contracts/game';
@@ -320,30 +322,51 @@ export async function POST(req: NextRequest) {
     speaker: item.role === 'user' ? 'sales' as const : 'customer' as const,
     text: item.content,
   }));
-  const activityReplyContextActive = isCustomerActivityReplyContext(message, recentActivityConversation);
-  const hospitalityActivityContext = isHospitalityCustomerActivityContext(message, recentActivityConversation);
-  const externalReferralInvitation = channel !== 'offline'
-    && intent !== 'call_connect'
-    && canUseExternalReferralForInvitation(initialState.referrals, npcId, message)
-    && !activityReplyContextActive;
-  const existingReferralAppointment = externalReferralInvitation
+  const activityReplyHint = isCustomerActivityReplyContext(message, recentActivityConversation);
+  const invitationMayUseShortcut = channel !== 'offline' && intent !== 'call_connect' && !activityReplyHint
+    && !isNaturalLanguageCustomerActivityInvitation(message) && isNaturalLanguageInvitation(message);
+  const referralMayUseShortcut = invitationMayUseShortcut
+    && canUseExternalReferralForInvitation(initialState.referrals, npcId, message);
+  const hasReferral = hasExternalReferral(initialState.referrals, npcId);
+  const existingReferralAppointment = referralMayUseShortcut
     ? initialState.appointments.find((item) => item.npcId === npcId && item.status === 'accepted')
     : undefined;
-
-  if (channel !== 'offline') {
+  const checkChannelResources = () => {
+    if (channel === 'offline') return null;
     const cooldownUntil = contact.channelCooldownUntil[channel] ?? 0;
-    if (!existingReferralAppointment && cooldownUntil > initialState.simulatedClockMinutes) {
-      return jsonResponse('CHANNEL_COOLDOWN_ACTIVE', 409, { cooldownUntil });
+    if (cooldownUntil > initialState.simulatedClockMinutes) return jsonResponse('CHANNEL_COOLDOWN_ACTIVE', 409, { cooldownUntil });
+    if (channel === 'work_phone' && initialState.activePhoneCall?.npcId === npcId) return null;
+    try {
+      // Validate available capacity without committing or spending anything.
+      consumeChatCommunicationTime(initialState, channel, attachments.length > 0);
+      return null;
+    } catch (error) {
+      return jsonResponse(error instanceof Error ? error.message : 'TIME_RESOURCE_INSUFFICIENT', 409);
     }
-    if (!existingReferralAppointment && !(channel === 'work_phone' && initialState.activePhoneCall?.npcId === npcId)) {
-      try {
-        // Pure preflight: avoid invoking the model when the action cannot fit in
-        // today's capacity or the player cannot afford the entire action.
-        consumeChatCommunicationTime(initialState, channel, attachments.length > 0);
-      } catch (error) {
-        return jsonResponse(error instanceof Error ? error.message : 'TIME_RESOURCE_INSUFFICIENT', 409);
-      }
-    }
+  };
+  const resourceError = existingReferralAppointment ? null : checkChannelResources();
+  if (resourceError) return resourceError;
+
+  const activityForAppointment = invitationMayUseShortcut && (!hasReferral || referralMayUseShortcut)
+    ? await classifyCurrentActivityForAppointment(npcId, {
+      messageId: `${commandId}:sales`, speaker: 'sales', text: message,
+    }, recentHistory.filter((item) => item.metadata?.channel === channel).map((item) => ({
+      messageId: item.id, speaker: item.role === 'user' ? 'sales' : 'customer', text: item.content,
+    })))
+    : 'none';
+  const semanticActivity = activityForAppointment !== 'none' && activityForAppointment !== 'unavailable'
+    ? activityForAppointment : undefined;
+  const activityReplyContextActive = activityReplyHint || semanticActivity !== undefined;
+  const hospitalityActivityContext = semanticActivity
+    ? semanticActivity === 'hospitality' : isHospitalityCustomerActivityContext(message, recentActivityConversation);
+  // Trusted ordinary referrals retain their deterministic fallback if the
+  // semantic provider is unavailable. A recognized activity always wins.
+  const ordinaryInvitation = invitationMayUseShortcut
+    && (activityForAppointment === 'none' || (referralMayUseShortcut && activityForAppointment === 'unavailable'));
+  const externalReferralInvitation = ordinaryInvitation && referralMayUseShortcut;
+  if (existingReferralAppointment && !externalReferralInvitation) {
+    const activityResourceError = checkChannelResources();
+    if (activityResourceError) return activityResourceError;
   }
 
   let attachmentTreatments: ChatAttachmentTreatment[] = [];
@@ -365,10 +388,21 @@ export async function POST(req: NextRequest) {
   // Decide a written delivery outcome before treating any wording as an
   // invitation. A read-without-reply must stay silent and must never be
   // converted into an accepted, declined, or counter-offered appointment.
+  // This is the same versioned designer row used for the dialogue prompt.
+  // Its person/channel exception is supplied as bounded decision context;
+  // the code-owned choice schema and all deterministic gates remain intact.
+  const promptConfig = await loadProjectOnePromptConfig()
+    .then((stored) => stored.config)
+    .catch(() => DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
   const messageResponseDecision = externalReferralInvitation
     ? { responseAction: 'reply' as const }
     : channel === 'email' || channel === 'online'
-    ? await decideFormalMessageResponse({ npcId, channel, playerMessage: message })
+    ? await decideFormalMessageResponse({
+      npcId,
+      channel,
+      playerMessage: message,
+      npcChannelGuidance: channel === 'email' ? promptConfig.npcChannelDecisionPrompts[npcId]?.email : undefined,
+    })
     : { responseAction: 'reply' as const };
   const replyReviewDiagnostics: CustomerActivityReplyDiagnostic[] = [];
 
@@ -376,13 +410,9 @@ export async function POST(req: NextRequest) {
   // extraction, action-point charging, notifications and idempotency stay in
   // the server-side game state machine. A trusted external referral makes an
   // eligible Wang Defu invitation independent of model availability.
-  if (channel !== 'offline'
-    && intent !== 'call_connect'
-    && (!hasExternalReferral(initialState.referrals, npcId) || externalReferralInvitation)
-    && messageResponseDecision.responseAction === 'reply'
-    && !activityReplyContextActive
-    && !isNaturalLanguageCustomerActivityInvitation(message)
-    && isNaturalLanguageInvitation(message)) {
+  if (ordinaryInvitation
+    && (!hasReferral || externalReferralInvitation)
+    && messageResponseDecision.responseAction === 'reply') {
     const invitationCommand: GameCommand = {
       commandId: createServerProbabilitySeed([gameSessionId, commandId, 'invite']),
       expectedVersion,
@@ -496,7 +526,20 @@ export async function POST(req: NextRequest) {
     if (channel !== 'work_phone') return jsonResponse('CALL_CHANNEL_INVALID', 409);
     try {
       const callChance = Math.max(35, Math.min(90, 58 + initialState.currentRound * 4 + ((initialState.npcAffinity[npcId] ?? 35) - 35) * 0.5));
-      const connected = shouldNpcRespond(createServerProbabilitySeed([gameSessionId, commandId, npcId, 'phone-connect']), callChance);
+      // A bounded, designer-configurable decision may choose answer/unanswered
+      // only after every deterministic channel/authorization/resource guard
+      // above has passed. Preserve the legacy seeded result if that provider
+      // is unavailable or violates its typed contract.
+      const fallbackConnected = shouldNpcRespond(createServerProbabilitySeed([gameSessionId, commandId, npcId, 'phone-connect']), callChance);
+      const contactDecision = fallbackConnected ? await decideFormalPhoneContact({
+        npcId,
+        round: initialState.currentRound,
+        affinity: initialState.npcAffinity[npcId] ?? 35,
+        npcChannelGuidance: promptConfig.npcChannelDecisionPrompts[npcId]?.work_phone,
+      }) : null;
+      // A configured prompt may be more conservative, but never turns the
+      // existing deterministic unavailable result into a connected call.
+      const connected = fallbackConnected && (contactDecision?.contactAction ?? 'answer') === 'answer';
       if (!connected) {
         let changed = consumeCommunicationTime(initialState, channel);
         changed = markNpcUnanswered(changed, npcId, channel);
@@ -652,9 +695,6 @@ export async function POST(req: NextRequest) {
       },
     } : {}),
   };
-  const promptConfig = await loadProjectOnePromptConfig()
-    .then((stored) => stored.config)
-    .catch(() => DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
   // Snapshot before any generation or evaluation. Support chooses the prompt
   // tier deterministically; pleasantness only changes the wording instruction.
   const supportAtTurnStart = attitude?.support ?? 35;
@@ -667,21 +707,31 @@ export async function POST(req: NextRequest) {
   );
   const playerProposedCustomerActivity = activityReplyContextActive;
   const npcHistory = npcHistoryWithViewedAttachments(recentHistory);
+  const externallyReferred = hasExternalReferral(initialState.referrals, npcId);
+  const legacyDialogue = promptConfig.liveCustomerPrompt && promptConfig.liveCustomerPrompt !== CUSTOMER_PROMPT()
+    ? promptConfig.liveCustomerPrompt
+    : undefined;
+  const [dialogueRules, dossierRules, referralRules, activityPolicy, activityReview, generalActivityGuidance] = await Promise.all([
+    resolveRuntimeRulePrompt('formal_customer_dialogue', legacyDialogue),
+    initialState.onboardingScenario ? resolveRuntimeRulePrompt('onboarding_dossier_dialogue') : undefined,
+    externallyReferred ? resolveRuntimeRulePrompt('formal_referral_dialogue') : undefined,
+    playerProposedCustomerActivity ? resolveRuntimeRulePrompt('customer_activity_reply_policy') : undefined,
+    playerProposedCustomerActivity ? resolveRuntimeRulePrompt('customer_activity_reply_review') : undefined,
+    playerProposedCustomerActivity ? undefined : resolveCustomerActivityReplyGuidance(),
+  ]);
   const messages: ChatMessage[] = [
-    { role: 'system', content: `${promptConfig.liveCustomerPrompt || CUSTOMER_PROMPT()}\n\n## 当前人物角色提示\n${rolePrompt}` },
+    { role: 'system', content: `${dialogueRules}\n\n## 当前人物角色提示\n${rolePrompt}` },
     { role: 'system', content: npcSpeakerIdentityInstruction(npc, channel) },
     ...(initialState.onboardingScenario
-      ? [{ role: 'system' as const, content: projectOneOnboardingPrompt(initialState.onboardingScenario, npcId) }]
+      ? [{ role: 'system' as const, content: projectOneOnboardingPrompt(initialState.onboardingScenario, npcId, dossierRules) }]
       : []),
-    ...(hasExternalReferral(initialState.referrals, npcId)
-      ? [{
-        role: 'system' as const,
-        content: '已核验事实：该联系人已通过一位未在系统中的外部工作关系引荐，与销售方建立联系。不要编造引荐人姓名，也不要据此改写支持度、愉悦度或其他关系指标。',
-      }]
+    ...(referralRules
+      ? [{ role: 'system' as const, content: referralRules }]
       : []),
-    ...(playerProposedCustomerActivity
-      ? [{ role: 'system' as const, content: customerActivityReplyInstruction(npc.category, hospitalityActivityContext) }]
-      : []),
+    {
+      role: 'system',
+      content: generalActivityGuidance ?? customerActivityReplyInstruction(npc.category, hospitalityActivityContext, activityPolicy),
+    },
     { role: 'user', content: CUSTOMER_CONTEXT(customerContext) },
     ...npcHistory,
     { role: 'user', content: message },
@@ -705,8 +755,11 @@ export async function POST(req: NextRequest) {
               if (!generated.trim()) throw new Error('AI_PROVIDER_EMPTY_RESPONSE');
               return generated;
             }, {
+              policyRuleText: activityPolicy,
+              reviewRuleText: activityReview,
               context: {
                 playerMessage: message,
+                activityType: semanticActivity,
                 recentConversation: recentActivityConversation,
               },
               onDiagnostic: (diagnostic) => replyReviewDiagnostics.push(diagnostic),

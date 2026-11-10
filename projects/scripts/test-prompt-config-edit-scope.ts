@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_NPC_SUPPORT_TIER_THRESHOLDS,
   DEFAULT_PROJECT_ONE_PROMPT_CONFIG,
+  normalizeNpcRolePrompt,
   normalizeProjectOnePromptConfig,
   npcSupportTierThresholdsSchema,
 } from '../src/lib/designer/prompt-config';
@@ -25,6 +26,7 @@ current.promptTestEvaluatorPrompt = 'server test evaluator';
 current.npcRolePrompts['unknown-person'] = 'stale value';
 current.npcChannelExceptions['unknown-person'] = { email: 'stale value' };
 current.npcChannelExceptions['P1-001']['unknown-channel'] = 'stale value';
+current.npcChannelDecisionPrompts['P1-001'].email = 'server email decision';
 
 const requested = structuredClone(DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
 requested.liveCustomerPrompt = 'client must not replace this';
@@ -42,6 +44,8 @@ requested.npcChannelExceptions['P1-001'] = Object.fromEntries(
 );
 requested.npcChannelExceptions['unknown-person'] = { email: 'must not persist' };
 requested.npcChannelExceptions['P1-001']['unknown-channel'] = 'must not persist';
+requested.npcChannelDecisionPrompts['P1-001'].email = 'client email decision';
+requested.npcChannelDecisionPrompts['P1-001'].work_phone = 'client phone decision';
 
 const merged = mergeEditablePromptConfig(current, requested);
 
@@ -63,6 +67,14 @@ assert.deepEqual(
   Object.keys(PROJECT_ONE_CHANNEL_MODIFIERS).sort(),
 );
 assert.ok(Object.values(merged.npcChannelExceptions['P1-001']).every((value) => value === ''));
+assert.equal(merged.npcChannelDecisionPrompts['P1-001'].email, 'client email decision');
+assert.equal(merged.npcChannelDecisionPrompts['P1-001'].work_phone, 'client phone decision');
+
+const narrowSave = mergeEditablePromptConfig(current, {
+  npcChannelExceptions: { 'P1-001': { email: 'old client email prose' } },
+});
+assert.equal(narrowSave.npcChannelExceptions['P1-001'].email, 'old client email prose');
+assert.equal(narrowSave.npcChannelDecisionPrompts['P1-001'].email, 'server email decision', 'an old narrow save keeps new decision guidance');
 
 const legacyConfig = structuredClone(DEFAULT_PROJECT_ONE_PROMPT_CONFIG) as Record<string, unknown>;
 delete legacyConfig.supportTierThresholds;
@@ -70,6 +82,10 @@ legacyConfig.liveCustomerPrompt = 'legacy live prompt must remain';
 const normalizedLegacy = normalizeProjectOnePromptConfig(legacyConfig);
 assert.equal(normalizedLegacy.liveCustomerPrompt, 'legacy live prompt must remain');
 assert.deepEqual(normalizedLegacy.supportTierThresholds, DEFAULT_NPC_SUPPORT_TIER_THRESHOLDS);
+const narrowLegacy = { npcChannelExceptions: { 'P1-001': { email: '只保留这封邮件的历史设置。' } } };
+const normalizedNarrowLegacy = normalizeProjectOnePromptConfig(narrowLegacy);
+assert.equal(normalizedNarrowLegacy.npcChannelExceptions['P1-001'].email, '只保留这封邮件的历史设置。');
+assert.equal(normalizeNpcRolePrompt(normalizedNarrowLegacy.npcRolePrompts['P1-001']).base, normalizeNpcRolePrompt(DEFAULT_PROJECT_ONE_PROMPT_CONFIG.npcRolePrompts['P1-001']).base);
 assert.equal(npcSupportTierThresholdsSchema.safeParse({ mediumMin: 40, highMin: 40 }).success, false);
 assert.equal(npcSupportTierThresholdsSchema.safeParse({ mediumMin: 40.5, highMin: 80 }).success, false);
 

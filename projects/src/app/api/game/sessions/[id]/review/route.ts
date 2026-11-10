@@ -3,6 +3,7 @@ import { authGuard } from '@/lib/auth/guard';
 import { invokeLLM } from '@/lib/ai/client';
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
+import { resolveRuntimeRulePrompt } from '@/lib/ai/runtime-rule-prompts';
 import { gameReviewSchema, type GameReview } from '@/lib/contracts/game';
 import { getGameOutcome } from '@/lib/game/state';
 import {
@@ -250,16 +251,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       recentMessages: reviewContext.recentMessages,
       transcriptGiftAssessments: giftEvents,
     }, { maxStringLength: 700, maxTotalLength: 32_000 });
-    const systemPrompt = [
-      '你是政企销售训练复盘教练。只能依据给定对局数据给出具体、可执行的中文复盘，不得编造对话外事实。',
-      '必须结合五维销售能力、已验证的对公价值和个人合理收益、合规风险、招标规则及三方核心优势解释结果；不能只依据五维或最终胜负。不得展示、估算或推断任何客户支持度、支持分级或内部关系分数。',
-      '如存在礼品记录，必须同时说明其即时收益与拒收、上报、审计、转述或后续反噬的实际/潜在代价；现金、回扣和利益交换不得评价为个人合理收益。没有礼品或风险记录时不得编造。',
-      '结合累计模拟投入时间和累计行动点消耗评价资源效率；旧存档字段缺失时直接省略对应判断，不得自行推算。',
-      '区分玩家主张与NPC确认：对公价值和个人合理收益只能引用已确认或已验证的证据。',
-      '复盘上下文已剔除竞品后台分数、动作和隐藏主张；不得补写或推断任何竞品内部数据，只能复述对话中明确出现的竞品话术。',
-      '只输出一个JSON对象，且必须恰好包含strengths、improvements、nextActions三个字段。',
-      '每个字段必须是包含1到3个非空中文字符串的数组，每个字符串不超过300字。不得输出Markdown或其他字段。',
-    ].join('');
+    const systemPrompt = await resolveRuntimeRulePrompt('formal_game_review');
     let review: GameReview | null = null;
     for (let attempt = 0; attempt < 2 && !review; attempt += 1) {
       try {

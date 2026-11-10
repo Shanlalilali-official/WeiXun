@@ -21,19 +21,24 @@ export function isNaturalLanguageInvitation(text: string): boolean {
 }
 
 /**
- * An activity invitation is ordinary customer dialogue until both sides
- * agree. Keep it out of the legacy appointment shortcut so it can be matched
- * only after the real customer reply is stored.
+ * Activity invitations use the activity matching flow instead of the legacy
+ * appointment shortcut.
  */
-const hospitalityEvent = /吃(?:个|顿)?饭|用餐|聚餐|饭局|喝酒|喝一杯(?!茶|水|咖啡|果汁)|小酌/u;
+const HOSPITALITY_MEAL_SOURCE = /吃(?:一?[个顿])?(?:便饭|饭)/u.source;
+const hospitalityEvent = new RegExp(`${HOSPITALITY_MEAL_SOURCE}|用餐|聚餐|饭局|喝酒|喝一杯(?!茶|水|咖啡|果汁)|小酌`, 'u');
+const historicalHospitalityInvitation = new RegExp(`(?:上次|此前|之前|刚才|已经|已完成|曾经|过去|以前).{0,16}(?:${hospitalityEvent.source})`, 'u');
+const withdrawnHospitalityInvitation = new RegExp(`(?:取消|撤回|撤销|不再|先不|暂不|不想|不愿|不要|别再|不参加|不方便|拒绝).{0,8}(?:请|${hospitalityEvent.source})`, 'u');
+const hospitalityInvitation = new RegExp(`(?:请|邀请|约|安排|想|希望|要不要|能不能|可不可以|是否|方便|一起|一同).{0,12}(?:您|你|贵方)?(?:一起|一同)?.{0,8}(?:${hospitalityEvent.source})|(?:${hospitalityEvent.source}).{0,12}(?:请您|请你|邀请|约|安排|一起|一同|怎么样|行不行|方便|吧|吗|么|呢|？|[?])`, 'u');
+const organizationActivity = /技术(?:交流|研讨)(?:会|活动)?|(?:案例|项目).{0,8}(?:现场)?(?:参观|考察)|公司参观|参观(?:贵司|贵公司|我司|我们公司|咱们公司)/u;
+const replyActivityPattern = new RegExp(`${organizationActivity.source}|${hospitalityEvent.source}`, 'u');
 
 export function isHospitalityActivityInvitationText(text: string): boolean {
   const normalized = text.replace(/\s+/g, '').trim();
   if (!normalized || !hospitalityEvent.test(normalized)) return false;
-  if (/(?:上次|此前|之前|刚才|已经|已完成|曾经|过去|以前).{0,16}(?:吃(?:个|顿)?饭|用餐|聚餐|饭局|喝酒|小酌|喝一杯(?!茶|水|咖啡|果汁))/u.test(normalized)) return false;
+  if (historicalHospitalityInvitation.test(normalized)) return false;
   const questionNormalized = normalized.replace(/(?:要不要|能不能|可不可以|可否|能否|是否|方便不方便)/gu, '');
-  if (/(?:取消|撤回|撤销|不再|先不|暂不|不想|不愿|不要|别再|不参加|不方便|拒绝).{0,8}(?:请|吃(?:个|顿)?饭|用餐|聚餐|饭局|喝酒|小酌|喝一杯(?!茶|水|咖啡|果汁))/u.test(questionNormalized)) return false;
-  return /(?:请|邀请|约|安排|想|希望|要不要|能不能|可不可以|是否|方便|一起|一同).{0,12}(?:您|你|贵方)?(?:一起|一同)?.{0,8}(?:吃(?:个|顿)?饭|用餐|聚餐|饭局|喝酒|喝一杯(?!茶|水|咖啡|果汁)|小酌)|(?:吃(?:个|顿)?饭|用餐|聚餐|饭局|喝酒|喝一杯(?!茶|水|咖啡|果汁)|小酌).{0,12}(?:请您|请你|邀请|约|安排|一起|一同|怎么样|行不行|方便|吧|吗|么|呢|？|\?)/u.test(normalized);
+  if (withdrawnHospitalityInvitation.test(questionNormalized)) return false;
+  return hospitalityInvitation.test(normalized);
 }
 
 export function isHospitalityCustomerActivityContext(
@@ -41,7 +46,6 @@ export function isHospitalityCustomerActivityContext(
   recentConversation: readonly { speaker: 'sales' | 'customer'; text: string }[] = [],
 ): boolean {
   const current = text.replace(/\s+/g, '').trim();
-  const organizationActivity = /技术(?:交流|研讨)(?:会|活动)?|(?:案例|项目).{0,8}(?:现场)?(?:参观|考察)|公司参观|参观(?:贵司|贵公司|我司|我们公司|咱们公司)/u;
   if (organizationActivity.test(current) && isCustomerActivityReplyContext(current)) return false;
   if (isHospitalityActivityInvitationText(current)) return true;
   if (!isCustomerActivityReplyContext(current, recentConversation)) return false;
@@ -59,8 +63,8 @@ export function isNaturalLanguageCustomerActivityInvitation(text: string): boole
   const normalized = text.replace(/\s+/g, '').trim();
   if (!normalized) return false;
 
-  const activityPattern = /技术(?:交流|研讨)(?:会|活动)?|(?:案例|项目).{0,8}(?:现场)?(?:参观|考察)|(?:参观|考察).{0,8}(?:案例|项目)(?:现场)?|公司参观|参观(?:贵司|贵公司|我司|我们公司|咱们公司)|(?:贵司|贵公司|我们公司|我司)参观|吃(?:个|顿)?饭|用餐|聚餐|饭局|喝酒|喝一杯(?!茶|水|咖啡|果汁)|小酌/u;
-  if (!activityPattern.test(normalized)) return false;
+  const activityPattern = /技术(?:交流|研讨)(?:会|活动)?|(?:案例|项目).{0,8}(?:现场)?(?:参观|考察)|(?:参观|考察).{0,8}(?:案例|项目)(?:现场)?|公司参观|参观(?:贵司|贵公司|我司|我们公司|咱们公司)|(?:贵司|贵公司|我们公司|我司)参观/u;
+  if (!activityPattern.test(normalized) && !hospitalityEvent.test(normalized)) return false;
   if (isHospitalityActivityInvitationText(normalized)) return true;
 
   const questionNormalized = normalized.replace(/(?:要不要|能不能|可不可以|可否|能否|是否)/gu, '');
@@ -68,7 +72,7 @@ export function isNaturalLanguageCustomerActivityInvitation(text: string): boole
   const ambiguousQuestion = /(?:方便不方便|方不方便|不方便.{0,8}(?:安排|组织|举办|召开|开|办).{0,12}(?:吗|么|呢)|不是.{0,4}(?:不能|不方便|不可以)|并非.{0,4}(?:不能|不方便|不可以)|(?:时间|日期|人员|名单).{0,8}(?:不能定|定不了|未确定|没确定).{0,20}(?:但|不过|同时).{0,16}(?:可以|能|先).{0,8}(?:交流|参观|讨论))/u.test(normalized)
     || /(?:吗|么|呢|？|\?)$/u.test(normalized);
   if (!ambiguousQuestion && cancellationOrDeclinePattern.test(questionNormalized)
-    && (activityPattern.test(questionNormalized) || activityPattern.test(normalized))) return false;
+    && (activityPattern.test(questionNormalized) || activityPattern.test(normalized) || hospitalityEvent.test(normalized))) return false;
 
   const caseAvailabilityQuestion = /(?:有没有|是否有|有无|是否存在).{0,20}(?:类似|相似|同类)?(?:案例|项目|技术交流会|技术研讨会)|(?:有没有|是否有|有无).{0,16}(?:技术交流会|技术研讨会)/u.test(normalized);
   if (caseAvailabilityQuestion) return false;
@@ -92,13 +96,13 @@ export function isCustomerActivityReplyContext(
 ): boolean {
   const normalized = text.replace(/\s+/g, '').trim();
   if (!normalized) return false;
-  const activityPattern = /技术(?:交流|研讨)(?:会|活动)?|(?:案例|项目).{0,8}(?:现场)?(?:参观|考察)|公司参观|参观(?:贵司|贵公司|我司|我们公司|咱们公司)|吃(?:个|顿)?饭|用餐|聚餐|饭局|喝酒|喝一杯(?!茶|水|咖啡|果汁)|小酌/u;
-  if (activityPattern.test(normalized)) {
+  if (replyActivityPattern.test(normalized)) {
     if (/(?:比如|例如|举例|引用|原话|原句|客户说|对方说).{0,24}[“「『《]/u.test(normalized)) return false;
     const actionPattern = /(?:安排|组织|举办|召开|开|办|举行|开展|策划|邀请|带您|带你|要不要|能不能|可不可以|能否|可否|方便不方便|方不方便|是不是不能|不是不能|撤回|撤销|取消|不再|先不办|不安排|暂缓|讨论|商量|时间|日期|哪天|几点|什么时候|时间定不了|定不了|未确定|没确定|吗|么|呢|？|\?|请|邀请|约|想|希望|一起|一同)/u;
     if (!actionPattern.test(normalized)) return false;
     const historicalMention = /(?:上次|此前|之前|已经|曾经|过去|以前).{0,16}(?:技术(?:交流|研讨)|(?:案例|项目).{0,8}(?:参观|考察)|公司参观|吃(?:个|顿)?饭|用餐|聚餐|饭局|喝酒|小酌|喝一杯)|(?:技术(?:交流|研讨)|(?:案例|项目).{0,8}(?:参观|考察)|公司参观|吃(?:个|顿)?饭|用餐|聚餐|饭局|喝酒|小酌|喝一杯).{0,16}(?:上次|此前|之前|已经|已完成|曾经|过去|以前)/u.test(normalized);
-    return !historicalMention || /(?:刚才|前面|那个|该项).{0,10}(?:提议|活动|安排|想法)|撤回|取消|先不办/u.test(normalized);
+    return !(historicalMention || historicalHospitalityInvitation.test(normalized))
+      || /(?:刚才|前面|那个|该项).{0,10}(?:提议|活动|安排|想法)|撤回|取消|先不办/u.test(normalized);
   }
 
   // A terse date/time follow-up can still be about an activity proposal from
@@ -119,7 +123,7 @@ export function isCustomerActivityReplyContext(
 
   const laterSalesMessages = recent.slice(lastOpenProposalIndex + 1).filter((item) => item.speaker === 'sales');
   if (laterSalesMessages.some((item) => /(?:撤回|取消|先不办|暂缓|不再安排|不考虑)/u.test(item.text))) return true;
-  if (laterSalesMessages.some((item) => !activityPattern.test(item.text)
+  if (laterSalesMessages.some((item) => !replyActivityPattern.test(item.text)
     && !/(?:下周|本周|这周|周末|周[一二三四五六日天]|星期|几号|哪天|几点|什么时候|时间|日期|那就|那么|具体安排|约在|定在)/u.test(item.text))) return false;
 
   return /(?:下周|本周|这周|周末|周[一二三四五六日天]|星期|几号|哪天|几点|什么时候|时间|日期|那就.{0,12}(?:天|周|月|号|点)|那么.{0,12}(?:天|周|月|号|点)|具体安排|约在|定在|参观|交流会)/u.test(normalized);

@@ -25,6 +25,7 @@ import {
   startCustomerActivityPlanning,
   submitCustomerActivityPlan,
   toPublicCustomerActivityTask,
+  toPublicUnavailableCustomerActivityNotice,
   type ActivityDecisionConfig,
   type CustomerActivityAgreement,
   type CustomerActivityEvaluation,
@@ -38,7 +39,6 @@ import {
   detectCustomerActivityProposals,
   decideCustomerActivityFeasibility,
   evaluateCustomerActivityPlan,
-  type CustomerActivityInvoker,
 } from '@/lib/ai/customer-activities';
 import {
   generateNpcReplyWithCustomerActivityGuard,
@@ -108,20 +108,6 @@ const evaluation: CustomerActivityEvaluation = {
 function taskFrom(state: ReturnType<typeof createEmptyCustomerActivityState>) {
   assert.equal(state.tasks.length, 1);
   return state.tasks[0];
-}
-
-function proposalReviewInvoker(
-  review: {
-    proposalMessageId: string;
-    type: CustomerActivityProposalCandidate['type'];
-    classification: 'active' | 'not_proposed' | 'withdrawn' | 'unclear';
-    proposalEvidence: { messageId: string; quote: string };
-    withdrawalEvidence?: { messageId: string; quote: string };
-  },
-): CustomerActivityInvoker {
-  return async (messages) => messages[0]?.content.includes('语义复核器')
-    ? JSON.stringify({ reviews: [review] })
-    : JSON.stringify({ activities: [] });
 }
 
 async function main() {
@@ -233,601 +219,109 @@ async function main() {
     dimensions: { decisionAnalysis: 50, relationshipBuilding: 50, valuePresentation: 50, objectionHandling: 50, informationDiscovery: 50 },
   };
   const salesVagueConversation = [
-    { messageId: 's1', speaker: 'sales' as const, text: '我们可以安排一次技术交流会，重点讲接口适配。' },
-    { messageId: 's2', speaker: 'customer' as const, text: '技术细节我建议和项目负责人同事商量一下。' },
+    { messageId: 'sales-proposal', speaker: 'sales' as const, text: '下周找个时间，把贵方需求和我们的技术方案当面掰开讲讲。' },
   ];
-  let detectionCalls = 0;
-  const detectionDiagnostics: Array<{ event: string; reason?: string; activityType?: string; messageId?: string; details?: Record<string, unknown> }> = [];
+  let semanticCalls = 0;
   const detectedProposals = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'meeting-2', npcId: 'P1-002', messages: salesVagueConversation,
-  }, { onDiagnostic: (diagnostic) => detectionDiagnostics.push(diagnostic), invoker: async (_messages, options) => {
-    detectionCalls += 1;
-    throw new Error(`deterministic proposal must not depend on an LLM call (${String(options)} ${String(_messages)})`);
-  } });
-  assert.equal(detectionCalls, 1);
-  assert.equal(detectedProposals.length, 1);
-  assert.equal(detectedProposals[0].npcId, 'P1-002', 'NPC ownership comes from trusted caller context');
-  assert.equal(detectedProposals[0].requiresFeasibility, true, 'sales proposals enter feasibility regardless of the customer reply');
-  assert.equal(detectedProposals[0].responseKind, 'not_required');
-  assert.deepEqual(detectedProposals[0].evidence.map(({ kind }) => kind), ['proposal'], 'no customer agreement or reply is fabricated');
-  assert.ok(detectionDiagnostics.some(({ event, details }) => event === 'model_skipped' && details?.detection_source === 'deterministic_sales_proposal'));
-  assert.ok(detectionDiagnostics.some(({ event, details }) => event === 'candidate_accepted' && details?.detection_source === 'deterministic_sales_proposal'));
-
-  const exactPhoneConversations = [
-    [
-      '赵老师，您看我们下周要不要安排一个技术交流会，这样可以更好地交流技术上的问题，可以直接把需求交代清楚。',
-      '嗯……技术交流会这个事我这边暂时定不了，得先跟李经理汇报一下，确认后再答复您。',
-    ],
-    [
-      '赵老师您好，我想问问看能不能咱们下周召开一个技术交流会，正好也把您这边的需求和我们对一下，提高效率',
-      '这类安排我需要先向上级汇报，确认后再答复。',
-    ],
-  ] as const;
-  for (const [index, [salesText, customerText]] of exactPhoneConversations.entries()) {
-    const phoneDiagnostics: Array<{ event: string; reason?: string }> = [];
-    const candidates = await detectCustomerActivityProposals({
-      conversationEnded: true,
-      conversationId: `real-phone-phrase-${index}`,
-      npcId: 'P1-002',
-      messages: [
-        { messageId: 'call-sales', speaker: 'sales', text: salesText },
-        { messageId: 'call-customer', speaker: 'customer', text: customerText },
-      ],
-    }, { onDiagnostic: (diagnostic) => phoneDiagnostics.push(diagnostic), invoker: async () => { throw new Error('semantic fallback unavailable'); } });
-    assert.equal(candidates.length, 1, `real phone example ${index + 1} must enter feasibility`);
-    assert.equal(candidates[0].type, 'technical_meeting');
-    assert.equal(candidates[0].responseKind, 'not_required');
-    assert.deepEqual(candidates[0].evidence.map(({ kind }) => kind), ['proposal']);
-    assert.ok(phoneDiagnostics.some(({ event }) => event === 'model_error'));
-    assert.ok(phoneDiagnostics.some(({ event, reason }) => event === 'fallback_used' && reason?.includes('preserved_deterministic')));
-  }
-
-  const noReplyCandidate = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'proposal-with-no-customer-reply', npcId: 'P1-002',
-    messages: [{ messageId: 'no-reply-sales', speaker: 'sales', text: '咱们下周开个技术交流会吧。' }],
-  }, { invoker: async () => { throw new Error('no-reply sales proposal is deterministically recognized'); } });
-  assert.equal(noReplyCandidate.length, 1, 'no NPC reply is not required to create a feasibility candidate');
-
-  const malformedSemanticDiagnostics: Array<{ event: string; reason?: string }> = [];
-  const deterministicWithMalformedSemantic = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'deterministic-with-malformed-semantic', npcId: 'P1-002',
-    messages: [
-      { messageId: 'malformed-sales', speaker: 'sales', text: '我们下周安排一次技术交流会。' },
-      { messageId: 'malformed-customer', speaker: 'customer', text: '我需要向领导汇报后再答复。' },
-    ],
-  }, {
-    onDiagnostic: (diagnostic) => malformedSemanticDiagnostics.push(diagnostic),
-    invoker: async () => JSON.stringify({ activities: [
-      { type: 'technical_meeting', initiator: 'sales', proposal: { messageId: 'malformed-sales', quote: '我们已确认安排技术交流会' } },
-      {
-        type: 'technical_meeting', initiator: 'customer',
-        proposal: { messageId: 'malformed-customer', quote: '客户提出了技术交流会' },
-        response: { messageId: 'malformed-sales', quote: '我们下周安排一次技术交流会。', kind: 'explicit_acceptance' },
-        finalStatus: 'active', finalOutcome: { messageId: 'malformed-sales', quote: '我们下周安排一次技术交流会。' }, confidence: 0.99,
-      },
-    ] }),
-  });
-  assert.equal(deterministicWithMalformedSemantic.length, 1, 'a forged AI quote cannot discard a verified deterministic sales proposal');
-  assert.equal(deterministicWithMalformedSemantic[0].proposalMessageId, 'malformed-sales');
-  assert.ok(malformedSemanticDiagnostics.some(({ event, reason }) => event === 'candidate_filtered' && reason === 'source_quote_missing'));
-
-  const semanticSalesText = '赵老师，下周找个时间把您这边的需求和我们这边的技术方案一起对一对，会更高效。';
-  const semanticCustomerText = '嗯，技术交流会暂时定不了，我需要先向上级汇报。';
-  const semanticFallbackDiagnostics: Array<{ event: string; reason?: string; activityType?: string; messageId?: string; details?: Record<string, unknown> }> = [];
-  const semanticSalesCandidate = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'semantic-sales-proposal', npcId: 'P1-002',
-    messages: [
-      { messageId: 'semantic-sales', speaker: 'sales', text: semanticSalesText },
-      { messageId: 'semantic-customer', speaker: 'customer', text: semanticCustomerText },
-    ],
-  }, {
-    onDiagnostic: (diagnostic) => semanticFallbackDiagnostics.push(diagnostic),
-    invoker: async () => JSON.stringify({ activities: [{
-      type: 'technical_meeting', initiator: 'sales',
-      proposal: { messageId: 'semantic-sales', quote: semanticSalesText },
-      response: { messageId: 'semantic-customer', quote: semanticCustomerText, kind: 'rejected' },
-      finalStatus: 'cancelled', finalOutcome: { messageId: 'semantic-customer', quote: semanticCustomerText }, confidence: 0.01,
-    }] }),
-  });
-  assert.equal(semanticSalesCandidate.length, 1, 'LLM semantic fallback catches a real proposal without activity keywords');
-  assert.equal(semanticSalesCandidate[0].responseKind, 'not_required', 'NPC status and low model confidence do not block sales proposals');
-  assert.deepEqual(semanticSalesCandidate[0].evidence.map(({ kind }) => kind), ['proposal']);
-  assert.ok(semanticFallbackDiagnostics.some(({ event, details }) => event === 'candidate_accepted' && details?.detection_source === 'llm_sales_semantic_fallback'));
-  const semanticNumericDecision = await decideCustomerActivityFeasibility(semanticSalesCandidate[0], decisionSnapshot, {
-    revision: 4, mode: 'numeric', thresholds: {
-      technical_meeting: { supportMin: 70, pleasantnessMin: 60 },
-      case_site_visit: { supportMin: 0, pleasantnessMin: 0 },
-      company_visit: { supportMin: 100, pleasantnessMin: 100 },
-    },
-  });
-  assert.equal(semanticNumericDecision.decision, 'allow', 'semantic fallback candidates still reach the numerical feasibility gate');
-  assert.equal(semanticNumericDecision.mode, 'numeric');
-
-  const activityDirections: Array<[string, string, CustomerActivityProposalCandidate['type']]> = [
-    ['我们可以安排案例现场参观，看看已经落地的项目。', '案例现场参观', 'case_site_visit'],
-    ['欢迎您下周来我们公司参观。', '来我们公司参观', 'company_visit'],
-    ['赵老师，我想请您吃饭，顺便聊聊项目安排。', '请您吃饭', 'hospitality'],
-    ['赵老师，不是不可以请您吃饭，我们改天约时间。', '请您吃饭', 'hospitality'],
-    ['赵老师，周末要不要喝酒？', '喝酒', 'hospitality'],
-  ];
-  for (const [index, [salesText, quote, expectedType]] of activityDirections.entries()) {
-    const candidates = await detectCustomerActivityProposals({
-      conversationEnded: true, conversationId: `sales-activity-direction-${index}`, npcId: 'P1-002',
-      messages: [{ messageId: 'direction-sales', speaker: 'sales', text: salesText }],
-    }, { invoker: async () => { throw new Error('common proposal wording must be deterministic'); } });
-    assert.equal(candidates.length, 1);
-    assert.equal(candidates[0].type, expectedType, 'activity directions map to the correct type');
-    assert.equal(candidates[0].evidence[0].quote, quote);
-  }
-
-  const excludedHospitalityMentions = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'hospitality-exclusions', npcId: 'P1-002',
-    messages: [
-      { messageId: 'excluded-meal', speaker: 'sales', text: '我不想请您吃饭。' },
-      { messageId: 'excluded-tea', speaker: 'sales', text: '平时我会请客户喝杯茶，但今天聊下项目。' },
-      { messageId: 'excluded-water', speaker: 'sales', text: '我们可以一起喝杯水，先把项目问题说清楚。' },
-      { messageId: 'excluded-history', speaker: 'sales', text: '我们上周参加过饭局，今天先聊下项目进度。' },
-    ],
-  }, { invoker: async (messages) => messages[0]?.content.includes('语义复核器')
-    ? JSON.stringify({ reviews: [{
-      proposalMessageId: 'excluded-meal', type: 'hospitality', classification: 'not_proposed',
-      proposalEvidence: { messageId: 'excluded-meal', quote: '我不想请您吃饭。' },
-    }] })
-    : JSON.stringify({ activities: [] }) });
-  assert.deepEqual(excludedHospitalityMentions, [], 'a negative, historical meal, tea, or water mention is not a hospitality proposal');
-
-  const customerHospitalityConversation = [
-    { messageId: 'customer-meal-proposal', speaker: 'customer' as const, text: '要不下周我们一起吃个饭，聊一下项目进展？' },
-    { messageId: 'sales-meal-confirmation', speaker: 'sales' as const, text: '好，我来安排，之后和您确认。' },
-  ];
-  const customerHospitalityCandidates = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'customer-hospitality-confirmed', npcId: 'P1-002',
-    messages: customerHospitalityConversation,
-  }, { invoker: async () => JSON.stringify({ activities: [{
-    type: 'hospitality', initiator: 'customer',
-    proposal: { messageId: 'customer-meal-proposal', quote: '我们一起吃个饭' },
-    response: { messageId: 'sales-meal-confirmation', quote: '好，我来安排', kind: 'explicit_acceptance' },
-    finalStatus: 'active', finalOutcome: { messageId: 'sales-meal-confirmation', quote: '之后和您确认' }, confidence: 0.99,
-  }] }) });
-  assert.equal(customerHospitalityCandidates.length, 1, 'a customer hospitality proposal becomes a candidate only after sales confirmation');
-  assert.equal(customerHospitalityCandidates[0].initiator, 'customer');
-  assert.equal(customerHospitalityCandidates[0].requiresFeasibility, false);
-
-  const notOurCompany = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'sales-visits-customer-company', npcId: 'P1-002',
-    messages: [{ messageId: 'wrong-direction', speaker: 'sales', text: '我想去贵公司参观一下。' }],
-  }, { invoker: async () => JSON.stringify({ activities: [] }) });
-  assert.deepEqual(notOurCompany, [], 'a salesperson visiting the customer company is not a company_visit');
-
-  const ambiguousCompanyDestinationDiagnostics: Array<{ event: string; activityType?: string; details?: Record<string, unknown> }> = [];
-  const ambiguousCompanyDestination = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'ambiguous-company-destination', npcId: 'P1-002',
-    messages: [{ messageId: 'ambiguous-company-sales', speaker: 'sales', text: '赵老师，下周我能不能到公司参观，您接待一下？' }],
-  }, {
-    onDiagnostic: (diagnostic) => ambiguousCompanyDestinationDiagnostics.push(diagnostic),
-    invoker: async () => JSON.stringify({ activities: [] }),
-  });
-  assert.deepEqual(ambiguousCompanyDestination, [], 'an unspecified company destination is not deterministically assumed to be our company');
-  assert.ok(!ambiguousCompanyDestinationDiagnostics.some(({ event, activityType }) => event === 'model_skipped' && activityType === 'company_visit'),
-    'ambiguous visit direction is left to semantic detection instead of a deterministic company-visit candidate');
-
-  const quotedExample = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'quoted-example', npcId: 'P1-002',
-    messages: [{ messageId: 'quoted-sales', speaker: 'sales', text: '例如，“安排一次技术交流会”只是一个示例说法。' }],
-  }, { invoker: async () => JSON.stringify({ activities: [] }) });
-  assert.deepEqual(quotedExample, [], 'quoted examples are not live sales proposals');
-
-  const asciiQuotedExample = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'ascii-quoted-example', npcId: 'P1-002',
-    messages: [{ messageId: 'ascii-quoted-sales', speaker: 'sales', text: '例如，"安排一次技术交流会"只是一个示例说法。' }],
-  }, { invoker: async () => JSON.stringify({ activities: [] }) });
-  assert.deepEqual(asciiQuotedExample, [], 'ASCII quoted examples are also excluded');
-
-  const negatedProposal = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'negated-proposal', npcId: 'P1-002',
-    messages: [{ messageId: 'negative-sales', speaker: 'sales', text: '我们不要安排技术交流会。' }],
-  }, { invoker: proposalReviewInvoker({
-    proposalMessageId: 'negative-sales', type: 'technical_meeting', classification: 'not_proposed',
-    proposalEvidence: { messageId: 'negative-sales', quote: '我们不要安排技术交流会。' },
-  }) });
-  assert.deepEqual(negatedProposal, [], 'an explicit salesperson negative is not a proposal');
-
-  const withdrawalReviewDiagnostics: Array<{ event: string; details?: Record<string, unknown> }> = [];
-  const withdrawnProposal = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'withdrawn-proposal', npcId: 'P1-002',
-    messages: [
-      { messageId: 'withdraw-sales-1', speaker: 'sales', text: '我们可以安排一次技术交流会。' },
-      { messageId: 'withdraw-sales-2', speaker: 'sales', text: '我收回刚才的提议，技术交流会暂不安排。' },
-    ],
-  }, { invoker: proposalReviewInvoker({
-    proposalMessageId: 'withdraw-sales-1', type: 'technical_meeting', classification: 'withdrawn',
-    proposalEvidence: { messageId: 'withdraw-sales-1', quote: '我们可以安排一次技术交流会。' },
-    withdrawalEvidence: { messageId: 'withdraw-sales-2', quote: '我收回刚才的提议，技术交流会暂不安排。' },
-  }), onDiagnostic: (diagnostic) => withdrawalReviewDiagnostics.push(diagnostic) });
-  assert.deepEqual(withdrawnProposal, [], 'salesperson withdrawal excludes their proposal');
-  assert.ok(withdrawalReviewDiagnostics.some(({ event, details }) => event === 'proposal_semantic_review_completed'
-    && details?.model_classification === 'withdrawn' && details.withdrawal_message_id === 'withdraw-sales-2'),
-  'validated withdrawal diagnostics retain the exact withdrawal message ID');
-
-  const conversationalWithdrawal = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'conversational-withdrawal', npcId: 'P1-002',
-    messages: [
-      { messageId: 'conversational-proposal', speaker: 'sales', text: '我们建议安排一次技术交流会。' },
-      { messageId: 'conversational-cancel', speaker: 'sales', text: '技术交流会算了，不办了。' },
-    ],
-  }, { invoker: proposalReviewInvoker({
-    proposalMessageId: 'conversational-proposal', type: 'technical_meeting', classification: 'withdrawn',
-    proposalEvidence: { messageId: 'conversational-proposal', quote: '我们建议安排一次技术交流会。' },
-    withdrawalEvidence: { messageId: 'conversational-cancel', quote: '技术交流会算了，不办了。' },
-  }) });
-  assert.deepEqual(conversationalWithdrawal, [], 'colloquial “算了，不办了” is reviewed as a withdrawal');
-
-  const ambiguousGenericWithdrawal = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'ambiguous-generic-withdrawal', npcId: 'P1-002',
-    messages: [
-      { messageId: 'ambiguous-generic-meeting', speaker: 'sales', text: '我们可以安排一次技术交流会。' },
-      { messageId: 'ambiguous-generic-visit', speaker: 'sales', text: '我们建议安排一次案例现场参观。' },
-      { messageId: 'ambiguous-generic-retract', speaker: 'sales', text: '我收回刚才的提议。' },
-    ],
-  }, { invoker: async (messages) => messages[0]?.content.includes('语义复核器')
-    ? JSON.stringify({ reviews: [{
-      proposalMessageId: 'ambiguous-generic-meeting', type: 'technical_meeting', classification: 'withdrawn',
-      proposalEvidence: { messageId: 'ambiguous-generic-meeting', quote: '我们可以安排一次技术交流会。' },
-      withdrawalEvidence: { messageId: 'ambiguous-generic-retract', quote: '我收回刚才的提议。' },
-    }] })
-    : JSON.stringify({ activities: [] }) });
-  assert.equal(ambiguousGenericWithdrawal.length, 2,
-    'a generic withdrawal cannot identify one proposal when multiple activity proposals precede it');
-
-  const negationReviewCases = [
-    {
-      id: 'double-negation',
-      proposal: '赵老师，我觉得咱们不是不能安排技术交流会，不过时间还要再确认。',
-      classification: 'active' as const,
-      explanation: 'double negation is confirmed as an active proposal',
-    },
-    {
-      id: 'time-undecided',
-      proposal: '技术交流会的时间目前不能确定，不过我希望先安排交流。',
-      classification: 'active' as const,
-      explanation: 'uncertain timing does not negate the proposal',
-    },
-    {
-      id: 'convenience-question',
-      proposal: '我们可以安排一次技术交流会，您看时间方便不方便？',
-      classification: 'active' as const,
-      explanation: 'a convenience question is not an activity rejection',
-    },
-    {
-      id: 'negated-cancellation',
-      proposal: '我建议安排一次技术交流会，不是要取消这个活动。',
-      classification: 'active' as const,
-      explanation: 'denying an intention to cancel keeps the proposal active',
-    },
-  ];
-  for (const { id, proposal, classification, explanation } of negationReviewCases) {
-    const messages = [{ messageId: `${id}-sales`, speaker: 'sales' as const, text: proposal }];
-    const reviewed = await detectCustomerActivityProposals({
-      conversationEnded: true, conversationId: `review-${id}`, npcId: 'P1-002', messages,
-    }, { invoker: proposalReviewInvoker({
-      proposalMessageId: `${id}-sales`, type: 'technical_meeting', classification,
-      proposalEvidence: { messageId: `${id}-sales`, quote: proposal },
-    }) });
-    assert.equal(reviewed.length, 1, explanation);
-  }
-
-  const validProposalQuoteWithUnrelatedWithdrawal = '我们建议安排一次技术交流会。';
-  const unrelatedWithdrawal = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'unrelated-activity-withdrawal', npcId: 'P1-002',
-    messages: [
-      { messageId: 'unrelated-proposal', speaker: 'sales', text: validProposalQuoteWithUnrelatedWithdrawal },
-      { messageId: 'unrelated-cancel', speaker: 'sales', text: '我取消案例现场参观，这次技术交流会照常安排。' },
-    ],
-  }, { invoker: proposalReviewInvoker({
-    proposalMessageId: 'unrelated-proposal', type: 'technical_meeting', classification: 'active',
-    proposalEvidence: { messageId: 'unrelated-proposal', quote: validProposalQuoteWithUnrelatedWithdrawal },
-  }) });
-  assert.equal(unrelatedWithdrawal.length, 1, 'withdrawing another activity cannot cancel this proposal');
-
-  const cancelledTimeButActiveMeeting = '我们建议安排一次技术交流会。';
-  const cancelledTime = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'cancelled-time-keeps-activity', npcId: 'P1-002',
-    messages: [
-      { messageId: 'cancel-time-proposal', speaker: 'sales', text: cancelledTimeButActiveMeeting },
-      { messageId: 'cancel-time-followup', speaker: 'sales', text: '原定时间取消，技术交流会仍按计划开展。' },
-    ],
-  }, { invoker: proposalReviewInvoker({
-    proposalMessageId: 'cancel-time-proposal', type: 'technical_meeting', classification: 'active',
-    proposalEvidence: { messageId: 'cancel-time-proposal', quote: cancelledTimeButActiveMeeting },
-  }) });
-  assert.equal(cancelledTime.length, 1, 'cancelling a time does not cancel the activity');
-
-  const retainedProposal = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'retained-proposal-time-change', npcId: 'P1-002',
-    messages: [
-      { messageId: 'retained-proposal-first', speaker: 'sales', text: '我建议下周安排一次技术交流会，讨论接口需求。' },
-      { messageId: 'retained-proposal-time-change', speaker: 'sales', text: '取消刚才说的下周时间，技术交流会的提议仍然保留，时间另议。' },
-    ],
-  }, { invoker: async () => JSON.stringify({ activities: [] }) });
-  assert.equal(retainedProposal.length, 1,
-    'restating that the existing proposal remains while changing its time is not a second proposal');
-
-  const customerRefusalDoesNotWithdraw = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'customer-refusal-not-withdrawal', npcId: 'P1-002',
-    messages: [
-      { messageId: 'customer-refusal-proposal', speaker: 'sales', text: '我们建议安排一次技术交流会。' },
-      { messageId: 'customer-refusal-reply', speaker: 'customer', text: '这次先不安排。' },
-    ],
-  }, { invoker: async () => JSON.stringify({ activities: [{
-    type: 'technical_meeting', initiator: 'sales', proposal: { messageId: 'customer-refusal-proposal', quote: '我们建议安排一次技术交流会。' },
-    response: { messageId: 'customer-refusal-reply', quote: '这次先不安排。', kind: 'rejected' },
-    finalStatus: 'cancelled', finalOutcome: { messageId: 'customer-refusal-reply', quote: '这次先不安排。' }, confidence: 0.99,
-  }] }) });
-  assert.equal(customerRefusalDoesNotWithdraw.length, 1, 'a customer refusal cannot withdraw the salesperson proposal');
-
-  const falseWithdrawalEvidence = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'false-withdrawal-evidence', npcId: 'P1-002',
-    messages: [
-      { messageId: 'false-evidence-proposal', speaker: 'sales', text: '我们建议安排一次技术交流会。' },
-      { messageId: 'false-evidence-time', speaker: 'sales', text: '原定技术交流会时间取消，活动稍后再定。' },
-      { messageId: 'false-evidence-customer', speaker: 'customer', text: '我收回刚才的提议。' },
-    ],
-  }, { invoker: proposalReviewInvoker({
-    proposalMessageId: 'false-evidence-proposal', type: 'technical_meeting', classification: 'withdrawn',
-    proposalEvidence: { messageId: 'false-evidence-proposal', quote: '我们建议安排一次技术交流会。' },
-    withdrawalEvidence: { messageId: 'false-evidence-customer', quote: '我收回刚才的提议。' },
-  }) });
-  assert.equal(falseWithdrawalEvidence.length, 1, 'customer text cannot serve as salesperson withdrawal evidence');
-
-  const timeOnlyWithdrawalEvidence = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'time-only-withdrawal-evidence', npcId: 'P1-002',
-    messages: [
-      { messageId: 'time-only-proposal', speaker: 'sales', text: '我们建议安排一次技术交流会。' },
-      { messageId: 'time-only-cancel', speaker: 'sales', text: '原定技术交流会时间取消，活动稍后再定。' },
-    ],
-  }, { invoker: proposalReviewInvoker({
-    proposalMessageId: 'time-only-proposal', type: 'technical_meeting', classification: 'withdrawn',
-    proposalEvidence: { messageId: 'time-only-proposal', quote: '我们建议安排一次技术交流会。' },
-    withdrawalEvidence: { messageId: 'time-only-cancel', quote: '原定技术交流会时间取消，活动稍后再定。' },
-  }) });
-  assert.equal(timeOnlyWithdrawalEvidence.length, 1,
-    'a time-only cancellation cannot serve as evidence that the activity itself was withdrawn');
-
-  const unavailableReviewStillKeepsProvenProposal = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'review-unavailable-proven-proposal', npcId: 'P1-002',
-    messages: [
-      { messageId: 'proven-proposal', speaker: 'sales', text: '我们可以安排一次技术交流会。' },
-      { messageId: 'withdrawal-signal', speaker: 'sales', text: '我收回刚才的提议，技术交流会暂不安排。' },
-    ],
+    conversationEnded: true, conversationId: 'semantic-sales-proposal', npcId: 'P1-002', messages: salesVagueConversation,
   }, { invoker: async (messages) => {
-    if (messages[0]?.content.includes('语义复核器')) throw new Error('review unavailable');
+    semanticCalls += 1;
+    assert.match(messages[0]?.content ?? '', /语义识别器/);
     return JSON.stringify({ activities: [{
       type: 'technical_meeting', initiator: 'sales',
-      proposal: { messageId: 'proven-proposal', quote: '我们可以安排一次技术交流会。' },
+      proposal: { messageId: 'sales-proposal', quote: '把贵方需求和我们的技术方案当面掰开讲讲' },
     }] });
   } });
-  assert.equal(unavailableReviewStillKeepsProvenProposal.length, 1,
-    'semantic review failure preserves a candidate the primary semantic detector verified');
+  assert.equal(semanticCalls, 1, 'one ended conversation receives one typed semantic classification');
+  assert.equal(detectedProposals.length, 1);
+  assert.equal(detectedProposals[0]?.responseKind, 'not_required', 'a sales proposal needs no customer reply');
 
-  const explicitNegativeWithUnavailableReview = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'review-unavailable-negative', npcId: 'P1-002',
-    messages: [{ messageId: 'unavailable-negative', speaker: 'sales', text: '我们不要安排技术交流会。' }],
-  }, { invoker: async (messages) => {
-    if (messages[0]?.content.includes('语义复核器')) throw new Error('review unavailable');
-    return JSON.stringify({ activities: [] });
-  } });
-  assert.deepEqual(explicitNegativeWithUnavailableReview, [],
-    'semantic review failure cannot turn a bare negative mention into a proposal');
-
-  const notRecommendedWithUnavailableReview = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'review-unavailable-not-recommended', npcId: 'P1-002',
-    messages: [{ messageId: 'not-recommended', speaker: 'sales', text: '我不建议安排技术交流会。' }],
-  }, { invoker: async (messages) => {
-    if (messages[0]?.content.includes('语义复核器')) throw new Error('review unavailable');
-    return JSON.stringify({ activities: [] });
-  } });
-  assert.deepEqual(notRecommendedWithUnavailableReview, [],
-    'a negated recommendation triggers review but cannot become a proposal when review is unavailable');
-
-  const doubleNegationWithExplicitRefusalAndUnavailableReview = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'review-unavailable-double-negative-refusal', npcId: 'P1-002',
-    messages: [{ messageId: 'double-negative-refusal', speaker: 'sales', text: '我们不是不能安排技术交流会，只是现在不想办。' }],
-  }, { invoker: async (messages) => {
-    if (messages[0]?.content.includes('语义复核器')) throw new Error('review unavailable');
-    return JSON.stringify({ activities: [] });
-  } });
-  assert.deepEqual(doubleNegationWithExplicitRefusalAndUnavailableReview, [],
-    'the affirmative opening of a double-negative sentence cannot override its later explicit refusal');
-
-  const timeUncertainButAffirmativeWithUnavailableReview = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'review-unavailable-time-uncertain-proposal', npcId: 'P1-002',
-    messages: [{ messageId: 'time-uncertain-proposal', speaker: 'sales', text: '技术交流会的时间目前不能确定，不过我希望先安排交流。' }],
-  }, { invoker: async (messages) => {
-    if (messages[0]?.content.includes('语义复核器')) throw new Error('review unavailable');
-    return JSON.stringify({ activities: [] });
-  } });
-  assert.equal(timeUncertainButAffirmativeWithUnavailableReview.length, 1,
-    'an independently clear proposal survives when only its time is uncertain and semantic review is unavailable');
-  assert.equal(hasCustomerActivityRefusal('嗯……技术交流会这个事我这边暂时定不了，得先跟李经理汇报一下，确认后再答复您。'), false,
-    'an ordinary report-up response is not misclassified as a refusal');
-  const actualOverlyNegativeReply = '嗯……这个我这边暂时还没法安排，具体需求也不是我个人能定的。您看哈，先按正常流程来吧。';
-  assert.equal(hasCustomerActivityRefusal(actualOverlyNegativeReply), true,
-    'the real-world refusal and process-deflection reply is repaired even without an activity keyword');
-  for (const reply of [
-    '这个暂时还无法安排。',
-    '目前没法安排。',
-    '暂不安排。',
-    '目前条件不成熟。',
-    '您先按正常流程走。',
-    '先按正常流程来吧。',
-    '先按流程走吧。',
-    '请先走流程。',
-    '先走流程吧。',
-    '等流程走完再说。',
-  ]) {
-    assert.equal(hasCustomerActivityRefusal(reply), true, `${reply} is recognized as a negative or process-deflecting activity reply`);
-  }
-  const middleLevelInternalReply = '这个建议我记下了，我先向上级汇报，再给您反馈。';
-  const seniorInternalReply = '我先结合项目情况考虑，必要时和公司内部商量，再给您反馈。';
-  assert.equal(hasCustomerActivityRefusal(middleLevelInternalReply), false);
-  assert.equal(hasCustomerActivityDisposition(middleLevelInternalReply, '中层'), true,
-    'middle and frontline customers report upward and promise a later reply');
-  assert.equal(hasCustomerActivityDisposition('我需要先向上汇报，再给您反馈。', '中层'), true,
-    'a natural upward-report phrase need not explicitly say “上级”');
-  assert.equal(hasCustomerActivityDisposition(seniorInternalReply, '高层'), true,
-    'senior customers consider or discuss internally before replying');
-  assert.equal(hasCustomerActivityDisposition('知道了，按流程走。', '中层'), false,
-    'generic acknowledgment and process wording do not satisfy the required handling disposition');
-  const guardedNpc = { id: 'P1-004', name: '赵晓晨', title: '客户负责人', category: '一线' as const };
-  const replyGuardContext = {
-    playerMessage: '下周能不能安排一次技术交流会？',
-    recentConversation: [{ speaker: 'sales' as const, text: '我们想和您讨论技术交流会。' }],
-  };
-  let replyGenerationAttempts = 0;
-  let replyReviewAttempts = 0;
-  const repairedActivityReply = await generateNpcReplyWithCustomerActivityGuard(guardedNpc, 'work_phone', async () => {
-    replyGenerationAttempts += 1;
-    return replyGenerationAttempts === 1 ? actualOverlyNegativeReply : middleLevelInternalReply;
-  }, {
-    context: replyGuardContext,
-    invoker: async () => {
-      replyReviewAttempts += 1;
-      return replyReviewAttempts === 1
-        ? JSON.stringify({ decision: 'violation', issue: 'ordinary_refusal', evidence: '先按正常流程来吧' })
-        : JSON.stringify({ decision: 'allowed', issue: 'none' });
-    },
-  });
-  assert.equal(replyGenerationAttempts, 2, 'a negative or process-deflecting activity reply receives one targeted retry');
-  assert.equal(repairedActivityReply.source, 'repaired');
-  assert.equal(repairedActivityReply.reply, middleLevelInternalReply);
-  const fallbackActivityReply = await generateNpcReplyWithCustomerActivityGuard(guardedNpc, 'work_phone', async () => actualOverlyNegativeReply, {
-    context: replyGuardContext,
-    invoker: async () => JSON.stringify({ decision: 'violation', issue: 'ordinary_refusal', evidence: '先按正常流程来吧' }),
-  });
-  assert.equal(fallbackActivityReply.source, 'fallback');
-  assert.equal(hasCustomerActivityDisposition(fallbackActivityReply.reply, '一线'), true,
-    'the fallback uses internal reporting and a later reply instead of a refusal or process deflection');
-  const complianceReply = '这涉及商业秘密，我不能接受这个提议。';
-  assert.equal(hasCustomerActivityComplianceRefusal(complianceReply), true);
-  let complianceReplyAttempts = 0;
-  const guardedComplianceReply = await generateNpcReplyWithCustomerActivityGuard(guardedNpc, 'work_phone', async () => {
-    complianceReplyAttempts += 1;
-    return complianceReply;
-  }, {
-    context: replyGuardContext,
-    invoker: async () => JSON.stringify({ decision: 'allowed', issue: 'compliance_refusal' }),
-  });
-  assert.equal(complianceReplyAttempts, 1, 'the existing compliance refusal path is not rewritten into a positive activity response');
-  assert.equal(guardedComplianceReply.reply, complianceReply);
-  assert.equal(hasCustomerActivityRefusal('我不安排这次技术交流会。'), true, 'an ordinary direct refusal is repairable');
-  assert.equal(hasCustomerActivityRefusal('这次技术交流会涉及泄密，不能安排。'), false,
-    'existing compliance-related refusals remain protected');
-  const middleLevelConversation = [
-    { messageId: 's1', speaker: 'sales' as const, text: '我们可以安排一次技术交流会，重点讲接口适配。' },
-    { messageId: 's2', speaker: 'customer' as const, text: '我需要向上汇报，确认后再回复您。' },
-  ];
   const middleLevelCandidate = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'meeting-middle-level', npcId: 'P1-003', messages: middleLevelConversation,
+    conversationEnded: true, conversationId: 'semantic-middle-level', npcId: 'P1-003',
+    messages: [{ messageId: 'middle-sales', speaker: 'sales', text: '安排一次技术交流会，专门过一遍接口方案。' }],
   }, { invoker: async () => JSON.stringify({ activities: [{
-    type: 'technical_meeting', initiator: 'sales',
-    proposal: { messageId: 's1', quote: '安排一次技术交流会' },
-    response: { messageId: 's2', quote: '向上汇报，确认后再回复您', kind: 'ambiguous' },
-    finalStatus: 'active', finalOutcome: { messageId: 's2', quote: '向上汇报，确认后再回复您' }, confidence: 0.96,
+    type: 'technical_meeting', initiator: 'sales', proposal: { messageId: 'middle-sales', quote: '安排一次技术交流会' },
   }] }) });
-  assert.equal(middleLevelCandidate.length, 1, 'a middle-level report-up response is a feasibility candidate');
+  assert.equal(middleLevelCandidate.length, 1);
 
   const customerConversation = [
-    { messageId: 'c1', speaker: 'customer' as const, text: '能安排去看一下之前的项目现场吗？' },
-    { messageId: 'c2', speaker: 'sales' as const, text: '可以，我来协调案例现场参观。' },
+    { messageId: 'customer-proposal', speaker: 'customer' as const, text: '能不能带我看看已经落地的现场？' },
+    { messageId: 'sales-confirmation', speaker: 'sales' as const, text: '可以，我来协调您去案例现场参观。' },
   ];
   const customerInitiates = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'case-visit-1', npcId: 'P1-002', messages: customerConversation,
+    conversationEnded: true, conversationId: 'semantic-customer-proposal', npcId: 'P1-002', messages: customerConversation,
   }, { invoker: async () => JSON.stringify({ activities: [{
     type: 'case_site_visit', initiator: 'customer',
-    proposal: { messageId: 'c1', quote: '安排去看一下之前的项目现场' },
-    response: { messageId: 'c2', quote: '可以，我来协调案例现场参观。', kind: 'explicit_acceptance' },
-    finalStatus: 'active', finalOutcome: { messageId: 'c2', quote: '可以，我来协调案例现场参观。' }, confidence: 0.96,
+    proposal: { messageId: 'customer-proposal', quote: '带我看看已经落地的现场' },
+    response: { messageId: 'sales-confirmation', quote: '可以，我来协调', kind: 'explicit_acceptance' },
+    finalStatus: 'active', finalOutcome: { messageId: 'sales-confirmation', quote: '去案例现场参观' }, confidence: 0.99,
   }] }) });
-  assert.equal(customerInitiates.length, 1, 'customer proposal plus explicit sales confirmation creates a candidate');
-  assert.equal(customerInitiates[0].requiresFeasibility, false);
+  assert.equal(customerInitiates.length, 1, 'customer proposal requires an explicit sales acceptance');
 
-  let legacyCalls = 0;
-  const legacyAdapter = await detectAgreedCustomerActivities({
-    conversationEnded: true, conversationId: 'legacy-safe', npcId: 'P1-002', messages: salesVagueConversation,
-  }, { invoker: async () => { legacyCalls += 1; return JSON.stringify({ activities: [] }); } });
-  assert.deepEqual(legacyAdapter, [], 'legacy agreement adapter cannot bypass feasibility for sales proposals');
-  assert.equal(legacyCalls, 1);
-  const directNpcAgreement = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'npc-direct-agreement', npcId: 'P1-002', messages: sourceConversation,
+  const customerHospitalityCandidates = await detectCustomerActivityProposals({
+    conversationEnded: true, conversationId: 'semantic-hospitality', npcId: 'P1-002',
+    messages: [
+      { messageId: 'meal-customer', speaker: 'customer', text: '改天一起吃顿饭，把项目的事聊透。' },
+      { messageId: 'meal-sales', speaker: 'sales', text: '好，我来安排晚宴。' },
+    ],
   }, { invoker: async () => JSON.stringify({ activities: [{
-    type: 'technical_meeting', initiator: 'sales',
-    proposal: { messageId: 'm1', quote: '安排一次技术交流会' },
-    response: { messageId: 'm2', quote: '可以，安排技术团队参加。', kind: 'explicit_acceptance' },
-    finalStatus: 'active', finalOutcome: { messageId: 'm2', quote: '可以，安排技术团队参加。' }, confidence: 0.99,
+    type: 'hospitality', initiator: 'customer',
+    proposal: { messageId: 'meal-customer', quote: '一起吃顿饭' },
+    response: { messageId: 'meal-sales', quote: '好，我来安排', kind: 'explicit_acceptance' },
+    finalStatus: 'active', finalOutcome: { messageId: 'meal-sales', quote: '安排晚宴' }, confidence: 0.99,
   }] }) });
-  assert.equal(directNpcAgreement.length, 1, 'customer acceptance is not required for a salesperson proposal');
-  assert.equal(directNpcAgreement[0].responseKind, 'not_required', 'an NPC agreement is not recorded as customer consent');
-  assert.deepEqual(directNpcAgreement[0].evidence.map(({ kind }) => kind), ['proposal']);
+  assert.equal(customerHospitalityCandidates.length, 1);
 
-  const lowConfidence = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'meeting-low-confidence', npcId: 'P1-002', messages: customerConversation,
+  const allTypes = await detectCustomerActivityProposals({
+    conversationEnded: true, conversationId: 'semantic-all-types', npcId: 'P1-002',
+    messages: [
+      { messageId: 'type-case', speaker: 'sales', text: '带您去已经交付的项目走一圈。' },
+      { messageId: 'type-company', speaker: 'sales', text: '请您到我们办公区看看研发环境。' },
+      { messageId: 'type-meal', speaker: 'sales', text: '晚上我做东，边吃边聊。' },
+    ],
+  }, { invoker: async () => JSON.stringify({ activities: [
+    { type: 'case_site_visit', initiator: 'sales', proposal: { messageId: 'type-case', quote: '已经交付的项目走一圈' } },
+    { type: 'company_visit', initiator: 'sales', proposal: { messageId: 'type-company', quote: '到我们办公区看看研发环境' } },
+    { type: 'hospitality', initiator: 'sales', proposal: { messageId: 'type-meal', quote: '晚上我做东，边吃边聊' } },
+  ] }) });
+  assert.deepEqual(allTypes.map(({ type }) => type), ['case_site_visit', 'company_visit', 'hospitality']);
+
+  const unconfirmedCustomer = await detectCustomerActivityProposals({
+    conversationEnded: true, conversationId: 'semantic-unconfirmed-customer', npcId: 'P1-002', messages: customerConversation,
   }, { invoker: async () => JSON.stringify({ activities: [{
-    type: 'case_site_visit', initiator: 'customer',
-    proposal: { messageId: 'c1', quote: '安排去看一下之前的项目现场' },
-    response: { messageId: 'c2', quote: '可以，我来协调案例现场参观。', kind: 'explicit_acceptance' },
-    finalStatus: 'active', finalOutcome: { messageId: 'c2', quote: '可以，我来协调案例现场参观。' }, confidence: 0.7,
+    type: 'case_site_visit', initiator: 'customer', proposal: { messageId: 'customer-proposal', quote: '带我看看已经落地的现场' },
+    response: { messageId: 'sales-confirmation', quote: '可以，我来协调', kind: 'ambiguous' },
+    finalStatus: 'active', finalOutcome: { messageId: 'sales-confirmation', quote: '去案例现场参观' }, confidence: 0.99,
   }] }) });
-  assert.deepEqual(lowConfidence, [], 'low confidence is a successful no-match rather than a retryable protocol error');
+  assert.deepEqual(unconfirmedCustomer, [], 'an unconfirmed customer proposal is not eligible');
 
-  const noLongerEnded = await detectCustomerActivityProposals({
-    conversationEnded: false, conversationId: 'meeting-2', npcId: 'P1-002', messages: salesVagueConversation,
-  }, { invoker: async () => { throw new Error('must not call'); } });
-  assert.deepEqual(noLongerEnded, [], 'unfinished conversations are never scanned');
-
-  await assert.rejects(detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'meeting-3', npcId: 'P1-002', messages: customerConversation,
-  }, { invoker: async () => JSON.stringify({ activities: [{
-    type: 'case_site_visit', initiator: 'customer',
-    proposal: { messageId: 'c1', quote: '项目现场并未被这样提及' },
-    response: { messageId: 'c2', quote: '可以，我来协调案例现场参观。', kind: 'explicit_acceptance' },
-    finalStatus: 'active', finalOutcome: { messageId: 'c2', quote: '可以，我来协调案例现场参观。' }, confidence: 0.99,
-  }] }) }), (error: unknown) => error instanceof CustomerActivityDetectionError && error.code === 'invalid_source',
-  'model citations must be exact source text and protocol errors remain retryable');
-
-  await assert.rejects(detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'meeting-4', npcId: 'P1-002', messages: customerConversation,
-  }, { invoker: async () => JSON.stringify({ activities: [{
-    type: 'case_site_visit', initiator: 'customer',
-    proposal: { messageId: 'c1', quote: '安排去看一下之前的项目现场' },
-    response: { messageId: 'c1', quote: '安排去看一下之前的项目现场', kind: 'explicit_acceptance' },
-    finalStatus: 'active', finalOutcome: { messageId: 'c2', quote: '可以，我来协调案例现场参观。' }, confidence: 0.99,
-  }] }) }), (error: unknown) => error instanceof CustomerActivityDetectionError && error.code === 'invalid_source',
-  'the proposer cannot also be the responding party');
-
-  const cancelled = await detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'meeting-5', npcId: 'P1-002',
-    messages: [...salesVagueConversation, { messageId: 's3', speaker: 'customer' as const, text: '这次先取消，之后再商量。' }],
+  const emptySemanticResult = await detectCustomerActivityProposals({
+    conversationEnded: true, conversationId: 'semantic-empty', npcId: 'P1-002', messages: salesVagueConversation,
   }, { invoker: async () => JSON.stringify({ activities: [] }) });
-  assert.equal(cancelled.length, 1, 'an NPC refusal/cancellation cannot block a salesperson proposal');
-
+  assert.deepEqual(emptySemanticResult, [], 'an empty typed model result has no heuristic fallback');
   await assert.rejects(detectCustomerActivityProposals({
-    conversationEnded: true, conversationId: 'meeting-unavailable', npcId: 'P1-002', messages: customerConversation,
+    conversationEnded: true, conversationId: 'semantic-provider-error', npcId: 'P1-002', messages: salesVagueConversation,
   }, { invoker: async () => { throw new Error('provider unavailable'); } }),
-  (error: unknown) => error instanceof CustomerActivityDetectionError && error.code === 'provider_unavailable',
-  'provider failures are distinguishable from successful no-match results');
+  (error: unknown) => error instanceof CustomerActivityDetectionError && error.code === 'provider_unavailable');
+  await assert.rejects(detectCustomerActivityProposals({
+    conversationEnded: true, conversationId: 'semantic-invalid-source', npcId: 'P1-002', messages: salesVagueConversation,
+  }, { invoker: async () => JSON.stringify({ activities: [{
+    type: 'technical_meeting', initiator: 'sales', proposal: { messageId: 'sales-proposal', quote: '不存在的原文' },
+  }] }) }),
+  (error: unknown) => error instanceof CustomerActivityDetectionError && error.code === 'invalid_source');
 
   const aiConfig: ActivityDecisionConfig = { revision: 3, mode: 'ai', thresholds: {} };
-  const jevResult = (choice: 'allow' | 'reject' | 'need_more') => ({
+  const jevResult = (choice: 'allow' | 'reject') => ({
     answers: { decision: {
       type: 'choice' as const, choice,
-      probabilities: { allow: choice === 'allow' ? 1 : 0, reject: choice === 'reject' ? 1 : 0, need_more: choice === 'need_more' ? 1 : 0 },
+      probabilities: { allow: choice === 'allow' ? 1 : 0, reject: choice === 'reject' ? 1 : 0 },
       confidence: 1,
     } },
   });
   for (const [candidate, snapshot] of [
     [detectedProposals[0], decisionSnapshot] as const,
     [middleLevelCandidate[0], { ...decisionSnapshot, npcId: 'P1-003', role: '中层采购负责人', title: '采购经理' }] as const,
-  ]) for (const outcome of ['allow', 'reject', 'need_more'] as const) {
+  ]) for (const outcome of ['allow', 'reject'] as const) {
     let jevCalls = 0;
     const result = await decideCustomerActivityFeasibility(candidate, snapshot, aiConfig, {
       jevInvoker: async (request) => {
@@ -854,6 +348,16 @@ async function main() {
       assert.equal('relationshipSnapshot' in toPublicCustomerActivityTask(task), false, 'internal decision metrics are never public');
     }
   }
+
+  await assert.rejects(decideCustomerActivityFeasibility(detectedProposals[0], decisionSnapshot, aiConfig, {
+    jevInvoker: async () => ({ answers: { decision: {
+      type: 'choice' as const,
+      choice: 'need_more' as const,
+      probabilities: { allow: 0, reject: 0, need_more: 1 },
+      confidence: 1,
+    } } }),
+  }), (error: unknown) => error instanceof CustomerActivityDecisionError && error.code === 'invalid_response',
+  'a third feasibility output is invalid rather than a new persisted decision');
 
   const customerConfirmation = await decideCustomerActivityFeasibility(customerInitiates[0], decisionSnapshot, aiConfig, {
     jevInvoker: async () => { throw new Error('customer confirmation does not call Jev'); },
@@ -1112,7 +616,7 @@ async function main() {
   }), (error: unknown) => error instanceof CustomerActivityDecisionError && error.code === 'provider_unavailable',
   'provider failures do not become normal rejection decisions');
 
-  for (const outcome of ['reject', 'need_more'] as const) {
+  for (const outcome of ['reject'] as const) {
     const frozenDecision = await decideCustomerActivityFeasibility(detectedProposals[0], decisionSnapshot, aiConfig, {
       jevInvoker: async () => jevResult(outcome),
     });
@@ -1129,6 +633,26 @@ async function main() {
     assert.equal(noResurrection.state.decisions[0].configRevision, aiConfig.revision, 'the original config revision remains frozen');
     assert.equal(noResurrection.state.tasks.length, 0);
   }
+
+  const legacyReject = await decideCustomerActivityFeasibility(detectedProposals[0], decisionSnapshot, aiConfig, {
+    jevInvoker: async () => jevResult('reject'),
+  });
+  const legacyRecorded = recordCustomerActivityProposalDecision(
+    createEmptyCustomerActivityState(), detectedProposals[0], decisionSnapshot, aiConfig, legacyReject, 35_000,
+  );
+  const legacyNeedMoreState = parseCustomerActivityState({
+    ...legacyRecorded.state,
+    decisions: legacyRecorded.state.decisions.map((decision) => ({ ...decision, decision: 'need_more' })),
+  });
+  assert.equal(legacyNeedMoreState.decisions[0]?.decision, 'need_more', 'old saved need_more decisions remain readable');
+  assert.equal(toPublicUnavailableCustomerActivityNotice(legacyNeedMoreState.decisions[0]!), null,
+    'old need_more decisions do not create a new unavailable notice');
+  const legacyRetry = recordCustomerActivityProposalDecision(
+    legacyNeedMoreState, detectedProposals[0], decisionSnapshot, aiConfig,
+    await decideCustomerActivityFeasibility(detectedProposals[0], decisionSnapshot, aiConfig, { jevInvoker: async () => jevResult('allow') }),
+    36_000,
+  );
+  assert.equal(legacyRetry.recorded, false, 'an old need_more decision is not re-run or replaced');
 
   const noProposal = await detectCustomerActivityProposals({
     conversationEnded: true, conversationId: 'no-proposal', npcId: 'P1-002',

@@ -120,7 +120,7 @@ assert.match(result.content ?? '', /此前确认的拜访安排仍然有效/);
 assert.equal(result.referrals?.['P1-003']?.chargedActionPoints, 2, 'a duplicate invitation reuses the appointment without another charge');
 assert.equal(state.npcStates['P1-003'].support, metricsAfterInvitation.support, 'accepted visit invitation does not run scoring');
 assert.deepEqual(state.npcStates['P1-003'].dimensionScores, metricsAfterInvitation.dimensionScores);
-assert.equal(modelCalls, 0, 'grant, WeChat, and ordinary visit invitation do not call either model');
+assert.equal(modelCalls, 2, 'each written visit attempts activity classification, but provider failure does not revoke the referral authorization');
 
 result = await service.execute('referral-preview-user', request({ action: 'reset' }, result.version, previewSessionId));
 assert.deepEqual(result.referrals, {}, 'reset clears the referral grant');
@@ -176,7 +176,7 @@ persistedResult = await persistentService.executePersistent('persistent-referral
 }, persistedResult.version, persistedResult.previewSessionId), persistence);
 assert.equal(persistedResult.invitationStatus, 'accepted');
 assert.ok(persistence.restore('persistent-referral-user').appointments['P1-003']);
-assert.equal(modelCalls, 0, 'persistent referral actions also work without either AI provider');
+assert.equal(modelCalls, 3, 'the persistent visit still succeeds when the activity classifier is unavailable');
 
 const restoredState = persistence.restore('persistent-referral-user');
 assert.ok(toPreviewRecoveryDto(restoredState).referrals?.['P1-003'], 'recovery DTO returns persisted referral state');
@@ -275,13 +275,14 @@ reusable = await reuseService.execute('reuse-only-referral-user', request({
 }, reusable.version, reusableSessionId));
 assert.equal(reusable.referrals?.['P1-003']?.chargedActionPoints, 2, 'a new written appointment with an attachment records 1+1 AP');
 const reusableAppointmentId = reusable.appointment?.id;
+const callsBeforeReuse = reuseModelCalls;
 reusable = await reuseService.execute('reuse-only-referral-user', request({
   action: 'message', npcId: 'P1-003', channel: 'email', text: '请安排一次拜访，沟通项目推进。', reuseOnly: true,
 }, reusable.version, reusableSessionId));
 assert.equal(reusable.appointmentReused, true);
 assert.equal(reusable.appointment?.id, reusableAppointmentId, 'reuseOnly returns the already accepted appointment');
 assert.equal(reusable.referrals?.['P1-003']?.chargedActionPoints, 2, 'reuseOnly never adds a charge');
-assert.equal(reuseModelCalls, 0, 'a valid reuseOnly request remains deterministic');
+assert.equal(reuseModelCalls, callsBeforeReuse, 'a valid reuseOnly request does not call either model');
 
 console.log('Preview external referral checks passed.');
 }

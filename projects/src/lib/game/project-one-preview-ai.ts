@@ -3,12 +3,16 @@ import { z } from 'zod';
 import { invokeLLM, type ChatMessage } from '@/lib/ai/client';
 import { invokeJev, type JevInvoker, type JevRequest } from '@/lib/ai/jev-client';
 import { invokeConfiguredJev, type JevDesignerTaskId } from '@/lib/ai/jev-designer-config';
+import { composeChannelDecisionInstructions, decideFormalPhoneContact } from '@/lib/ai/formal-visit-decision';
 import { buildJevCandidateNpcSummaries, buildJevNpcProfile } from '@/lib/ai/jev-npc-profile';
+import { classifyCurrentActivityForAppointment, resolveCustomerActivityReplyGuidance } from '@/lib/ai/customer-activity-routing';
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
+import { resolveRuntimeRulePrompt } from '@/lib/ai/runtime-rule-prompts';
+import type { RuntimeRulePromptId } from '@/lib/ai/runtime-rule-prompt-catalog';
 import {
-  customerActivityReplyInstruction,
   customerActivityReplySignals,
+  resolveCustomerActivityReplyInstruction,
   reviewCustomerActivityReplySemantically,
   type CustomerActivityReplyContext,
   type CustomerActivityReplyDiagnostic,
@@ -45,6 +49,7 @@ import {
   saveCustomerActivityDraft,
   startCustomerActivityPlanning,
   submitCustomerActivityPlan,
+  toPublicUnavailableCustomerActivityNotice,
   toPublicCustomerActivityTask,
   type CustomerActivityConversationMessage,
   type CustomerActivityState,
@@ -61,6 +66,7 @@ import {
   PROJECT_ONE_FIVE_PERSON_NPCS,
   PROJECT_ONE_PROMPT_LAYERS,
   PROJECT_ONE_PROMPT_NODES,
+  type ProjectOneChannelId,
   type ProjectOneFivePersonNpc,
 } from '@/lib/designer/project-one-five-person';
 import {
@@ -76,7 +82,7 @@ import {
   projectOneOnboardingSnapshotSchema,
   type ProjectOneOnboardingSnapshot,
 } from '@/lib/contracts/project-one-onboarding';
-import { projectOneOnboardingPrompt, resolveProjectOneOnboarding } from '@/lib/game/project-one-onboarding';
+import { projectOneOnboardingPrompt, resolveProjectOneOnboarding, resolveProjectOneOnboardingSelection } from '@/lib/game/project-one-onboarding';
 
 type VisitTask = z.infer<typeof previewVisitTaskSchema>;
 export const PREVIEW_NPCS: Record<PreviewNpcId, ProjectOneFivePersonNpc> = PROJECT_ONE_FIVE_PERSON_NPCS;
@@ -663,6 +669,24 @@ export function buildPreviewNpcPersonalityPrompt(npcId: PreviewNpcId): string {
 function previewNpcTitle(state: PreviewServerState, npcId: PreviewNpcId): string {
   return state.onboardingSnapshot?.brief.people.find((person) => person.id === npcId)?.title ?? PREVIEW_NPCS[npcId].title;
 }
+const PROMPT_LAYER_RULE_IDS = {
+  npc_baseline: 'preview_prompt_layer_npc_baseline',
+  state_node: 'preview_prompt_layer_state_node',
+  runtime_state: 'preview_prompt_layer_runtime_state',
+  working_memory: 'preview_prompt_layer_working_memory',
+  recent_history: 'preview_prompt_layer_recent_history',
+  channel_modifier: 'preview_prompt_layer_channel_modifier',
+  npc_channel_exception: 'preview_prompt_layer_npc_channel_exception',
+  task: 'preview_prompt_layer_task',
+  hard_constraints: 'preview_prompt_layer_hard_constraints',
+} as const satisfies Record<keyof typeof PROJECT_ONE_PROMPT_LAYERS, RuntimeRulePromptId>;
+const CHANNEL_MODIFIER_RULE_IDS = {
+  email: 'preview_channel_modifier_email',
+  wechat: 'preview_channel_modifier_wechat',
+  work_phone: 'preview_channel_modifier_work_phone',
+  visit: 'preview_channel_modifier_visit',
+  wechat_request: 'preview_channel_modifier_wechat_request',
+} as const satisfies Partial<Record<ProjectOneChannelId, RuntimeRulePromptId>>;
 function layeredNpcContext(state: PreviewServerState, npcId: PreviewNpcId, channel: string, promptConfig: ProjectOnePromptConfig) {
   const runtime = state.npcStates[npcId];
   const node = resolvePreviewNode(runtime);
@@ -679,29 +703,46 @@ function layeredNpcContext(state: PreviewServerState, npcId: PreviewNpcId, chann
     runtimeState: { effectiveContactCount: runtime.effectiveContactCount, activeBlockers: runtime.activeBlockers },
     highValueWorkingMemory: highValueMemory(runtime),
     recentHistory: historyFor(state, npcId),
-    channelModifier: promptConfig.channelModifiers[channel] ?? '保持正式沟通边界。',
+    channelModifier: '当前渠道修饰规则已在系统提示中提供。',
     npcChannelException: promptConfig.npcChannelExceptions[npcId]?.[channel] ?? '无专属例外。',
   };
 }
-function layeredNpcPrompt(state: PreviewServerState, npcId: PreviewNpcId, channel: string, task: string, promptConfig: ProjectOnePromptConfig, speakAsNpc = false): string {
+async function layeredNpcPrompt(state: PreviewServerState, npcId: PreviewNpcId, channel: string, task: string, promptConfig: ProjectOnePromptConfig, speakAsNpc = false): Promise<string> {
   const layers = PROJECT_ONE_PROMPT_LAYERS;
   const npc = PREVIEW_NPCS[npcId];
   const onboardingPerson = state.onboardingSnapshot?.brief.people.find((person) => person.id === npcId);
-  const layerText = (id: keyof typeof PROJECT_ONE_PROMPT_LAYERS) => promptConfig.promptLayers[id] ?? layers[id].template;
+  const channelRuleId = CHANNEL_MODIFIER_RULE_IDS[channel as keyof typeof CHANNEL_MODIFIER_RULE_IDS];
+  const [resolvedLayers, channelModifierRule, onboardingPrompt] = await Promise.all([
+    Promise.all(Object.entries(layers).map(async ([id, layer]) => [
+      id,
+      await resolveRuntimeRulePrompt(
+        PROMPT_LAYER_RULE_IDS[id as keyof typeof PROMPT_LAYER_RULE_IDS],
+        promptConfig.promptLayers[id] ?? layer.template,
+      ),
+    ] as const)).then((entries) => Object.fromEntries(entries) as Record<keyof typeof PROJECT_ONE_PROMPT_LAYERS, string>),
+    channelRuleId
+      ? resolveRuntimeRulePrompt(channelRuleId, promptConfig.channelModifiers[channel])
+      : Promise.resolve(''),
+    state.onboardingSnapshot
+      ? resolveRuntimeRulePrompt('onboarding_dossier_dialogue')
+        .then((dialogueRules) => projectOneOnboardingPrompt(state.onboardingSnapshot, npcId, dialogueRules))
+      : Promise.resolve(''),
+  ]);
+  const layerText = (id: keyof typeof PROJECT_ONE_PROMPT_LAYERS) => resolvedLayers[id];
   return [
-    layers.npc_baseline.label + '：' + composeNpcRolePrompt(
+    layers.npc_baseline.label + '：' + layerText('npc_baseline') + '\n' + composeNpcRolePrompt(
       promptConfig.npcRolePrompts[npcId],
       state.npcStates[npcId].support,
       state.npcStates[npcId].pleasantness,
       promptConfig.supportTierThresholds,
     ),
     '通用性格类型字典（行为风格参考）：\n' + buildPreviewNpcPersonalityPrompt(npcId),
-    projectOneOnboardingPrompt(state.onboardingSnapshot, npcId),
+    onboardingPrompt,
     layers.state_node.label + '：' + layerText('state_node') + '只读取 <untrusted_data> 中 npcContext.stateNode，并严格遵守其披露边界。',
     layers.runtime_state.label + '：' + layerText('runtime_state'),
     layers.working_memory.label + '：' + layerText('working_memory'),
     layers.recent_history.label + '：' + layerText('recent_history'),
-    layers.channel_modifier.label + '：' + layerText('channel_modifier'),
+    layers.channel_modifier.label + '：' + layerText('channel_modifier') + (channelModifierRule ? '\n' + channelModifierRule : ''),
     layers.npc_channel_exception.label + '：' + layerText('npc_channel_exception'),
     layers.task.label + '：' + layerText('task') + '\n' + task,
     layers.hard_constraints.label + '：' + layerText('hard_constraints')
@@ -740,18 +781,14 @@ function safeNpcReplyFallback(npcId: PreviewNpcId, channel: string, activityProp
   return channel === 'work_phone' ? spoken[npcId] : written[npcId];
 }
 
-/** Keep contextual activity replies, including follow-ups and withdrawals, out of legacy appointment handling. */
-function isCustomerActivityProposalText(state: PreviewServerState, npcId: PreviewNpcId, text: string): boolean {
+/** Conservative hint for reply guidance. Only the semantic detector can match an activity. */
+function hasCustomerActivityReplyHint(state: PreviewServerState, npcId: PreviewNpcId, text: string): boolean {
   const recentConversation = historyFor(state, npcId).slice(-8).map((message) => ({
     speaker: message.role === 'player' ? 'sales' as const : 'customer' as const,
     text: message.text,
   }));
   return isCustomerActivityReplyContext(text, recentConversation);
 }
-function customerActivityReplyGuide(npcId: PreviewNpcId, hospitality = false): string {
-  return customerActivityReplyInstruction(PREVIEW_NPCS[npcId].level, hospitality);
-}
-
 function npcSpeakerIdentityQualityGate<T extends { content: string }>(
   npcId: PreviewNpcId,
   channel: string,
@@ -759,15 +796,18 @@ function npcSpeakerIdentityQualityGate<T extends { content: string }>(
   reviewContext?: CustomerActivityReplyContext,
   onDiagnostic?: (diagnostic: CustomerActivityReplyDiagnostic) => void,
   reviewInvoker?: CustomerActivityReplySemanticInvoker,
+  activityReplyRuleText = '',
+  reviewRuleText = '',
+  identityRepairRuleText = '',
 ): StructuredAiQualityGate<T> {
   const npc = PREVIEW_NPCS[npcId];
-  const hospitality = Boolean(reviewContext && isHospitalityCustomerActivityContext(
-    reviewContext.playerMessage, reviewContext.recentConversation,
-  ));
+  const hospitality = reviewContext?.activityType
+    ? reviewContext.activityType === 'hospitality'
+    : Boolean(reviewContext && isHospitalityCustomerActivityContext(reviewContext.playerMessage, reviewContext.recentConversation));
   return {
     check: (value) => !hasNpcSpeakerIdentityViolation(npcId, value.content)
       && (!activityProposal || !('appointment' in value && value.appointment)),
-    retryInstruction: `发言身份校验失败。NPC 回复校验失败。NPC 回复质量校验失败。当前你扮演的是 ${npc.name}（${npc.title}，人物 ID ${npcId}），正在通过 ${channel} 回复玩家。请以该 NPC 第一人称重写，不要称呼自己为“${npc.name}”或“${npc.name.slice(0, 1)}总”，不要自称供应商、乙方、销售、服务商或交付团队，也不要编造事实、承诺、姓名或安排。${activityProposal ? `${customerActivityReplyGuide(npcId, hospitality)}本轮上下文涉及新提议或尚未确认活动的后续讨论/追问时，仍不得提前接受、确认时间或让销售联系第三人；${hospitality ? '由目标客户本人结合工作安排和边界考虑' : '应由本人按职责考虑/内部商量或向上级汇报'}，并后续反馈。仅玩家明确撤回、纯历史，或已转到无关话题时，不强迫继续处理活动。` : ''}只输出符合原 JSON 契约的修正正文。`,
+    retryInstruction: `发言身份校验失败。NPC 回复校验失败。NPC 回复质量校验失败。${identityRepairRuleText}当前你扮演的是 ${npc.name}（${npc.title}，人物 ID ${npcId}），正在通过 ${channel} 回复玩家。请以该 NPC 第一人称重写，不要称呼自己为“${npc.name}”或“${npc.name.slice(0, 1)}总”，不要自称供应商、乙方、销售、服务商或交付团队，也不要编造事实、承诺、姓名或安排。${activityProposal ? `${activityReplyRuleText}本轮上下文涉及新提议或尚未确认活动的后续讨论/追问时，仍不得提前接受、确认时间或让销售联系第三人；${hospitality ? '由目标客户本人结合工作安排和边界考虑' : '应由本人按职责考虑/内部商量或向上级汇报'}，并后续反馈。仅玩家明确撤回、纯历史，或已转到无关话题时，不强迫继续处理活动。` : ''}只输出符合原 JSON 契约的修正正文。`,
     fallback: { content: safeNpcReplyFallback(npcId, channel, activityProposal, hospitality) } as T,
     ...(activityProposal ? {
       semanticReview: async (value: T, attempt: number) => {
@@ -778,7 +818,7 @@ function npcSpeakerIdentityQualityGate<T extends { content: string }>(
           name: npc.name,
           title: npc.title,
           category: npc.level,
-        }, channel, value.content, context, { signal, attempt, ...(reviewInvoker ? { invoker: reviewInvoker } : {}), onDiagnostic });
+        }, channel, value.content, context, { signal, attempt, ...(reviewInvoker ? { invoker: reviewInvoker } : {}), ...(reviewRuleText ? { ruleText: reviewRuleText } : {}), onDiagnostic });
       },
     } : {}),
   };
@@ -1070,11 +1110,15 @@ async function evaluateNpcTurn(
   promptConfig: ProjectOnePromptConfig,
 ): Promise<z.infer<typeof previewNpcEvaluationAiOutputSchema>> {
   const hardBlocker = isHardBlockerText(playerMessage.text);
+  const [memorySummaryRule, evaluatorBusinessRule] = await Promise.all([
+    resolveRuntimeRulePrompt('preview_npc_memory_summary'),
+    resolveRuntimeRulePrompt('preview_evaluator_business_guidance', promptConfig.previewEvaluatorPrompt),
+  ]);
   const suggestions = await callStructuredAi(invoker,
-    layeredNpcPrompt(state, npcId, channel, [
-      '独立评估刚刚完成的 NPC 正文或一次 NPC 沟通处理，但只生成供 Jev 参考的记忆摘要建议，不输出评分、状态、枚举或布尔判断。严格按 playerMessage、responseAction 和可空 npcMessage 整理。已读不回不代表同意、拒绝、承诺或负面反馈；只记录本轮玩家实际提供、仍需核验的内容。',
+    await layeredNpcPrompt(state, npcId, channel, [
+      memorySummaryRule,
       '固定 JSON 契约：{"memorySuggestions":[{"summary":"摘要","tags":["标签"]}]}。memorySuggestions 只用于提供文字摘要，后续所有分数、布尔值、枚举和是否写入均由 Jev typed questions 决定。',
-      '设计师评估补充提示：' + promptConfig.previewEvaluatorPrompt,
+      '设计师评估补充提示：' + evaluatorBusinessRule,
     ].join('\n'), promptConfig),
     { npcContext: layeredNpcContext(state, npcId, channel, promptConfig), playerMessage, responseAction, npcMessage, hardBlocker, instruction: '只输出 memorySuggestions，不要输出 pleasureDelta、supportDelta、dimensionDeltas、effectiveContact、memoryUpdates 或 blockerUpdates。' },
     narrativeEvaluationAiOutputSchema);
@@ -1220,6 +1264,7 @@ async function askAttachmentDecision(
 async function askMessageDecision(
   invoker: PreviewJevInvoker,
   context: { npcId: PreviewNpcId; playerText: string; channel: string; allowReadNoReply: boolean; hasAppointmentDraft: boolean },
+  npcChannelGuidance?: string,
 ): Promise<MessageDecision> {
   const fallback = messageDecisionFallback(context.playerText, context.channel, context.allowReadNoReply, context.hasAppointmentDraft);
   try {
@@ -1228,9 +1273,13 @@ async function askMessageDecision(
       questions: {
         responseAction: choiceQuestion(
           context.allowReadNoReply ? { reply: '回复正文', read_no_reply: '已读但不回复' } : { reply: '回复正文' },
-          '决定本轮消息是回复还是已读不回。合规红线必须回复。',
+          composeChannelDecisionInstructions(
+            '决定本轮消息是回复还是已读不回。合规红线必须回复。',
+            npcChannelGuidance,
+            '只可选择本轮列出的回复方式；合规红线必须回复。已读不回不能确认邀约、承诺、拒绝或披露信息。',
+          ),
         ),
-        invitationStatus: choiceQuestion({ none: '不涉及邀约', accepted: '接受邀约', rejected: '拒绝邀约', later: '稍后或改期' }, '决定邀约状态；只根据玩家本轮明确表达和上下文判断。'),
+        invitationStatus: choiceQuestion({ none: '不涉及普通拜访预约', accepted: '接受普通拜访', rejected: '拒绝普通拜访', later: '稍后或改期' }, '根据本轮语义和上下文判断普通拜访邀约。技术分享或研讨、带客户实地看案例、邀请客户参观供应商，以及餐叙或饮酒邀约另行匹配活动，本题选 none。'),
       },
     });
     const answers = extractJevAnswers(response);
@@ -1776,6 +1825,9 @@ function publicCustomerActivities(state: PreviewServerState) {
     version: 1 as const,
     serverNow: Date.now(),
     tasks: state.customerActivities.tasks.map(toPublicCustomerActivityTask),
+    unavailableNotices: state.customerActivities.decisions
+      .map(toPublicUnavailableCustomerActivityNotice)
+      .filter((decision) => decision !== null),
   };
 }
 
@@ -1888,28 +1940,44 @@ function completeAppointment(state: PreviewServerState, npcId: PreviewNpcId): Pr
   appointment.status = 'completed';
   return { ...appointment };
 }
-function messagePurpose(npcId: PreviewNpcId, channel: string, hasAttachment: boolean, allowReadNoReply: boolean, activityProposal = false, hospitality = false): string {
+function messagePurpose(channel: string, hasAttachment: boolean, allowReadNoReply: boolean, activityProposal: boolean, activityRuleText: string, replyPolicyText: string): string {
   const channelName = channel === 'email' ? '邮件' : channel === 'wechat' ? '工作微信' : '电话';
   const replyRule = '请通过' + channelName + '回复。输出 {content,invitationStatus,appointment?}。invitationStatus 只能是 none、accepted、rejected、later。'
     + '仅当玩家明确邀约且你接受时使用 accepted，并必须填写 appointment={timeWindow,location,agenda}；其他状态必须省略 appointment。';
-  return (allowReadNoReply
+  return replyPolicyText + '\n' + (allowReadNoReply
     ? replyRule
       + '邮件和工作微信可选择已读不回。必须输出严格二选一 JSON：回复时 {"responseAction":"reply","content":"非空正文","invitationStatus":"none|accepted|rejected|later","appointment?":{...}}；已读不回时 {"responseAction":"read_no_reply","content":null,"invitationStatus":"none","reasonCode":"natural_closure|no_new_value|repeated_follow_up|not_responsible|current_priority_low|unwilling_to_advance","reasonEvidence":"基于已给上下文的简短证据"}。'
       + '只在自然收尾、无新增价值、重复追问、已明确非本人职责、当前优先级低或当前不愿推进时选择已读不回。职位、低支持度或消息短本身不足以沉默；具体有效新信息必须重新考虑。不得编造忙、开会、出差等事实。已读不回不得确认邀约、承诺、拒绝或披露新线索。涉及合规红线时必须回复明确拒绝，不能已读不回。'
     : replyRule)
-    + (activityProposal ? ` ${customerActivityReplyGuide(npcId, hospitality)}不要输出 appointment，也不要把这类活动当作普通拜访邀约。` : '')
+    + ` ${activityRuleText}`
+    + (activityProposal ? '不要输出 appointment，也不要把这类活动当作普通拜访邀约。' : '')
     + (hasAttachment ? '玩家附带了材料。若上下文说明未查看，只能知道已收到，不能假设或引用材料正文。' : '没有附件。');
 }
 
 /** Validate the initial-only scenario before an in-memory mutation or durable acquire. */
+function matchesStartSessionSnapshot(
+  request: Extract<PreviewAiRequest, { action: 'start_session' }>,
+  snapshot: ProjectOneOnboardingSnapshot | undefined,
+): boolean {
+  if (snapshot?.brief.id !== request.onboardingScenarioId) return false;
+  if (request.onboardingScenarioId !== 'custom') return !request.onboardingSelection;
+  const selection = request.onboardingSelection;
+  return !!selection && snapshot.selection?.industryId === selection.industryId
+    && snapshot.selection.businessId === selection.businessId
+    && snapshot.selection.customIndustry === selection.customIndustry
+    && snapshot.selection.customBusiness === selection.customBusiness;
+}
+
 function resolveStartSessionSnapshot(
   request: PreviewAiRequest,
   supplied?: ProjectOneOnboardingSnapshot,
 ): ProjectOneOnboardingSnapshot | undefined {
   if (request.action !== 'start_session') return supplied;
   if (request.previewSessionId) throw new PreviewAiError('protocol', 'PROJECT_ONE_ONBOARDING_SESSION_REPLACEMENT_FORBIDDEN');
-  const snapshot = supplied ?? resolveProjectOneOnboarding(request.onboardingScenarioId);
-  if (!snapshot || snapshot.brief.id !== request.onboardingScenarioId) {
+  const snapshot = supplied ?? (request.onboardingSelection
+    ? resolveProjectOneOnboardingSelection(request.onboardingSelection)
+    : resolveProjectOneOnboarding(request.onboardingScenarioId));
+  if (!snapshot || !matchesStartSessionSnapshot(request, snapshot)) {
     throw new PreviewAiError('protocol', 'PROJECT_ONE_ONBOARDING_NOT_FOUND');
   }
   return projectOneOnboardingSnapshotSchema.parse(structuredClone(snapshot));
@@ -1945,9 +2013,8 @@ async function executeUnsafe(
     if (request.action === 'start_session') {
       // The route resolves before acquiring a persistent command lease. Keep the
       // same guard here for direct/in-memory callers used by deterministic tests.
-      const snapshot = onboardingSnapshot ?? resolveProjectOneOnboarding(request.onboardingScenarioId);
-      if (!snapshot) throw new PreviewAiError('protocol', 'PROJECT_ONE_ONBOARDING_NOT_FOUND');
-      state.onboardingSnapshot = projectOneOnboardingSnapshotSchema.parse(structuredClone(snapshot));
+      if (!onboardingSnapshot) throw new PreviewAiError('protocol', 'PROJECT_ONE_ONBOARDING_NOT_FOUND');
+      state.onboardingSnapshot = onboardingSnapshot;
       return previewAiResponseSchema.parse({ ...base, projectOneBrief: state.onboardingSnapshot.brief });
     }
     if (request.action === 'reset') {
@@ -1987,8 +2054,9 @@ async function executeUnsafe(
     }
 
     if (request.action === 'plan') {
+      const planGuidance = await resolveRuntimeRulePrompt('preview_work_plan_narrative');
       const narrative = await callStructuredAi(invoker,
-        '你是项目一五人版的工作计划建议撰写器。只生成给玩家看的具体建议，不判断计划是否充分，也不选择人物。输出 {recommendations:string[]}。',
+        `${planGuidance}\n严格输出 {recommendations:string[]}。`,
         { scopeNpcId: request.npcId ?? null, plan: request.text, people: PREVIEW_NPC_IDS.map((id) => ({ id, name: PREVIEW_NPCS[id].name, title: previewNpcTitle(state, id) })) },
         narrativePlanAiOutputSchema,
       );
@@ -2168,26 +2236,42 @@ async function executeUnsafe(
       const phoneConversationStartIndex = request.action === 'phone_connect' ? state.conversations[npcId].length : undefined;
 
       const hardBlocker = isHardBlockerText(request.text);
-      const activityProposal = isCustomerActivityProposalText(state, npcId, request.text);
+      let activityProposal = hasCustomerActivityReplyHint(state, npcId, request.text);
+      if (request.action === 'phone_connect' && !hardBlocker) {
+        const contact = await decideFormalPhoneContact({
+          npcId,
+          round: 1,
+          affinity: state.npcStates[npcId].support,
+          npcChannelGuidance: promptConfig.npcChannelDecisionPrompts?.[npcId]?.work_phone,
+        }, { jevInvoker: deps.jevInvoker });
+        if (contact?.contactAction === 'unanswered') {
+          return previewAiResponseSchema.parse({ ...base, connected: false, content: '电话暂时无人接听。' });
+        }
+      }
       const hasReferral = request.action === 'message' && hasExternalReferral(state.referrals, npcId);
+      const classifyActivity = (messageId: string) => classifyCurrentActivityForAppointment(npcId, {
+        messageId, speaker: 'sales', text: request.text,
+      }, state.conversations[npcId].filter((message) => message.channel === channel).slice(-8).map((message) => ({
+        messageId: message.messageId, speaker: message.role === 'player' ? 'sales' : 'customer', text: message.text,
+      })), invoker);
       const referralInvitationEligible = request.action === 'message'
         && canUseExternalReferralForInvitation(state.referrals, npcId, request.text)
         && !activityProposal
         && !hardBlocker;
-      const referralVisitInvitation = referralInvitationEligible
-        && isReferralInvitationChannelAuthorized(state, npcId, channel);
+      const referralMayUseShortcut = referralInvitationEligible && isReferralInvitationChannelAuthorized(state, npcId, channel);
+      const reuseOnly = request.action === 'message' && request.reuseOnly;
+      if (reuseOnly && (!referralMayUseShortcut || state.appointments[npcId]?.status !== 'accepted')) {
+        throw new PreviewAiError('protocol', 'APPOINTMENT_REUSE_UNAVAILABLE');
+      }
+      const referralActivity = referralMayUseShortcut && !reuseOnly ? await classifyActivity(`${request.commandId}:sales`) : 'none';
+      let semanticActivity = referralActivity !== 'none' && referralActivity !== 'unavailable' ? referralActivity : undefined;
+      if (semanticActivity) activityProposal = true;
+      const referralVisitInvitation = referralMayUseShortcut && !semanticActivity;
       // A referral may deterministically accept a valid ordinary visit, but it
       // must not make an arbitrary historical, cancellation, activity, or
       // channel-invalid message capable of writing an accepted appointment if
       // an older Jev/LLM branch misclassifies it.
       const referralAppointmentWriteBlocked = hasReferral && !referralVisitInvitation;
-
-      if (request.action === 'message' && request.reuseOnly) {
-        const currentAppointment = state.appointments[npcId];
-        if (!referralVisitInvitation || currentAppointment?.status !== 'accepted') {
-          throw new PreviewAiError('protocol', 'APPOINTMENT_REUSE_UNAVAILABLE');
-        }
-      }
 
       if (referralVisitInvitation) {
         const playerMessage = newMessage('player', channel, request.text, attachment ? {
@@ -2241,41 +2325,62 @@ async function executeUnsafe(
       let attachmentResult: SavedAttachment | undefined;
       if (attachment) {
         const decision = await askAttachmentDecision(jevInvoker, { npcId, attachmentTitle: attachment.title, channel, playerText: request.text });
+        const attachmentImpactRule = await resolveRuntimeRulePrompt('preview_attachment_impact');
         const impact = await callStructuredAi(invoker,
-          layeredNpcPrompt(state, npcId, channel, '判断是否查看已收到的附件已由 Jev 完成；你只描述附件在本轮沟通中的可能影响，不得改变查看决定。输出 {impact:string}。', promptConfig),
+          await layeredNpcPrompt(state, npcId, channel, `判断是否查看已收到的附件已由 Jev 完成；${attachmentImpactRule} 输出 {impact:string}。`, promptConfig),
           { npcContext: layeredNpcContext(state, npcId, channel, promptConfig), npc: { id: npc.id, name: npc.name, title: npc.title }, attachmentTitle: attachment.title, channel, playerText: request.text, viewed: decision.viewed }, narrativeAttachmentAiOutputSchema);
         attachmentResult = { title: attachment.title, viewed: decision.viewed, impact: impact.impact, ...(decision.viewed ? { content: attachment.content } : {}) };
       }
       const playerMessage = newMessage('player', channel, request.text, attachmentResult);
-      const recentActivityConversation = historyFor(state, npcId).slice(-8).map((message) => ({
-        speaker: message.role === 'player' ? 'sales' as const : 'customer' as const,
-        text: message.text,
-      }));
-      const hospitalityActivity = isHospitalityCustomerActivityContext(request.text, recentActivityConversation);
-      const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, channel, promptConfig), recentHistory: [...historyFor(state, npcId), { ...playerMessage, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : undefined }] }, npc: { id: npcId, name: npc.name, title: npc.title, level: npc.level }, channel, playerText: request.text, customerActivityProposal: activityProposal, customerActivityType: activityProposal ? (hospitalityActivity ? 'hospitality' : 'organization_activity') : null, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : null };
-      const replyReviewOptions = activityProposal ? {
-        context: customerActivityReplyContext(state, npcId, request.text),
-        invoker,
-        onDiagnostic: customerActivityReplyDiagnostics(state, npcId, channel, playerMessage.messageId),
-      } : undefined;
-      type MessageOutput = z.infer<typeof messageAiOutputSchema>;
       const decision = hardBlocker
         ? { responseAction: 'reply' as const, invitationStatus: 'rejected' as const }
         : activityProposal
           ? { responseAction: 'reply' as const, invitationStatus: 'none' as const }
-          : await askMessageDecision(jevInvoker, { npcId, playerText: request.text, channel, allowReadNoReply, hasAppointmentDraft: false });
+          : await askMessageDecision(
+            jevInvoker,
+            { npcId, playerText: request.text, channel, allowReadNoReply, hasAppointmentDraft: false },
+            channel === 'email' ? promptConfig.npcChannelDecisionPrompts?.[npcId]?.email : undefined,
+          );
+      const appointmentActivity = !hardBlocker && !activityProposal && !hasReferral && decision.invitationStatus !== 'none'
+        ? await classifyActivity(playerMessage.messageId) : 'none';
+      if (appointmentActivity !== 'none' && appointmentActivity !== 'unavailable') {
+        semanticActivity = appointmentActivity;
+        activityProposal = true;
+      }
+      const recentActivityConversation = historyFor(state, npcId).slice(-8).map((message) => ({
+        speaker: message.role === 'player' ? 'sales' as const : 'customer' as const,
+        text: message.text,
+      }));
+      const hospitalityActivity = semanticActivity
+        ? semanticActivity === 'hospitality' : isHospitalityCustomerActivityContext(request.text, recentActivityConversation);
+      const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, channel, promptConfig), recentHistory: [...historyFor(state, npcId), { ...playerMessage, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : undefined }] }, npc: { id: npcId, name: npc.name, title: npc.title, level: npc.level }, channel, playerText: request.text, customerActivityProposal: activityProposal, customerActivityType: activityProposal ? (hospitalityActivity ? 'hospitality' : 'organization_activity') : null, attachment: attachmentResult ? (attachmentResult.viewed ? attachmentResult : { title: attachmentResult.title, viewed: false, impact: attachmentResult.impact }) : null };
+      const replyReviewOptions = activityProposal ? {
+        context: { ...customerActivityReplyContext(state, npcId, request.text), activityType: semanticActivity },
+        invoker,
+        onDiagnostic: customerActivityReplyDiagnostics(state, npcId, channel, playerMessage.messageId),
+      } : undefined;
+      type MessageOutput = z.infer<typeof messageAiOutputSchema>;
       let content: string | null = null;
       let appointmentDraft: AppointmentDraft | undefined;
       if (decision.responseAction === 'reply' && !hardBlocker) {
+        const [replyPolicyText, activityReplyRuleText, reviewRuleText, identityRepairRuleText] = await Promise.all([
+          resolveRuntimeRulePrompt('preview_message_reply_policy'),
+          activityProposal
+            ? resolveCustomerActivityReplyInstruction(npc.level, hospitalityActivity)
+            : resolveCustomerActivityReplyGuidance(),
+          activityProposal ? resolveRuntimeRulePrompt('customer_activity_reply_review') : Promise.resolve(''),
+          resolveRuntimeRulePrompt('preview_npc_speaker_identity_repair'),
+        ]);
         const messageOutput = await callStructuredAi(invoker,
-          layeredNpcPrompt(state, npcId, channel, messagePurpose(npcId, channel, Boolean(attachment), false, activityProposal, hospitalityActivity) + ' 只输出正文及可选的预约具体安排，不得输出 responseAction 或 invitationStatus 等决定字段。', promptConfig, true),
+          await layeredNpcPrompt(state, npcId, channel, messagePurpose(channel, Boolean(attachment), false, activityProposal, activityReplyRuleText, replyPolicyText) + ' 只输出正文及可选的预约具体安排，不得输出 responseAction 或 invitationStatus 等决定字段。', promptConfig, true),
           promptPayload, narrativeContentAiOutputSchema, npcSpeakerIdentityQualityGate(
             npcId, channel, activityProposal, replyReviewOptions?.context, replyReviewOptions?.onDiagnostic, invoker,
+            activityReplyRuleText, reviewRuleText, identityRepairRuleText,
           ));
         content = messageOutput.content;
         appointmentDraft = activityProposal ? undefined : messageOutput.appointment;
       }
-      const invitationStatus = referralAppointmentWriteBlocked
+      const invitationStatus = referralAppointmentWriteBlocked || appointmentActivity === 'unavailable'
         ? 'none'
         : activityProposal ? 'none' : decision.invitationStatus === 'accepted' && !appointmentDraft
         ? 'later'
@@ -2318,6 +2423,7 @@ async function executeUnsafe(
       return previewAiResponseSchema.parse({
         ...base,
         content: safeOutput.content,
+        ...(request.action === 'phone_connect' ? { connected: true } : {}),
         ...(allowReadNoReply ? {
           responseAction: safeOutput.responseAction,
           readStatus: 'read' as const,
@@ -2349,9 +2455,13 @@ async function executeUnsafe(
         return previewAiResponseSchema.parse({ ...base, content, wechatAccepted: true, referralCostRecorded: true });
       }
       const decision = hardBlocker ? { accepted: false } : await askWechatDecision(jevInvoker, { playerText: request.text, npcId });
-      const narrative = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'wechat_request', '只撰写工作微信申请的 NPC 回复正文，不得输出或改变是否接受的决定。输出 {content:string}。', promptConfig, true),
+      const [wechatRequestRule, identityRepairRuleText] = await Promise.all([
+        resolveRuntimeRulePrompt('preview_wechat_request_reply'),
+        resolveRuntimeRulePrompt('preview_npc_speaker_identity_repair'),
+      ]);
+      const narrative = await callStructuredAi(invoker, await layeredNpcPrompt(state, npcId, 'wechat_request', `${wechatRequestRule} 只撰写工作微信申请的 NPC 回复正文，不得输出或改变是否接受的决定。输出 {content:string}。`, promptConfig, true),
         { npcContext: { ...layeredNpcContext(state, npcId, 'wechat_request', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npc.id, name: npc.name, title: npc.title }, playerText: request.text, accepted: decision.accepted }, narrativeWechatAiOutputSchema,
-        npcSpeakerIdentityQualityGate(npcId, 'wechat_request'));
+        npcSpeakerIdentityQualityGate(npcId, 'wechat_request', false, undefined, undefined, undefined, '', '', identityRepairRuleText));
       const safeOutput = { content: hardBlocker ? COMPLIANCE_REFUSAL : narrative.content, accepted: decision.accepted };
       const npcMessage = newMessage('npc', 'wechat_request', safeOutput.content);
       await evaluateNpcTurn(invoker, jevInvoker, state, npcId, 'wechat_request', playerMessage, npcMessage, 'reply', promptConfig);
@@ -2369,7 +2479,8 @@ async function executeUnsafe(
     }
     if (request.action === 'visit_preparation') {
       const context = { npcContext: layeredNpcContext(state, npcId, 'visit', promptConfig), npc: { id: npc.id, name: npc.name, title: npc.title }, visitPreparation: request.text };
-      const narrative = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', '只撰写本次拜访准备的优点、风险和下一步建议，不判断是否足够具体。输出 {strengths:string[],risks:string[],nextStep:string}。', promptConfig),
+      const preparationRule = await resolveRuntimeRulePrompt('preview_visit_preparation_narrative');
+      const narrative = await callStructuredAi(invoker, await layeredNpcPrompt(state, npcId, 'visit', `${preparationRule} 输出 {strengths:string[],risks:string[],nextStep:string}。`, promptConfig),
         context, narrativeVisitPreparationAiOutputSchema);
       const decision = await askVisitPreparationDecision(jevInvoker, { text: request.text, npcId });
       if (decision.needsDetail) delete state.approvedVisitPreparations[npcId];
@@ -2377,7 +2488,8 @@ async function executeUnsafe(
       return previewAiResponseSchema.parse({ ...base, ...decision, ...narrative });
     }
     if (request.action === 'brief_visit') {
-      const output = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', '请作为拜访方案评估者评估该次拜访简述，不续写固定话术。输出 {content,strengths:string[],risks:string[],nextStep:string}。', promptConfig),
+      const briefRule = await resolveRuntimeRulePrompt('preview_brief_visit_narrative');
+      const output = await callStructuredAi(invoker, await layeredNpcPrompt(state, npcId, 'visit', `${briefRule} 输出 {content,strengths:string[],risks:string[],nextStep:string}。`, promptConfig),
         { npcContext: layeredNpcContext(state, npcId, 'visit', promptConfig), npc: { id: npc.id, name: npc.name, title: npc.title }, visitBrief: request.text }, briefVisitAiOutputSchema);
       return previewAiResponseSchema.parse({ ...base, ...output });
     }
@@ -2404,22 +2516,30 @@ async function executeUnsafe(
         return previewAiResponseSchema.parse({ ...base, meeting: meetingResponse(state), npcExpression: resolvePreviewNpcExpression(state.npcStates[npcId].pleasantness), ...(appointment ? { appointment } : {}) });
       }
       const remaining = npc.allowedTasks.filter((task) => !meeting.completedTasks.includes(task));
-      const activityProposal = isCustomerActivityProposalText(state, npcId, request.text);
+      const activityProposal = hasCustomerActivityReplyHint(state, npcId, request.text);
       const recentActivityConversation = historyFor(state, npcId).slice(-8).map((message) => ({
         speaker: message.role === 'player' ? 'sales' as const : 'customer' as const,
         text: message.text,
       }));
       const hospitalityActivity = isHospitalityCustomerActivityContext(request.text, recentActivityConversation);
       const promptPayload = { npcContext: { ...layeredNpcContext(state, npcId, 'visit', promptConfig), recentHistory: [...historyFor(state, npcId), playerMessage] }, npc: { id: npcId, name: npc.name, title: npc.title, level: npc.level }, playerText: request.text, customerActivityProposal: activityProposal, customerActivityType: activityProposal ? (hospitalityActivity ? 'hospitality' : 'organization_activity') : null, visit: { turn: nextTurn, completedTasks: meeting.completedTasks, remainingTasks: remaining } };
-      const activityGuidance = activityProposal ? ` ${customerActivityReplyGuide(npcId, hospitalityActivity)}` : '';
+      const [activityGuidance, reviewRuleText, identityRepairRuleText] = await Promise.all([
+        activityProposal
+          ? resolveCustomerActivityReplyInstruction(npc.level, hospitalityActivity)
+          : resolveCustomerActivityReplyGuidance(),
+        activityProposal ? resolveRuntimeRulePrompt('customer_activity_reply_review') : Promise.resolve(''),
+        resolveRuntimeRulePrompt('preview_npc_speaker_identity_repair'),
+      ]);
       const replyReviewOptions = activityProposal ? {
         context: customerActivityReplyContext(state, npcId, request.text),
         invoker,
         onDiagnostic: customerActivityReplyDiagnostics(state, npcId, 'visit', playerMessage.messageId),
       } : undefined;
-      const narrative = await callStructuredAi(invoker, layeredNpcPrompt(state, npcId, 'visit', '这是实际拜访第 ' + nextTurn + ' 轮。只生成符合人物和当前语境的 NPC 回复正文；不输出任务完成、告辞或强制结束的决定字段。玩家明确告辞时只写一句简短告别。' + activityGuidance + ' 输出 {content:string}。', promptConfig, true),
+      const visitResponseRule = await resolveRuntimeRulePrompt('preview_visit_response_policy');
+      const narrative = await callStructuredAi(invoker, await layeredNpcPrompt(state, npcId, 'visit', `这是实际拜访第 ${nextTurn} 轮。${visitResponseRule} ${activityGuidance} 输出 {content:string}。`, promptConfig, true),
         promptPayload, narrativeVisitTurnAiOutputSchema, npcSpeakerIdentityQualityGate(
           npcId, 'visit', activityProposal, replyReviewOptions?.context, replyReviewOptions?.onDiagnostic, invoker,
+          activityGuidance, reviewRuleText, identityRepairRuleText,
         ));
       const hardBlocker = isHardBlockerText(request.text);
       const content = hardBlocker ? COMPLIANCE_REFUSAL : narrative.content;
@@ -2466,7 +2586,12 @@ async function executeUnsafe(
     const state = request.previewSessionId ? store.get(userId, request.previewSessionId) : store.getOrCreateForInitialCommand(userId, request.commandId);
     if (!state) throw new PreviewAiError('not_found', 'PREVIEW_SESSION_NOT_FOUND');
     const replay = state.completedCommands.get(request.commandId);
-    if (replay) return replay;
+    if (replay) {
+      if (request.action === 'start_session' && !matchesStartSessionSnapshot(request, state.onboardingSnapshot)) {
+        throw new PreviewAiError('conflict', 'PREVIEW_COMMAND_PAYLOAD_MISMATCH');
+      }
+      return replay;
+    }
     if (request.expectedVersion !== state.version) throw new PreviewAiError('conflict', 'PREVIEW_SESSION_VERSION_CONFLICT');
     const lockKey = userId + '\u0000' + state.previewSessionId;
     if (inFlightSessions.has(lockKey)) throw new PreviewAiError('conflict', 'PREVIEW_SESSION_BUSY');

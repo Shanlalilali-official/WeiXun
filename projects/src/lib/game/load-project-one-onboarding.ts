@@ -1,8 +1,8 @@
-import type { ProjectOnePublicBrief } from '@/lib/contracts/project-one-onboarding';
+import type { ProjectOneOnboardingSelection, ProjectOnePublicBrief } from '@/lib/contracts/project-one-onboarding';
 
 interface ProjectOneOnboarding {
   open(options: {
-    onStart: (brief: ProjectOnePublicBrief) => void | Promise<void>;
+    onStart: (brief: ProjectOnePublicBrief, selection?: ProjectOneOnboardingSelection) => void | Promise<void>;
     onClose?: () => void;
   }): void;
 }

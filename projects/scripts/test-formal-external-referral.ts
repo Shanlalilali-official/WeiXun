@@ -227,9 +227,10 @@ assert.match(chatRoute, /externalReferralInvitation[\s\S]*?decideChatAttachments
   'formal chat evaluates referral eligibility before its attachment decision');
 assert.match(chatRoute, /externalReferralInvitation\s*\?\s*\{ responseAction: 'reply' as const \}/,
   'formal chat bypasses the message-response model for eligible referred invites');
-assert.match(chatRoute, /!hasExternalReferral\(initialState\.referrals, npcId\) \|\| externalReferralInvitation/,
+assert.match(chatRoute, /const hasReferral = hasExternalReferral\(initialState\.referrals, npcId\)/);
+assert.match(chatRoute, /if \(ordinaryInvitation\s*&& \(!hasReferral \|\| externalReferralInvitation\)/,
   'a granted referral only shortcuts actual eligible visit invitations; other text stays on normal chat');
-assert.match(chatRoute, /hasExternalReferral\(initialState\.referrals, npcId\)[\s\S]*?未在系统中的外部工作关系引荐/,
+assert.match(chatRoute, /hasExternalReferral\(initialState\.referrals, npcId\)[\s\S]*?resolveRuntimeRulePrompt\('formal_referral_dialogue'\)/,
   'later Wang Defu conversations receive a safe referral fact without an introducer identity');
 assert.match(chatRoute, /chargeExternalReferral\(stateWithAttachmentCost\.referrals, npcId, attachmentActionPoints\)/,
   'attachment AP is added to the referral ledger in the same chat transaction');

@@ -528,7 +528,8 @@ function normalizeProjectOneBrief(value){
  const stringList=list=>Array.isArray(list)?list.filter(item=>typeof item==='string').slice(0,12):[];
  const facts=Array.isArray(value.facts)?value.facts.filter(item=>item&&typeof item==='object'&&typeof item.label==='string'&&typeof item.value==='string'&&typeof item.note==='string').slice(0,12).map(item=>({label:item.label,value:item.value,note:item.note})):[];
  const details=Array.isArray(value.details)?value.details.filter(section=>section&&typeof section==='object'&&typeof section.title==='string'&&Array.isArray(section.items)).slice(0,12).map(section=>({title:section.title,items:section.items.filter(item=>item&&typeof item==='object'&&typeof item.label==='string'&&typeof item.value==='string').slice(0,20).map(item=>({label:item.label,value:item.value}))})):[];
- return {id:value.id,projectName:value.projectName,clientName:value.clientName,description:value.description,overview:value.overview,goals:stringList(value.goals),facts,details,people};
+ const labels=value.id==='custom'?{industryLabel:typeof value.industryLabel==='string'?value.industryLabel.slice(0,80):'',businessLabel:typeof value.businessLabel==='string'?value.businessLabel.slice(0,80):''}:{};
+ return {id:value.id,projectName:value.projectName,clientName:value.clientName,description:value.description,overview:value.overview,goals:stringList(value.goals),facts,details,people,...labels};
 }
 function activeProjectOneBrief(){return normalizeProjectOneBrief(state?.projectOneBrief)}
 let stateOwnerUserId=activeUserId;
@@ -667,11 +668,24 @@ function normalizeTimer(value,meeting){
  return {elapsedMs,lastResumedAt:started&&!paused&&(Number.isFinite(Number(raw.lastResumedAt))?Number(raw.lastResumedAt):now),paused,refillsApplied:Math.max(0,Math.min(4,Math.floor(Number(raw.refillsApplied)||0))),expired:started&&(Boolean(raw.expired)||elapsedMs>=TIMER_DURATION_MS),settled:Boolean(raw.settled),started,customerActivityTaskId:typeof raw.customerActivityTaskId==='string'?raw.customerActivityTaskId:null,customerActivityPhase:['planning','resumed','ui_paused'].includes(raw.customerActivityPhase)?raw.customerActivityPhase:null,customerActivityUiTaskId:typeof raw.customerActivityUiTaskId==='string'?raw.customerActivityUiTaskId:null};
 }
 function startCountdown(now=Date.now()){state.timer={...freshTimer(),started:true,lastResumedAt:now};save()}
-async function startProjectOneScenario(brief){
+function sameProjectOneOnboardingSelection(left,right){
+ if(!left||!right)return left===right;
+ return left.industryId===right.industryId&&left.businessId===right.businessId&&left.customIndustry===right.customIndustry&&left.customBusiness===right.customBusiness;
+}
+function matchesProjectOneStartBrief(brief,payload){
+ if(brief?.id!==payload.onboardingScenarioId)return false;
+ const selection=payload.onboardingSelection;
+ if(!selection)return true;
+ return brief.industryId===selection.industryId&&brief.businessId===selection.businessId
+  &&(selection.industryId!=='custom'||brief.industryLabel===selection.customIndustry)
+  &&(selection.businessId!=='custom'||brief.businessLabel===selection.customBusiness);
+}
+async function startProjectOneScenario(brief,selection){
  const selected=normalizeProjectOneBrief(brief);
  if(!selected){toast('所选项目场景资料无效，请重新选择。','error');return false}
- const retry=state.aiRetry?.action==='start_session'&&state.aiRetry?.payload?.onboardingScenarioId===selected.id?state.aiRetry:null;
- const response=await accountScopedApiCall('start_session',{onboardingScenarioId:selected.id},{commandId:retry?.commandId,retryKind:'start_session',renderPending:false});
+ const retry=state.aiRetry?.action==='start_session'&&state.aiRetry?.payload?.onboardingScenarioId===selected.id
+  &&sameProjectOneOnboardingSelection(state.aiRetry.payload.onboardingSelection,selection)?state.aiRetry:null;
+ const response=await accountScopedApiCall('start_session',{onboardingScenarioId:selected.id,...(selection?{onboardingSelection:selection}:{})},{commandId:retry?.commandId,retryKind:'start_session',renderPending:false});
  if(response===INVALIDATED_REQUEST||!response)return false;
  const committedBrief=normalizeProjectOneBrief(response.projectOneBrief),sessionId=typeof response.previewSessionId==='string'?response.previewSessionId:null,version=Number.isInteger(response.version)?response.version:null;
  if(!committedBrief||committedBrief.id!==selected.id||!sessionId||version===null){state.aiError='服务端未返回匹配的公开项目资料；原有进度未替换。';state.aiErrorCanRefresh=false;save();render();toast(state.aiError,'error');return false}
@@ -683,14 +697,14 @@ function openProjectOneOnboarding(){
  const onboarding=window.ProjectOneOnboarding;
  if(!onboarding||typeof onboarding.open!=='function'){toast('项目场景选择组件暂不可用，请刷新后重试。','error');return}
  const openedFor={userId:activeUserId,token:boundSessionToken,generation:identityGeneration};let dialog;
- dialog=onboarding.open({onStart:async brief=>{
+ dialog=onboarding.open({onStart:async (brief,selection)=>{
   const changed=syncIdentitySnapshot();
   if(changed||openedFor.userId!==activeUserId||openedFor.token!==boundSessionToken||openedFor.generation!==identityGeneration){
    if(dialog?.open)dialog.close('identity-changed');
    toast('登录账号已切换，未使用原场景创建新会话。','warn');
    return false;
   }
-  return startProjectOneScenario(brief);
+  return startProjectOneScenario(brief,selection);
  },onClose:()=>{}});
 }
 function syncCountdown(now=Date.now(),allowRecoveryAnchor=false){
@@ -831,6 +845,7 @@ let customerActivityError='';
 let customerActivitySaved=true;
 let customerActivityAction='';
 let customerActivitySeenIds=new Set();
+let customerActivityUnavailableSeenIds=new Set();
 let customerActivityEndQueue=[];
 let customerActivityEndTimer=null;
 let customerActivitySaveTimer=null;
@@ -946,7 +961,7 @@ async function apiCall(action,payload={},options={}){
   if(!requestContextIsCurrent(context))return INVALIDATED_REQUEST;
   if(startingNewSession){
    const data=body?.data,brief=normalizeProjectOneBrief(data?.projectOneBrief);
-   if(body?.success!==true||typeof body?.previewSessionId!=='string'||body.previewSessionId.length<20||!Number.isInteger(body?.version)||body.version<1||!data||data.previewSessionId!==body.previewSessionId||data.version!==body.version||!brief||brief.id!==payload.onboardingScenarioId){
+   if(body?.success!==true||typeof body?.previewSessionId!=='string'||body.previewSessionId.length<20||!Number.isInteger(body?.version)||body.version<1||!data||data.previewSessionId!==body.previewSessionId||data.version!==body.version||!brief||!matchesProjectOneStartBrief(data.projectOneBrief,payload)){
     throw {status:502,message:'服务端未返回匹配的新预览会话和公开项目资料。'};
    }
    return {previewSessionId:body.previewSessionId,version:body.version,projectOneBrief:brief};
@@ -1135,18 +1150,23 @@ async function refreshPreview(){
  function customerActivityServerNow(){return Date.now()+customerActivityServerOffset}
  function customerActivityLocalTime(value){const timestamp=customerActivityEpoch(value);return timestamp===null?null:timestamp-customerActivityServerOffset}
  function customerActivityTasks(){return Array.isArray(state.customerActivities?.tasks)?state.customerActivities.tasks:[]}
+ function customerActivityUnavailableNotices(){return Array.isArray(state.customerActivities?.unavailableNotices)?state.customerActivities.unavailableNotices.filter(item=>item&&typeof item.id==='string'&&typeof item.npcId==='string'&&typeof item.type==='string'):[]}
  function customerActivitySeenKey(){return `preview-customer-activity-seen:${state.previewSessionId||'no-session'}`}
+ function customerActivityUnavailableSeenKey(){return `preview-customer-activity-unavailable-seen:${state.previewSessionId||'no-session'}`}
  function loadCustomerActivitySeen(){try{const value=JSON.parse(sessionStorage.getItem(customerActivitySeenKey())||'[]');customerActivitySeenIds=new Set(Array.isArray(value)?value.filter(item=>typeof item==='string'):[])}catch{customerActivitySeenIds=new Set()}}
  function saveCustomerActivitySeen(){try{sessionStorage.setItem(customerActivitySeenKey(),JSON.stringify([...customerActivitySeenIds]))}catch{}}
+ function loadCustomerActivityUnavailableSeen(){try{const value=JSON.parse(sessionStorage.getItem(customerActivityUnavailableSeenKey())||'[]');customerActivityUnavailableSeenIds=new Set(Array.isArray(value)?value.filter(item=>typeof item==='string'):[])}catch{customerActivityUnavailableSeenIds=new Set()}}
+ function saveCustomerActivityUnavailableSeen(){try{sessionStorage.setItem(customerActivityUnavailableSeenKey(),JSON.stringify([...customerActivityUnavailableSeenIds]))}catch{}}
  function resetCustomerActivityComposerForContext(){
   customerActivityGeneration++;customerActivityDraft='';customerActivityDirty=false;customerActivitySaved=true;customerActivitySaveRequested=false;customerActivitySaveBusy=false;customerActivitySavePromise=null;customerActivitySyncBusy=false;customerActivityAction='';customerActivityError='';customerActivityLastTimeoutSubmitId=null;customerActivityLastTimeoutQuizId=null;customerActivityEvaluationStartedAtByTask.clear();customerActivityQuizProgressTaskId=null;customerActivityQuizIndex=0;customerActivityQuizPendingAnswer=null;customerActivityQuizCompletionPending=false;customerActivityLastSyncAt=0;customerActivityServerOffset=0;customerActivityEndQueue=[];customerActivityModalLocked=false;customerActivityRenderedTaskKey='';
   if(customerActivitySaveTimer){clearTimeout(customerActivitySaveTimer);customerActivitySaveTimer=null}
   if(customerActivityFinalFlushTimer){clearTimeout(customerActivityFinalFlushTimer);customerActivityFinalFlushTimer=null}
   if(customerActivityEndTimer){clearTimeout(customerActivityEndTimer);customerActivityEndTimer=null}
   if(modalRoot)modalRoot.innerHTML='';
-  loadCustomerActivitySeen();
+  loadCustomerActivitySeen();loadCustomerActivityUnavailableSeen();
  }
  function currentCustomerActivity(tasks=customerActivityTasks()){const ordered=[...tasks].sort((left,right)=>(customerActivityEpoch(left.createdAt)||0)-(customerActivityEpoch(right.createdAt)||0));return ordered.find(task=>task.status!=='submitted'||!customerActivitySeenIds.has(task.id))||null}
+ function currentCustomerActivityUnavailableNotice(){return customerActivityUnavailableNotices().filter(item=>!customerActivityUnavailableSeenIds.has(item.id)).sort((left,right)=>(customerActivityEpoch(left.decidedAt)||0)-(customerActivityEpoch(right.decidedAt)||0))[0]||null}
  function syncCustomerActivityQuizControls(task=currentCustomerActivity()){
   if(!task||task.status!=='submitted'||task.quiz?.status!=='answering')return;
   const questions=Array.isArray(task.quiz.questions)?task.quiz.questions:[],index=customerActivityQuizIndexFor(task),question=questions[index],pending=customerActivityQuizPendingAnswer?.taskId===task.id&&customerActivityQuizPendingAnswer.questionId===question?.id,answer=pending?customerActivityQuizPendingAnswer.optionId:task.quiz.answers?.[question?.id],answerSaved=Boolean(question&&typeof answer==='string'&&task.quiz.answers?.[question.id]===answer&&!pending),timedOut=customerActivityRemaining({deadlineAt:task.quiz.deadlineAt})<=0,busy=Boolean(customerActivityAction||requestBusy||customerActivitySyncBusy);
@@ -1186,7 +1206,7 @@ function resumeCountdownAfterCustomerActivity(){
   if(!envelope||typeof envelope!=='object'||!Array.isArray(envelope.tasks))return false;
   const timestamp=customerActivityEpoch(serverNow??envelope.serverNow);if(timestamp!==null)customerActivityServerOffset=timestamp-Date.now();
   const version=Number.isInteger(envelope.version)?envelope.version:(state.customerActivities?.version||1);if(version<(state.customerActivities?.version||0))return false;
-  state.customerActivities={version,tasks:envelope.tasks};reconcileCustomerActivityTimer(envelope.tasks);save();presentCustomerActivityPlanner();return true;
+  state.customerActivities={version,tasks:envelope.tasks,unavailableNotices:Array.isArray(envelope.unavailableNotices)?envelope.unavailableNotices:[]};reconcileCustomerActivityTimer(envelope.tasks);save();presentCustomerActivityPlanner();return true;
  }
  async function customerActivityRequest(action,payload={}){
   if(requestBusy)throw new Error('当前有其他操作正在处理中，请稍后重试。');
@@ -1382,8 +1402,19 @@ function resumeCountdownAfterCustomerActivity(){
  function presentCustomerActivityPlanner(force=false){
   if(!modalRoot)return;
   const task=currentCustomerActivity();
-  if(!task){if(customerActivityModalLocked){customerActivityModalLocked=false;customerActivityRenderedTaskKey='';modalRoot.innerHTML=''}return}
+  const unavailableNotice=task?null:currentCustomerActivityUnavailableNotice();
+  if(!task&&!unavailableNotice){if(customerActivityModalLocked){customerActivityModalLocked=false;customerActivityRenderedTaskKey='';modalRoot.innerHTML=''}return}
   if(!customerActivityModalLocked&&modalRoot.innerHTML.trim())return;
+  if(!task&&unavailableNotice){
+   const rejectionKey=`unavailable:${unavailableNotice.id}`;
+   if(customerActivityModalLocked&&!force&&customerActivityRenderedTaskKey===rejectionKey)return;
+   customerActivityModalLocked=true;customerActivityRenderedTaskKey=rejectionKey;
+   const verbs={technical_meeting:'召开技术交流会',case_site_visit:'进行案例现场参观',company_visit:'参观我们公司',hospitality:'参加这次餐叙'};
+   const npcName=MockData.npcs.find(person=>person.id===unavailableNotice.npcId)?.name||'该客户',verb=verbs[unavailableNotice.type]||'开展该活动';
+   modalRoot.innerHTML=`<div class="modal-backdrop" style="z-index:2000;position:fixed;inset:0;background:rgba(15,23,42,.68);display:flex;align-items:center;justify-content:center;padding:16px"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="customer-activity-rejected-title" style="width:min(520px,100%);background:white;border-radius:18px;padding:22px;box-shadow:0 24px 60px rgba(0,0,0,.3)"><div class="eyebrow" style="color:#2563eb;font-size:10px;font-weight:800;letter-spacing:.16em">客户活动</div><h2 id="customer-activity-rejected-title" style="margin:8px 0;font-size:21px;color:#0f172a">暂无法安排活动</h2><p style="margin:16px 0 0;color:#334155;font-size:15px;line-height:1.8">由于一些原因，客户${esc(npcName)}表示暂时无法${esc(verb)}</p><div style="display:flex;justify-content:flex-end;margin-top:20px"><button id="customer-activity-rejected-continue" class="btn btn-primary">知道了</button></div></section></div>`;
+   document.getElementById('customer-activity-rejected-continue')?.addEventListener('click',()=>{customerActivityUnavailableSeenIds.add(unavailableNotice.id);saveCustomerActivityUnavailableSeen();customerActivityModalLocked=false;customerActivityRenderedTaskKey='';modalRoot.innerHTML='';setTimeout(()=>presentCustomerActivityPlanner(true),0)});
+   return;
+  }
   const answeringQuiz=task.status==='submitted'&&task.quiz?.status==='answering'&&customerActivityAction!=='complete_quiz';
   if(answeringQuiz)customerActivityQuizIndexFor(task);
   const key=`${customerActivityTaskKey(task)}:${customerActivityError}`;
@@ -1611,7 +1642,13 @@ function renderAvatar(person,className='person-avatar',expression=''){
 const fallbackProjectNotice={title:'项目一 · 单单位内部竞标',summary:'围绕客户的真实组织需求建立联系、摸清决策链，并用可靠方案推动项目。',budget:'100 万',sections:[{heading:'训练目标',content:['识别组织需求与关键关系人','形成可验证、可落地的推进方案']},{heading:'已知需求',content:MockData.project.needs}]};
 let projectNotice=fallbackProjectNotice;
 async function loadProjectNotice(){try{const response=await fetch('/project-one-notice.json',{cache:'no-store'}),data=await response.json();if(response.ok&&data&&typeof data.title==='string'&&Array.isArray(data.sections)){projectNotice=data;render()}}catch{/* Fallback keeps the card usable when the static notice is unavailable. */}}
-function currentProjectNotice(){const brief=activeProjectOneBrief();if(!brief)return projectNotice||fallbackProjectNotice;const budget=brief.facts.find(item=>/预算|金额|投资/.test(item.label))?.value||'以项目资料为准';return {title:brief.projectName,summary:brief.description||brief.overview,budget,sections:[{heading:'项目目标',content:brief.goals},{heading:'客户资料',content:brief.facts.map(item=>`${item.label}：${item.value}`)},{heading:'项目详情',content:brief.details.flatMap(section=>section.items.map(item=>`${section.title} · ${item.label}：${item.value}`))}]}}
+function currentProjectNotice(){
+ const brief=activeProjectOneBrief();if(!brief)return projectNotice||fallbackProjectNotice;
+ const budget=brief.facts.find(item=>/预算|金额|投资/.test(item.label))?.value||(brief.id==='custom'?'待沟通':'以项目资料为准');
+ const sections=[{heading:'项目目标',content:brief.goals},{heading:'客户资料',content:brief.facts.map(item=>`${item.label}：${item.value}`)},{heading:'项目详情',content:brief.details.flatMap(section=>section.items.map(item=>`${section.title} · ${item.label}：${item.value}`))}];
+ if(brief.id==='custom')sections.unshift({heading:'练习方向',content:[`客户行业：${brief.industryLabel}`,`主营业务：${brief.businessLabel}`]});
+ return {title:brief.projectName,summary:brief.description||brief.overview,budget,sections:sections.filter(section=>section.content.length)};
+}
 function openProjectNotice(){const notice=currentProjectNotice(),sections=(notice.sections||[]).map(section=>`<section class="notice-section"><h4>${esc(section.heading||'项目说明')}</h4><ul>${(Array.isArray(section.content)?section.content:[]).map(item=>`<li>${esc(item)}</li>`).join('')}</ul></section>`).join('');openModal(esc(notice.title||fallbackProjectNotice.title),`<article class="tender-notice"><div class="tender-notice-kicker">项目招标通知 · 训练版</div><p>${esc(notice.summary||fallbackProjectNotice.summary)}</p><div class="tender-notice-budget">预算参考：<strong>${esc(notice.budget||fallbackProjectNotice.budget)}</strong></div>${sections}</article>`)}
 function normalizeCompetitorProfile(value){
  if(!value||typeof value!=='object'||Array.isArray(value))return null;
@@ -2525,6 +2562,7 @@ document.addEventListener('keydown',e=>{
  }
 });
 loadCustomerActivitySeen();
+loadCustomerActivityUnavailableSeen();
 reconcileCustomerActivityTimer();
 if(state.previewSessionId)void recoverPreviewSession();
 render();

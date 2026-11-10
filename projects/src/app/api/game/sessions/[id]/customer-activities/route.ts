@@ -17,6 +17,7 @@ import {
   startCustomerActivityPlanning,
   submitCustomerActivityPlan,
   toPublicCustomerActivityTask,
+  toPublicUnavailableCustomerActivityNotice,
 } from '@/lib/game/customer-activities';
 import {
   isCustomerActivityPlanning,
@@ -29,11 +30,18 @@ import {
 
 export const runtime = 'nodejs';
 
+function unavailableNotices(state: Awaited<ReturnType<typeof synchronizeOwnedGameTimer>>['state']) {
+  return state.customerActivities.decisions
+    .map(toPublicUnavailableCustomerActivityNotice)
+    .filter((notice) => notice !== null);
+}
+
 function failure(code: string, status: number, state?: Awaited<ReturnType<typeof synchronizeOwnedGameTimer>>['state']) {
   return NextResponse.json({
     error: code,
     ...(state ? {
       activities: state.customerActivities.tasks.map(toPublicCustomerActivityTask),
+      unavailableNotices: unavailableNotices(state),
       serverNow: Date.now(),
       version: state.version,
       state: toPlayerVisibleGameState(state),
@@ -57,6 +65,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     return NextResponse.json({
       success: true,
       activities: session.state.customerActivities.tasks.map(toPublicCustomerActivityTask),
+      unavailableNotices: unavailableNotices(session.state),
       serverNow: Date.now(),
       version: session.state.version,
       state: toPlayerVisibleGameState(session.state),
@@ -88,6 +97,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
           ? toPublicCustomerActivityTask(session.state.customerActivities.tasks.find((task) => task.id === parsed.data.taskId)!)
           : null,
         activities: session.state.customerActivities.tasks.map(toPublicCustomerActivityTask),
+        unavailableNotices: unavailableNotices(session.state),
         serverNow: Date.now(),
         version: session.state.version,
         state: toPlayerVisibleGameState(session.state),
@@ -105,6 +115,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         success: true,
         activity: toPublicCustomerActivityTask(existingTask),
         activities: session.state.customerActivities.tasks.map(toPublicCustomerActivityTask),
+        unavailableNotices: unavailableNotices(session.state),
         serverNow: Date.now(),
         version: session.state.version,
         state: toPlayerVisibleGameState(session.state),
@@ -116,6 +127,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         success: true,
         activity: toPublicCustomerActivityTask(existingTask),
         activities: session.state.customerActivities.tasks.map(toPublicCustomerActivityTask),
+        unavailableNotices: unavailableNotices(session.state),
         serverNow: Date.now(),
         version: session.state.version,
         state: toPlayerVisibleGameState(session.state),
@@ -244,6 +256,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
         ? toPublicCustomerActivityTask(responseState.customerActivities.tasks.find((task) => task.id === parsed.data.taskId)!)
         : null,
       activities: responseState.customerActivities.tasks.map(toPublicCustomerActivityTask),
+      unavailableNotices: unavailableNotices(responseState),
       serverNow: Date.now(),
       version: responseState.version,
       state: toPlayerVisibleGameState(responseState),

@@ -51,18 +51,34 @@ export async function saveProjectOnePromptConfig(
   if (current.revision !== expectedRevision) throw new Error('PROMPT_CONFIG_VERSION_CONFLICT');
   const revision = current.revision + 1;
   const updatedAt = new Date().toISOString();
-  const { data, error } = await supabase
-    .from('designer_prompt_configs')
-    .upsert({
-      id: PROJECT_ONE_PROMPT_CONFIG_ID,
-      config,
-      revision,
-      updated_by: userId,
-      updated_at: updatedAt,
-    }, { onConflict: 'id' })
-    .select('config, revision, updated_at, updated_by')
-    .single();
-  if (error) throw new Error(`PROMPT_CONFIG_WRITE_FAILED:${error.code || 'unknown'}`);
+  const payload = {
+    id: PROJECT_ONE_PROMPT_CONFIG_ID,
+    config,
+    revision,
+    updated_by: userId,
+    updated_at: updatedAt,
+  };
+  // Do not upsert after a read: that could overwrite a concurrent editor's
+  // newer revision. Insert collision and conditional update are both CAS
+  // conflicts surfaced by the route/UI.
+  const { data, error } = current.persisted
+    ? await supabase
+      .from('designer_prompt_configs')
+      .update(payload)
+      .eq('id', PROJECT_ONE_PROMPT_CONFIG_ID)
+      .eq('revision', expectedRevision)
+      .select('config, revision, updated_at, updated_by')
+      .maybeSingle()
+    : await supabase
+      .from('designer_prompt_configs')
+      .insert(payload)
+      .select('config, revision, updated_at, updated_by')
+      .maybeSingle();
+  if (error || !data) {
+    if (!current.persisted && error?.code === '23505') throw new Error('PROMPT_CONFIG_VERSION_CONFLICT');
+    if (current.persisted && !error && !data) throw new Error('PROMPT_CONFIG_VERSION_CONFLICT');
+    throw new Error(`PROMPT_CONFIG_WRITE_FAILED:${error?.code || 'unknown'}`);
+  }
   return {
     config: normalizeProjectOnePromptConfig(data.config),
     revision: data.revision,

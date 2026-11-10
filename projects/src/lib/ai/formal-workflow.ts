@@ -5,6 +5,7 @@ import { invokeConfiguredJev } from '@/lib/ai/jev-designer-config';
 import { buildJevNpcProfile } from '@/lib/ai/jev-npc-profile';
 import { parseAiJsonObject } from '@/lib/ai/json';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
+import { resolveRuntimeRulePrompt } from '@/lib/ai/runtime-rule-prompts';
 import { PROJECT_ONE_NPCS, PROJECT_ONE_PUBLIC_PROFILES, getProjectOneNpc } from '@/lib/game/project-one';
 import { PROJECT_ONE_FIVE_PERSON_NPCS, PROJECT_ONE_FIVE_PERSON_IDS, type ProjectOneFivePersonId } from '@/lib/designer/project-one-five-person';
 
@@ -72,8 +73,9 @@ function matchedPlanDisclosures(scope: 'global' | 'npc', npcId: string | undefin
 /** Real-AI planner, constrained to public project-one facts and bounded output. */
 export async function evaluateFormalWorkPlan(args: { scope: 'global' | 'npc'; npcId?: string; content: string }, dependencies: WorkflowDependencies = {}): Promise<FormalPlanEvaluation> {
   const people = publicPeople(args.scope, args.npcId);
+  const planGuidance = await resolveRuntimeRulePrompt('formal_work_plan_narrative');
   const raw = await (dependencies.llmInvoker ?? invokeLLM)([
-    { role: 'system', content: '你是销售训练中的工作计划教练。仅依据给定公开人物资料，给出可执行建议。不得判断或透露客户支持度、内部关系分、竞争对手后台信息，也不得编造事实。严格输出JSON：{recommendations:string[]}。' },
+    { role: 'system', content: `${planGuidance}\n严格输出JSON：{recommendations:string[]}。` },
     { role: 'user', content: serializeUntrustedPromptData('formal_work_plan', { plan: args.content, scope: args.scope, people }, { maxStringLength: 4_000, maxTotalLength: 12_000 }) },
   ], { temperature: 0.2, maxTokens: 3000, jsonMode: true, thinking: 'disabled' });
   const parsed = planSchema.parse(parseAiJsonObject(raw));
@@ -95,8 +97,9 @@ export async function evaluateFormalVisitPreparation(
   const npc = getProjectOneNpc(args.npcId);
   if (!npc) throw new Error('NPC_UNKNOWN');
   const npcProfile = buildJevNpcProfile(args.npcId);
+  const preparationGuidance = await resolveRuntimeRulePrompt('formal_visit_preparation_narrative');
   const raw = await (dependencies.llmInvoker ?? invokeLLM)([
-    { role: 'system', content: '你是销售拜访准备教练。只依据给定人物岗位和玩家准备，说明优点、风险和下一步建议，不判断是否足够具体，不声称拜访已经发生或客户已经同意，不披露内部关系数值。严格输出JSON：{strengths:string[],risks:string[],nextStep:string}。' },
+    { role: 'system', content: `${preparationGuidance}\n严格输出JSON：{strengths:string[],risks:string[],nextStep:string}。` },
     { role: 'user', content: serializeUntrustedPromptData('formal_visit_preparation', { npc: { id: npc.id, name: npc.name, title: npc.title }, visitPreparation: args.content }, { maxStringLength: 4_000, maxTotalLength: 8_000 }) },
   ], { temperature: 0.2, maxTokens: 3000, jsonMode: true, thinking: 'disabled' });
   const narrative = briefSchema.parse(parseAiJsonObject(raw));
@@ -111,8 +114,9 @@ export async function evaluateFormalBriefVisit(args: { npcId: string; content: s
   const npc = getProjectOneNpc(args.npcId);
   const profile = PROJECT_ONE_PUBLIC_PROFILES[args.npcId];
   if (!npc || !profile) throw new Error('NPC_UNKNOWN');
+  const briefGuidance = await resolveRuntimeRulePrompt('formal_brief_visit_narrative');
   const raw = await invokeLLM([
-    { role: 'system', content: '你是销售拜访方案教练。评估玩家的拜访简述，只输出方案优点、风险和下一步；这不是实际会面，不能声称客户已经同意、已拜访、已完成任务，也不得评价或透露支持度。严格输出JSON：{strengths:string[],risks:string[],nextStep:string}。' },
+    { role: 'system', content: `${briefGuidance}\n严格输出JSON：{strengths:string[],risks:string[],nextStep:string}。` },
     { role: 'user', content: serializeUntrustedPromptData('formal_brief_visit', { npc: { id: npc.id, name: npc.name, title: npc.title, publicFacts: profile.facts.slice(0, 2) }, brief: args.content }, { maxStringLength: 4_000, maxTotalLength: 8_000 }) },
   ], { temperature: 0.2, maxTokens: 3000, jsonMode: true, thinking: 'disabled' });
   return briefSchema.parse(parseAiJsonObject(raw));

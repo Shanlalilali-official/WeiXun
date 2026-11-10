@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { publicCustomerActivityQuizSchema } from '@/lib/game/customer-activity-quiz';
+import { publicUnavailableCustomerActivityNoticeSchema } from '@/lib/game/customer-activities';
 import { externalReferralSchema } from '@/lib/game/external-referral';
-import { projectOneOnboardingIdSchema, projectOnePublicBriefSchema } from '@/lib/contracts/project-one-onboarding';
+import { projectOneOnboardingIdSchema, projectOneOnboardingSelectionSchema, projectOnePublicBriefSchema } from '@/lib/contracts/project-one-onboarding';
 
 export const previewNpcIdSchema = z.enum(['P1-001', 'P1-002', 'P1-003', 'P1-004', 'P1-005']);
 export type PreviewNpcId = z.infer<typeof previewNpcIdSchema>;
@@ -75,8 +76,17 @@ const previewAppointmentAdjustmentsSchema = z.array(previewAppointmentAdjustment
 });
 
 export const previewAiRequestSchema = z.discriminatedUnion('action', [
-  commonRequestSchema.extend({ action: z.literal('start_session'), onboardingScenarioId: projectOneOnboardingIdSchema }).superRefine((value, context) => {
+  commonRequestSchema.extend({
+    action: z.literal('start_session'),
+    onboardingScenarioId: projectOneOnboardingIdSchema,
+    onboardingSelection: projectOneOnboardingSelectionSchema.optional(),
+  }).superRefine((value, context) => {
     if (value.previewSessionId) context.addIssue({ code: z.ZodIssueCode.custom, message: '开始新场景不能复用既有预览会话', path: ['previewSessionId'] });
+    const selection = value.onboardingSelection;
+    const hasCustomText = selection?.industryId === 'custom' || selection?.businessId === 'custom';
+    if (value.onboardingScenarioId === 'custom' ? !hasCustomText : selection !== undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: '自定义开场参数不匹配', path: ['onboardingSelection'] });
+    }
   }),
   commonRequestSchema.extend({ action: z.literal('use_referral'), npcId: z.literal('P1-003') }),
   commonRequestSchema.extend({ action: z.literal('plan'), text: textSchema, npcId: previewNpcIdSchema.optional() }),
@@ -150,6 +160,7 @@ const previewCustomerActivitiesSchema = z.object({
   version: z.literal(1),
   serverNow: z.number().int().nonnegative(),
   tasks: z.array(previewCustomerActivityTaskSchema).max(100),
+  unavailableNotices: z.array(publicUnavailableCustomerActivityNoticeSchema).max(1_000).default([]),
 }).strict();
 /** Public display cue only. The underlying relationship scores remain server-only. */
 export const previewNpcExpressionSchema = z.enum(['angry', 'serious', 'calm', 'pleasant', 'very_happy']);
@@ -175,6 +186,8 @@ export const previewAiResponseSchema = z.object({
   projectOneBrief: projectOnePublicBriefSchema.optional(),
   referrals: previewExternalReferralsSchema.optional(),
   content: z.string().max(2_000).nullable().optional(),
+  /** Whether a phone attempt established an active call. */
+  connected: z.boolean().optional(),
   /** Message delivery state. The internal reason for a read-without-reply is never returned here. */
   responseAction: previewMessageResponseActionSchema.optional(),
   readStatus: z.literal('read').optional(),

@@ -25,6 +25,12 @@ assert.match(planner, /quizHasPendingAnswer/, '未保存答案期间锁住题目
 assert.match(planner, /typeof quizAnswer === 'string'/, '未选择选项时不能直接点下一题');
 assert.match(planner, /以下均为情境假设/);
 assert.doesNotMatch(planner, /supportDelta|pleasureDelta|分数|得分/, '正式 UI 不暴露答案分值');
+assert.match(planner, /unavailableNotices/, '正式 UI 读取专用的不可安排通知投影');
+assert.match(planner, /由于一些原因，客户/, '正式 UI 使用中性拒绝提示');
+assert.match(planner, /technical_meeting: '召开技术交流会'/);
+assert.match(planner, /case_site_visit: '进行案例现场参观'/);
+assert.match(planner, /company_visit: '参观我们公司'/);
+assert.match(planner, /hospitality: '参加这次餐叙'/);
 const end = source.lastIndexOf('})();');
 assert.notEqual(end, -1, '预览页 IIFE 不完整');
 
@@ -256,6 +262,10 @@ const fetch = async (_url: string, init?: { body?: string; method?: string; sign
 const injected = `${source.slice(0, end)}
 globalThis.__customerActivityQuizHooks={
   setTasks(tasks){state.previewSessionId='quiz-preview-session';state.previewVersion=0;state.customerActivities={version:0,tasks:[]};previewRecoveredKey=previewRecoveryKey();serverState.tasks=JSON.parse(JSON.stringify(tasks));customerActivitySeenIds=new Set();customerActivityLastSyncAt=Date.now();customerActivityModalLocked=false;customerActivityRenderedTaskKey='';customerActivityQuizProgressTaskId=null;customerActivityQuizPendingAnswer=null;customerActivityQuizCompletionPending=false;customerActivityEvaluationStartedAtByTask.clear();modalRoot.innerHTML='';applyPreviewCustomerActivities({version:1,tasks:serverState.tasks,serverNow:Date.now()},Date.now());presentCustomerActivityPlanner(true)},
+  setRejectedDecisions(decisions){state.previewSessionId='quiz-preview-session';state.previewVersion=0;state.customerActivities={version:1,tasks:[],unavailableNotices:JSON.parse(JSON.stringify(decisions))};state.timer={...freshTimer(),started:true,paused:false,lastResumedAt:Date.now()};customerActivityRejectedDecisionSeenIds=new Set();customerActivityModalLocked=false;customerActivityRenderedTaskKey='';modalRoot.innerHTML='';presentCustomerActivityPlanner(true)},
+  setTasksAndRejected(tasks,decisions){state.previewSessionId='quiz-preview-session';state.previewVersion=0;state.customerActivities={version:1,tasks:JSON.parse(JSON.stringify(tasks)),unavailableNotices:JSON.parse(JSON.stringify(decisions))};customerActivitySeenIds=new Set();customerActivityRejectedDecisionSeenIds=new Set();customerActivityModalLocked=false;customerActivityRenderedTaskKey='';modalRoot.innerHTML='';presentCustomerActivityPlanner(true)},
+  dismissRejected(){return document.getElementById('customer-activity-rejected-continue')?.click()},
+  render(){presentCustomerActivityPlanner(true)},
   reloadView(){customerActivityQuizProgressTaskId=null;customerActivityQuizIndex=0;customerActivityQuizPendingAnswer=null;customerActivityQuizCompletionPending=false;customerActivityLastSyncAt=Date.now();customerActivityModalLocked=false;customerActivityRenderedTaskKey='';modalRoot.innerHTML='';presentCustomerActivityPlanner(true)},
   setIndex(index){customerActivityQuizIndex=index;customerActivityModalLocked=false;presentCustomerActivityPlanner(true)},
   markSeen(taskId){customerActivitySeenIds.add(taskId);customerActivityModalLocked=false;customerActivityRenderedTaskKey='';modalRoot.innerHTML='';presentCustomerActivityPlanner(true)},
@@ -273,7 +283,7 @@ globalThis.__customerActivityQuizHooks={
   releaseComplete(){runtimeControl.releaseDeferredComplete?.();runtimeControl.releaseDeferredComplete=null},
   start(){return customerActivityStart(currentCustomerActivity())},
   tick(){customerActivityUpdateClock()},
-  snapshot(){const task=currentCustomerActivity();return {action:customerActivityAction,error:customerActivityError,pending:customerActivityQuizPendingAnswer,quiz:task?.quiz||null,quizRemaining:task?.quiz?customerActivityRemaining({deadlineAt:task.quiz.deadlineAt}):null,index:customerActivityQuizIndex,now:Date.now(),serverNow:customerActivityServerNow(),requestBusy,draft:customerActivityDraft,modal:modalRoot.innerHTML}},
+  snapshot(){const task=currentCustomerActivity();return {action:customerActivityAction,error:customerActivityError,pending:customerActivityQuizPendingAnswer,quiz:task?.quiz||null,quizRemaining:task?.quiz?customerActivityRemaining({deadlineAt:task.quiz.deadlineAt}):null,index:customerActivityQuizIndex,now:Date.now(),serverNow:customerActivityServerNow(),requestBusy,draft:customerActivityDraft,timer:{...state.timer},modal:modalRoot.innerHTML}},
 };
 })();`;
 
@@ -318,6 +328,10 @@ const context = vm.createContext({
 vm.runInContext(injected, context, { filename: 'project1-prototype-v9.customer-activity-quiz.js' });
 const hooks = vm.runInContext('globalThis.__customerActivityQuizHooks', context) as {
   setTasks: (tasks: TestTask[]) => void;
+  setRejectedDecisions: (decisions: Array<{ id: string; npcId: string; type: string; decidedAt: number }>) => void;
+  setTasksAndRejected: (tasks: TestTask[], decisions: Array<{ id: string; npcId: string; type: string; decidedAt: number }>) => void;
+  dismissRejected: () => Promise<void> | undefined;
+  render: () => void;
   reloadView: () => void;
   setIndex: (index: number) => void;
   markSeen: (taskId: string) => void;
@@ -335,7 +349,7 @@ const hooks = vm.runInContext('globalThis.__customerActivityQuizHooks', context)
   deferComplete: () => void;
   releaseComplete: () => void;
   tick: () => void;
-  snapshot: () => { action: string; error: string; pending: unknown; quiz: TestQuiz | null; quizRemaining: number | null; index: number; now: number; serverNow: number; requestBusy: boolean; draft: string; modal: string };
+  snapshot: () => { action: string; error: string; pending: unknown; quiz: TestQuiz | null; quizRemaining: number | null; index: number; now: number; serverNow: number; requestBusy: boolean; draft: string; timer: { paused?: boolean }; modal: string };
 };
 
 async function waitForIdle() {
@@ -361,6 +375,28 @@ function currentQuiz(): TestQuiz {
 }
 
 async function main() {
+  const rejectionDecisions = [
+    { id: 'reject-tech', npcId: 'P1-001', type: 'technical_meeting', decidedAt: now },
+    { id: 'reject-case', npcId: 'P1-002', type: 'case_site_visit', decidedAt: now + 1 },
+    { id: 'reject-company', npcId: 'P1-003', type: 'company_visit', decidedAt: now + 2 },
+    { id: 'reject-hospitality', npcId: 'P1-004', type: 'hospitality', decidedAt: now + 3 },
+  ];
+  hooks.setRejectedDecisions(rejectionDecisions);
+  assert.match(modalRoot.innerHTML, /由于一些原因，客户张建国表示暂时无法召开技术交流会/);
+  assert.equal(hooks.snapshot().timer.paused, false, 'rejection notification does not pause the preview timer');
+  for (const expected of ['进行案例现场参观', '参观我们公司', '参加这次餐叙']) {
+    await hooks.dismissRejected();
+    hooks.render();
+    assert.match(modalRoot.innerHTML, new RegExp(`暂时无法${expected}`), `queue continues with ${expected}`);
+  }
+  await hooks.dismissRejected();
+  hooks.render();
+  assert.doesNotMatch(modalRoot.innerHTML, /暂无法安排活动/, 'each rejected decision is shown once per preview session');
+  assert.match(sessionStorage.getItem('preview-customer-activity-unavailable-seen:quiz-preview-session') ?? '', /reject-hospitality/,
+    'dismissed unavailable notices are scoped to and persisted for the preview session');
+  hooks.setTasksAndRejected([makeTask('accepted-task')], [rejectionDecisions[0]]);
+  assert.match(modalRoot.innerHTML, /情境推演（假设）：问题一？/, 'accepted activity planner coexists and takes priority over queued rejection notices');
+
   hooks.setTasks([makeTask()]);
   assert.match(modalRoot.innerHTML, /情境推演（假设）：问题一？/);
   assert.match(modalRoot.innerHTML, /第 1 \/ 3 题/);

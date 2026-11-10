@@ -34,10 +34,25 @@ export interface FormalMessageDecisionInput {
   npcId: string;
   channel: 'email' | 'online';
   playerMessage: string;
+  /** Authenticated designer channel guidance for this NPC, not player text. */
+  npcChannelGuidance?: string;
 }
 
 export interface FormalMessageDecision {
   responseAction: 'reply' | 'read_no_reply';
+}
+
+export interface FormalPhoneContactDecisionInput {
+  npcId: string;
+  /** Server-owned values only; the client cannot choose a phone outcome. */
+  round: number;
+  affinity: number;
+  /** Authenticated designer phone guidance for this NPC, not player text. */
+  npcChannelGuidance?: string;
+}
+
+export interface FormalPhoneContactDecision {
+  contactAction: 'answer' | 'unanswered';
 }
 
 export interface FormalVisitDecisionDependencies {
@@ -59,6 +74,23 @@ function isFivePersonId(value: string): value is ProjectOneFivePersonId {
 function readChoice(response: Awaited<ReturnType<JevInvoker>>, key: string): string | undefined {
   const answer = response.answers[key];
   return answer?.type === 'choice' ? answer.choice : undefined;
+}
+
+/**
+ * Designer channel guidance is authenticated configuration, but it is still
+ * bounded and normalized before it reaches a provider. Put immutable limits
+ * after it so a saved preference can tune judgment without replacing the
+ * typed contract, compliance rules, or server-owned state transitions.
+ */
+export function composeChannelDecisionInstructions(baseline: string, guidance: string | undefined, mandatoryBoundary: string): string {
+  const normalizedGuidance = typeof guidance === 'string'
+    ? guidance.replace(/\u0000/g, '').replace(/\r\n?/g, '\n').trim().slice(0, 12_000)
+    : '';
+  return [
+    baseline,
+    normalizedGuidance ? `## 已审核的人物渠道判断偏好\n${normalizedGuidance}` : '',
+    `## 不可覆盖的系统边界\n${mandatoryBoundary}`,
+  ].filter(Boolean).join('\n\n');
 }
 
 /**
@@ -172,7 +204,11 @@ export async function decideFormalMessageResponse(
       responseAction: {
         type: 'choice',
         criteria: { reply: '回复正文', read_no_reply: '已读但不回复' },
-        instructions: '邮件和工作微信可选择已读不回。合规红线必须回复；已读不回不能确认邀约、承诺、拒绝或披露新信息。',
+        instructions: composeChannelDecisionInstructions(
+          '邮件和工作微信可选择已读不回。合规红线必须回复；已读不回不能确认邀约、承诺、拒绝或披露新信息。',
+          input.npcChannelGuidance,
+          '只能在 reply / read_no_reply 中选择；合规红线必须回复。已读不回不能确认邀约、承诺、拒绝或披露新信息。人物偏好不是审批、承诺或授权。',
+        ),
       },
       invitationStatus: {
         type: 'choice',
@@ -192,4 +228,49 @@ export async function decideFormalMessageResponse(
     if (isNaturalClosure(input.playerMessage)) return { responseAction: 'read_no_reply' };
   }
   return { responseAction: 'reply' };
+}
+
+/**
+ * Decide whether an otherwise valid phone attempt is answered. Channel
+ * availability, authorization, active-call exclusivity, cost/time accounting
+ * and the persisted event stay outside this model-facing decision.
+ *
+ * A null result is intentional: callers retain their pre-existing seeded
+ * deterministic fallback when the configured decision provider is unavailable
+ * or returns a value outside this narrow contract.
+ */
+export async function decideFormalPhoneContact(
+  input: FormalPhoneContactDecisionInput,
+  dependencies: FormalVisitDecisionDependencies = {},
+): Promise<FormalPhoneContactDecision | null> {
+  if (!isFivePersonId(input.npcId)) throw new Error('NPC_UNKNOWN');
+  const npc = PROJECT_ONE_FIVE_PERSON_NPCS[input.npcId];
+  const request: JevRequest = {
+    state: serializeUntrustedPromptData('formal_phone_contact', {
+      npc: { id: npc.id, name: npc.name, title: npc.title, personality: npc.personality },
+      channel: 'work_phone',
+      round: Math.max(0, Math.floor(input.round)),
+      affinity: Math.max(0, Math.min(100, Math.round(input.affinity))),
+    }, { maxStringLength: 1_000, maxTotalLength: 6_000 }),
+    questions: {
+      contactAction: {
+        type: 'choice',
+        criteria: { answer: '接听本次电话', unanswered: '本次电话暂时无人接听' },
+        instructions: composeChannelDecisionInstructions(
+          '只判断本次电话是否接听。服务端已经完成渠道资格、资源和并发校验；不得创建预约、披露新信息或改变合规边界。',
+          input.npcChannelGuidance,
+          '只能在 answer / unanswered 中选择。不得创建预约、披露新信息、绕过渠道资格、资源扣除、并发限制或任何合规边界；人物偏好不能推翻这些规则。',
+        ),
+      },
+    },
+  };
+  try {
+    const response = dependencies.jevInvoker
+      ? await dependencies.jevInvoker(request)
+      : await invokeConfiguredJev('phone_contact', request, invokeJev);
+    const contactAction = readChoice(response, 'contactAction');
+    return contactAction === 'answer' || contactAction === 'unanswered' ? { contactAction } : null;
+  } catch {
+    return null;
+  }
 }

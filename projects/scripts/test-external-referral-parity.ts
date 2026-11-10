@@ -280,7 +280,7 @@ async function main() {
   assert.equal(previewInvite.appointment?.agenda, formalAppointment.purpose);
   assert.equal(previewInvite.referrals?.['P1-003']?.chargedActionPoints, 2, 'preview records WeChat plus first written invitation AP');
   assert.equal(previewInvite.referrals?.['P1-003']?.chargedActionPoints, formalInvite.state.referrals['P1-003']?.chargedActionPoints, 'formal and preview first invitation charge totals match');
-  assert.equal(modelCalls, 0, 'granted referral, WeChat, and invitation do not depend on a model response');
+  assert.equal(modelCalls, 1, 'the activity precheck may fail without blocking an otherwise valid referred visit');
   const previewInviteRetry = await previewService.execute(previewUser, previewRequest(
     'message', previewSessionId, 'preview-referral-invite-command-002', previewInvite.version, {
       npcId: 'P1-003', channel: 'wechat', text: invitationText,
@@ -290,7 +290,7 @@ async function main() {
   assert.equal(previewInviteRetry.appointmentReused, true, 'repeated invitation reuses its existing accepted appointment');
   assert.equal(previewInviteRetry.appointment?.id, previewInvite.appointment?.id);
   assert.equal(previewInviteRetry.referrals?.['P1-003']?.chargedActionPoints, 2, 'reused preview invitation does not increment the referral charge');
-  assert.equal(modelCalls, 0);
+  assert.equal(modelCalls, 2, 'a distinct written invitation checks its own activity intent');
 
   const previewReuseOnly = await previewService.execute(previewUser, previewRequest(
     'message', previewSessionId, 'preview-referral-invite-reuse-only-001', previewInviteRetry.version, {
@@ -310,7 +310,7 @@ async function main() {
     'reuseOnly rejects an ordinary message that is not a valid referral invitation',
   );
   assert.equal(previewService.store.get(previewUser, previewSessionId)?.referrals['P1-003']?.chargedActionPoints, 2, 'a rejected reuseOnly request does not change the charge total');
-  assert.equal(modelCalls, 0, 'reuseOnly checks complete without AI calls');
+  assert.equal(modelCalls, 2, 'reuseOnly does not make additional AI calls');
 
   const secondSession = await previewService.execute(previewUser, previewRequest(
     'reset', undefined, 'preview-second-session-initial-command-001', 0,

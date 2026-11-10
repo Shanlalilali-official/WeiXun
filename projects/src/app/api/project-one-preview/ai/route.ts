@@ -11,7 +11,7 @@ import { loadActivityDecisionConfigForMatching as loadActivityDecisionConfig } f
 import { DEFAULT_ACTIVITY_DECISION_CONFIG } from '@/lib/game/customer-activities';
 import { previewErrorDiagnosticFields, type PreviewErrorDiagnosticContext } from '@/lib/game/preview-error-diagnostics';
 import { getPreviewRecoveryResponse } from './handler';
-import { resolveProjectOneOnboarding } from '@/lib/game/project-one-onboarding';
+import { resolveProjectOneOnboarding, resolveProjectOneOnboardingSelection } from '@/lib/game/project-one-onboarding';
 
 export const runtime = 'nodejs';
 
@@ -132,9 +132,12 @@ export async function POST(request: NextRequest) {
     // session/command row. `start_session` is intentionally initial-only; its
     // schema already rejects a supplied previewSessionId.
     const onboardingSnapshot = parsed.data.action === 'start_session'
-      ? resolveProjectOneOnboarding(parsed.data.onboardingScenarioId)
+      ? parsed.data.onboardingSelection
+        ? resolveProjectOneOnboardingSelection(parsed.data.onboardingSelection)
+        : resolveProjectOneOnboarding(parsed.data.onboardingScenarioId)
       : undefined;
-    if (parsed.data.action === 'start_session' && !onboardingSnapshot) {
+    if (parsed.data.action === 'start_session'
+      && (!onboardingSnapshot || onboardingSnapshot.brief.id !== parsed.data.onboardingScenarioId)) {
       return NextResponse.json({ error: '所选项目场景不存在或已下线，请重新选择。' }, { status: 400 });
     }
     if (['test_adjust_npcs', 'test_adjust_appointments'].includes(parsed.data.action) && !isFastDebugEnabled()) {

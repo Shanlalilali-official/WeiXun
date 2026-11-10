@@ -53,6 +53,25 @@ type Selection =
   | { kind: 'person'; field: keyof NpcRolePromptProfile }
   | { kind: 'channel'; channelId: ProjectOneChannelId };
 
+type ChannelDecisionPrompt = {
+  taskId: 'preview_message' | 'phone_contact';
+  label: string;
+  description: string;
+};
+
+const CHANNEL_DECISION_PROMPTS: Partial<Record<ProjectOneChannelId, ChannelDecisionPrompt>> = {
+  email: {
+    taskId: 'preview_message',
+    label: '邮件应答 / 已读不回判断',
+    description: '这段文字只参与邮件“回复 / 已读不回”的结构化判断，不与邮件正文例外混用。',
+  },
+  work_phone: {
+    taskId: 'phone_contact',
+    label: '电话是否接听判断',
+    description: '这段文字只参与电话“接听 / 暂时无人接听”的结构化判断，不与电话正文例外混用。',
+  },
+};
+
 const PERSON_PROMPT_FIELDS: Array<{ field: keyof NpcRolePromptProfile; label: string; hint: string }> = [
   { field: 'base', label: '人物基础提示词', hint: '人物背景、职责和边界；运行时会保留原稿并排除旧的支持度条件段。' },
   { field: 'low', label: '低支持度提示词', hint: '服务端按当前配置门槛选择后使用。' },
@@ -124,6 +143,22 @@ function getDefaultSelectionValue(npcId: ProjectOneFivePersonId, selection: Sele
   return getSelectionValue(DEFAULT_PROJECT_ONE_PROMPT_CONFIG, npcId, selection);
 }
 
+function getChannelDecisionPromptValue(config: ProjectOnePromptConfig, npcId: ProjectOneFivePersonId, channelId: 'email' | 'work_phone'): string {
+  return config.npcChannelDecisionPrompts[npcId]?.[channelId] ?? '';
+}
+
+function setChannelDecisionPromptValue(
+  config: ProjectOnePromptConfig,
+  npcId: ProjectOneFivePersonId,
+  channelId: 'email' | 'work_phone',
+  value: string,
+): ProjectOnePromptConfig {
+  const next = structuredClone(config);
+  next.npcChannelDecisionPrompts[npcId] ??= {};
+  next.npcChannelDecisionPrompts[npcId][channelId] = value;
+  return next;
+}
+
 function getChannelMenuLabel(channelId: ProjectOneChannelId): string {
   for (const group of CHANNEL_MENU_GROUPS) {
     const item = group.items.find((candidate) => candidate.id === channelId);
@@ -157,6 +192,13 @@ export default function PromptLibraryPage() {
     [selectedNpcId],
   );
   const selectedChannel = selection.kind === 'channel' ? getChannel(selection.channelId) : null;
+  const decisionChannelId = selection.kind === 'channel' && (selection.channelId === 'email' || selection.channelId === 'work_phone')
+    ? selection.channelId
+    : undefined;
+  const channelDecisionPrompt = decisionChannelId ? CHANNEL_DECISION_PROMPTS[decisionChannelId] : undefined;
+  const decisionValue = channelDecisionPrompt && decisionChannelId
+    ? getChannelDecisionPromptValue(config, selectedNpcId, decisionChannelId)
+    : '';
   const thresholds = config.supportTierThresholds ?? DEFAULT_NPC_SUPPORT_TIER_THRESHOLDS;
   const thresholdsValid = Number.isInteger(thresholds.mediumMin)
     && Number.isInteger(thresholds.highMin)
@@ -221,6 +263,13 @@ export default function PromptLibraryPage() {
 
   function updateValue(nextValue: string) {
     setConfig((current) => setSelectionValue(current, selectedNpcId, selection, nextValue));
+    setDirty(true);
+    setNotice('');
+  }
+
+  function updateChannelDecisionPrompt(nextValue: string) {
+    if (!channelDecisionPrompt || !decisionChannelId) return;
+    setConfig((current) => setChannelDecisionPromptValue(current, selectedNpcId, decisionChannelId, nextValue));
     setDirty(true);
     setNotice('');
   }
@@ -315,7 +364,7 @@ export default function PromptLibraryPage() {
           </button>
           <div>
             <h1 className="text-lg font-semibold text-slate-900">提示词设计</h1>
-            <p className="mt-0.5 text-xs text-slate-500">为每个人物填写通用提示词，也可以补充邮件、微信等交流方式的专属表达。</p>
+            <p className="mt-0.5 text-xs text-slate-500">为每个人物填写通用提示词、渠道表达，并在邮件/电话项维护独立的后端应答判断偏好。</p>
           </div>
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             <button onClick={() => void exportExcel()} disabled={loading || excelBusy !== null} className="flex items-center gap-2 rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-40"><Download className="h-4 w-4" />{excelBusy === 'export' ? '导出中…' : '导出 Excel'}</button>
@@ -341,7 +390,7 @@ export default function PromptLibraryPage() {
       <main className="mx-auto max-w-[1560px] px-4 py-5 sm:px-6 sm:py-6">
         <div className="mb-4 flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs leading-5 text-blue-950">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-700" />
-          <p>这里编辑人物如何表达。身份、信息边界、评分和其他游戏规则由系统维护，导入 Excel 也不会修改这些规则。</p>
+          <p>这里可编辑人物表达；邮件和电话项还可编辑受限的后端应答判断偏好。身份、信息边界、评分和其他游戏规则仍由系统维护，导入 Excel 不会修改这些规则。</p>
         </div>
         <section className="mb-4 flex flex-wrap items-end gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs shadow-sm" aria-label="支持度档位门槛">
           <div className="min-w-56"><div className="font-semibold text-slate-800">支持度档位门槛</div><p className="mt-1 leading-5 text-slate-500">由服务端确定人物使用低、中或高提示词；不会发送给生成模型。</p></div>
@@ -470,6 +519,38 @@ export default function PromptLibraryPage() {
             </div>
 
             {selectedChannel ? <ReadOnlyChannelSummary channel={selectedChannel} modifier={config.channelModifiers[selectedChannel.id] ?? selectedChannel.modifier} /> : <ReadOnlyPersonSummary person={selectedPerson} />}
+
+            {channelDecisionPrompt && (
+              <section className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4" aria-label={`${selectedPerson.name}${channelDecisionPrompt.label}`}>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-amber-900">
+                      <ShieldCheck className="h-3.5 w-3.5" />后端业务决策提示词 · {channelDecisionPrompt.label}
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-amber-900/80">{channelDecisionPrompt.description}</p>
+                    <p className="mt-1 text-[11px] leading-5 text-amber-800/80">对 {selectedPerson.name} 会带入其固定决策画像；渠道资格、合规、资源扣除与最终状态写入仍由确定性代码控制。</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/designer/jev-config?task=${channelDecisionPrompt.taskId}&npc=${selectedNpcId}`)}
+                    className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                  >
+                    编辑后端判断 →
+                  </button>
+                </div>
+                <label className="mt-3 block text-[11px] font-semibold text-amber-900" htmlFor="channel-decision-prompt">{selectedPerson.name} 的后端判断偏好</label>
+                <textarea
+                  id="channel-decision-prompt"
+                  value={decisionValue}
+                  disabled={loading}
+                  onChange={(event) => updateChannelDecisionPrompt(event.target.value)}
+                  className="mt-1 min-h-28 w-full resize-y rounded-lg border border-amber-200 bg-white p-3 text-xs leading-5 text-slate-800 outline-none focus:ring-2 focus:ring-amber-400/50 disabled:cursor-not-allowed disabled:opacity-50"
+                  placeholder="留空时使用该人物的默认后端判断偏好。"
+                  aria-label={`${selectedPerson.name}${channelDecisionPrompt.label}后端判断偏好`}
+                />
+                <p className="mt-1 text-[10px] text-amber-800/75">{decisionValue.length} 字 · 保存后由电话/邮件实际决策路径读取；不可覆盖固定输出选项与安全边界。</p>
+              </section>
+            )}
 
             <div className="mt-4 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow-inner">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 bg-slate-900 px-4 py-3 text-[11px]">

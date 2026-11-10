@@ -373,6 +373,43 @@ body.po-onboarding-scroll-locked {
   line-height: 1.5;
 }
 
+.po-custom-entry {
+  display: grid;
+  gap: 2px;
+  margin-top: 8px;
+}
+
+.po-custom-entry[hidden] {
+  display: none;
+}
+
+.po-custom-input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #cbd8e9;
+  border-radius: 11px;
+  background: #fff;
+  padding: 9px 12px;
+  color: #24334b;
+  font: inherit;
+  font-size: 14px;
+}
+
+.po-custom-input:focus-visible {
+  outline: 3px solid rgba(47, 107, 255, .28);
+  outline-offset: 2px;
+}
+
+.po-custom-input:disabled {
+  cursor: not-allowed;
+  background: #f3f6fa;
+  color: #8793a5;
+}
+
+.po-custom-hint {
+  margin-top: 4px;
+}
+
 .po-selection-summary {
   margin: 0;
   border: 1px solid #d9e6f8;

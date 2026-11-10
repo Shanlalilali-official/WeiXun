@@ -11,7 +11,8 @@ import {
 import { getProgressionMultiplier } from '@/lib/game/acceptance-mode';
 import { assertMultiplayerRoomRunning } from '@/lib/game/multiplayer';
 import { getProjectOneNpc } from '@/lib/game/project-one';
-import { resolveProjectOneOnboarding } from '@/lib/game/project-one-onboarding';
+import { resolveProjectOneOnboarding, resolveProjectOneOnboardingSelection } from '@/lib/game/project-one-onboarding';
+import type { ProjectOneOnboardingSelection } from '@/lib/contracts/project-one-onboarding';
 import { appendCustomerActivityDiagnostic, applyCustomerActivityEvaluation, completeCustomerActivityProposalDetection, createProjectOneState, getGameOutcome, normalizeProjectOneState, synchronizeProjectTimer, toPlayerVisibleGameOutcome, type GameOutcome, type GameRuntimeState } from '@/lib/game/state';
 import type { GameReview } from '@/lib/contracts/game';
 import {
@@ -245,11 +246,16 @@ export async function createGameSession(
   progressionMultiplier = 1,
   replaceExisting = false,
   onboardingScenarioId?: string,
+  onboardingSelection?: ProjectOneOnboardingSelection,
 ) {
   if (scenarioCode !== 'project-1') throw new Error('SCENARIO_NOT_SUPPORTED');
   // Resolve before the replacement RPC so an invalid choice cannot remove an existing save.
-  const onboardingScenario = onboardingScenarioId ? resolveProjectOneOnboarding(onboardingScenarioId) : undefined;
-  if (onboardingScenarioId && !onboardingScenario) throw new Error('ONBOARDING_SCENARIO_NOT_FOUND');
+  const onboardingScenario = onboardingSelection
+    ? resolveProjectOneOnboardingSelection(onboardingSelection)
+    : onboardingScenarioId ? resolveProjectOneOnboarding(onboardingScenarioId) : undefined;
+  if ((onboardingScenarioId || onboardingSelection) && (!onboardingScenario || onboardingScenario.brief.id !== onboardingScenarioId)) {
+    throw new Error('ONBOARDING_SCENARIO_NOT_FOUND');
+  }
   const supabase = createServerClient();
   const { data: scenario, error: scenarioError } = await supabase
     .from('project_scenarios')
@@ -786,6 +792,11 @@ export async function processPendingCustomerActivityDetections(
         detectedConversationId = request.conversationId;
       } catch (error) {
         const failureCode = error instanceof CustomerActivityDetectionError ? error.code : 'unexpected_detection_error';
+        // The same queued conversation is retried on reads and before chat.
+        // Rewriting an identical failure would keep advancing the game version
+        // and make the next chat command conflict during an outage.
+        if (loaded.state.customerActivityDiagnostics?.some((item) => item.conversationId === request.conversationId
+          && item.event === 'detection_failed' && item.reason === failureCode)) return loaded;
         const failedState = detectionDiagnostics.reduce((state, diagnostic) => appendCustomerActivityDiagnostic(state, {
           at: now(), conversationId: request.conversationId, npcId: request.npcId,
           event: diagnostic.event, reason: diagnostic.reason, activityType: diagnostic.activityType,

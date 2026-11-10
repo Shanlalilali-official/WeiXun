@@ -815,11 +815,24 @@ export default function DesignerPage() {
               >
                 <div className="mb-4 flex items-center justify-between">
                   <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600"><BrainCircuit className="h-5 w-5" /></span>
-                  <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700">决策配置</span>
+                  <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700">业务决策</span>
                 </div>
-                <div className="text-sm font-semibold text-foreground">Jev 决策配置</div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">查看 Jev 可用的状态字段与题目规则，编辑决策补充说明。</p>
-                <div className="mt-4 text-xs font-medium text-amber-700">查看并编辑 Jev 配置 →</div>
+                <div className="text-sm font-semibold text-foreground">业务决策提示词</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">编辑电话/邮件应答、拜访推进、活动开展等后端结构化判断说明。</p>
+                <div className="mt-4 text-xs font-medium text-amber-700">查看并编辑业务决策 →</div>
+              </button>
+
+              <button
+                onClick={() => router.push('/designer/runtime-prompts')}
+                className="group rounded-xl border border-border bg-card p-5 text-left transition-all hover:-translate-y-0.5 hover:border-indigo-400/60 hover:shadow-md"
+              >
+                <div className="mb-4 flex items-center justify-between">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-500/10 text-indigo-600"><FileText className="h-5 w-5" /></span>
+                  <span className="rounded-full bg-indigo-500/10 px-2 py-1 text-[10px] text-indigo-700">运行规则</span>
+                </div>
+                <div className="text-sm font-semibold text-foreground">运行时业务规则与提示词</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">按实际调用位置查找并编辑活动、工作流、复盘等运行时指令，固定安全边界单独保护。</p>
+                <div className="mt-4 text-xs font-medium text-indigo-700">查看运行规则目录 →</div>
               </button>
 
               <button
@@ -918,7 +931,7 @@ export default function DesignerPage() {
               </div>
               <div className="grid gap-3 text-xs leading-5 text-muted-foreground md:grid-cols-3">
                 <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">人物资料</span><br />用于维护人物主档和游戏中的可披露信息。</div>
-                <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">人物提示词</span><br />按人物和交流渠道维护角色表达，规则性约束不开放编辑。</div>
+                <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">人物提示词</span><br />按人物和交流渠道维护角色表达；业务规则可在运行时提示词目录编辑，权限与输出边界由代码保护。</div>
                 <div className="rounded-lg bg-muted/60 p-3"><span className="font-medium text-foreground">图片素材</span><br />人物介绍图已预填，表情与拜访场景可在对应槽位上传。</div>
               </div>
             </div>

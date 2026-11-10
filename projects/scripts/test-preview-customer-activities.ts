@@ -106,27 +106,41 @@ function modelCandidate(
   messages: Array<{ messageId: string; speaker: 'sales' | 'customer'; text: string }>,
   type: CustomerActivityType,
 ) {
-  const proposalIndex = messages.findIndex((message) => message.speaker === 'sales'
-    ? /技术交流会|技术研讨|案例现场参观|项目现场参观|公司参观|吃饭|用餐|聚餐|饭局|喝酒|喝一杯|小酌/.test(message.text)
-    : /技术交流会|技术研讨|案例现场参观|项目现场参观|公司参观|吃饭|用餐|聚餐|饭局|喝酒|喝一杯|小酌/.test(message.text));
-  if (proposalIndex < 0) return { activities: [] };
-  const proposal = messages[proposalIndex];
-  const response = messages.slice(proposalIndex + 1).find((message) => message.speaker !== proposal.speaker);
+  const activityMention = {
+    technical_meeting: /技术交流会|技术研讨/u,
+    case_site_visit: /(?:案例|项目).{0,8}(?:现场)?(?:参观|考察)|(?:参观|考察).{0,12}(?:案例|项目)/u,
+    company_visit: /(?:公司|我司|我们公司).{0,8}参观|参观.{0,8}(?:公司|我司|我们公司)/u,
+    hospitality: /吃(?:个|顿)?(?:饭|便饭)|用餐|聚餐|饭局|喝酒|喝一杯|小酌/u,
+  }[type];
+  const salesProposalIndex = messages.findIndex((message) => message.speaker === 'sales'
+    && activityMention.test(message.text)
+    && /建议|提议|希望|想|邀请|要不要|能否|可否|是否|可以|安排|组织|召开|举办|一起|请/u.test(message.text)
+    && !/(?:撤回|撤销|取消|不再|先不|暂不|不安排|不组织|此前|之前|上周|以前|曾经|过去|已经.{0,8}(?:举办|召开|组织|参观))/u.test(message.text));
+  const customerProposalIndex = messages.findIndex((message) => message.speaker === 'customer' && activityMention.test(message.text));
+  if (salesProposalIndex >= 0 && (customerProposalIndex < 0 || salesProposalIndex < customerProposalIndex)) {
+    const proposal = messages[salesProposalIndex];
+    return { activities: [{ type, initiator: 'sales', proposal: { messageId: proposal.messageId, quote: proposal.text.slice(0, 400) } }] };
+  }
+
+  if (customerProposalIndex < 0) return { activities: [] };
+  const customerProposal = messages[customerProposalIndex];
+  const response = messages.slice(customerProposalIndex + 1).find((message) => message.speaker === 'sales'
+    && activityMention.test(message.text)
+    && /(?:可以|同意|确认|愿意|协调|安排)/u.test(message.text)
+    && !/(?:不|没|别|取消|撤回|不再|暂不|先不)/u.test(message.text));
   if (!response) return { activities: [] };
-  const outcome = messages[messages.length - 1];
-  const initiator = proposal.speaker;
   return {
     activities: [{
       type,
-      initiator,
-      proposal: { messageId: proposal.messageId, quote: proposal.text.slice(0, 400) },
+      initiator: 'customer',
+      proposal: { messageId: customerProposal.messageId, quote: customerProposal.text.slice(0, 400) },
       response: {
         messageId: response.messageId,
         quote: response.text.slice(0, 400),
-        kind: initiator === 'customer' ? 'explicit_acceptance' : 'ambiguous',
+        kind: 'explicit_acceptance',
       },
       finalStatus: 'active',
-      finalOutcome: { messageId: outcome.messageId, quote: outcome.text.slice(0, 400) },
+      finalOutcome: { messageId: response.messageId, quote: response.text.slice(0, 400) },
       confidence: 0.98,
     }],
   };
@@ -684,6 +698,63 @@ async function testHospitalityPreviewServiceFlow() {
     'customer confirmation does not bypass the target-customer numeric gate');
 }
 
+async function testP1005HospitalityMessageFlow() {
+  const playerText = '刘老师您好，我是A公司的小孙，请问您最近是否有空呢？想请您吃个便饭，顺便也请教您一些问题~';
+  const npcReply = '小孙您好，感谢来信。最近手头事情比较多，吃饭就不必了。您要是有具体事项，可以先通过邮件说明，我看看是否属于我这边能协助的范围。';
+  const config: ActivityDecisionConfig = { revision: 57, mode: 'ai', thresholds: {} };
+  const runMessage = async (support: number, includeModelEvidence: boolean) => {
+    const userId = `preview-p1005-casual-meal-${support}-${includeModelEvidence ? 'evidence' : 'empty'}`;
+    const store = new PreviewSessionStore();
+    const state = store.create(userId);
+    state.npcStates['P1-005'].support = support;
+    state.npcStates['P1-005'].pleasantness = 55;
+    const service = createPreviewAiService({
+      store,
+      invoker: async (messages) => {
+        const system = messages[0]?.content ?? '';
+        if (system.includes('活动提议语义识别器')) {
+          if (!includeModelEvidence) return json({ activities: [] });
+          const transcript = messagesFromDetectionPrompt(messages.at(-1)?.content ?? '');
+          const proposal = transcript.find((message) => message.speaker === 'sales' && message.text === playerText);
+          assert.ok(proposal, 'the real message command supplies the exact sales invitation as detector evidence');
+          return json({ activities: [{
+            type: 'hospitality',
+            initiator: 'sales',
+            proposal: { messageId: proposal.messageId, quote: proposal.text },
+          }] });
+        }
+        if (system.includes('客户活动回复的上下文语义复核器')) return json({ decision: 'allowed', issue: 'none' });
+        if (system.includes('独立评估刚刚完成的 NPC 正文')) return json({ memorySuggestions: [] });
+        return json({ content: npcReply });
+      },
+      jevInvoker: async () => ({ answers: {} }),
+    });
+    const response = await execute(service, userId, state.previewSessionId, 0, {
+      action: 'message', channel: 'email', npcId: 'P1-005', text: playerText,
+    }, config);
+    return { state: store.get(userId, state.previewSessionId)!, response };
+  };
+
+  const belowThreshold = await runMessage(14, true);
+  assert.equal(belowThreshold.state.customerActivities.decisions[0]?.decision, 'reject');
+  assert.equal(belowThreshold.state.customerActivities.tasks.length, 0);
+  assert.equal(belowThreshold.response.customerActivities?.unavailableNotices.length, 1,
+    'the P1-005 screenshot email becomes a hospitality notice below the target threshold');
+
+  const allowed = await runMessage(15, true);
+  assert.equal(allowed.state.customerActivities.decisions[0]?.decision, 'allow');
+  assert.equal(allowed.response.customerActivities?.tasks.length, 1,
+    'the NPC reply does not erase the model-classified sales invitation at the inclusive threshold');
+  assert.equal(allowed.response.customerActivities?.tasks[0]?.type, 'hospitality');
+  assert.equal(allowed.response.customerActivities?.unavailableNotices.length, 0);
+
+  const emptyModelResult = await runMessage(100, false);
+  assert.equal(emptyModelResult.state.customerActivities.decisions.length, 0,
+    'an empty semantic model result does not fall back to keyword-created candidates');
+  assert.equal(emptyModelResult.response.customerActivities?.tasks.length, 0);
+  assert.equal(emptyModelResult.response.customerActivities?.unavailableNotices.length, 0);
+}
+
 async function testFrozenNumericGateAndDuplicateDecision() {
   const userId = 'preview-activity-frozen';
   const store = new PreviewSessionStore();
@@ -732,6 +803,15 @@ async function testFrozenNumericGateAndDuplicateDecision() {
   assert.equal(decided.customerActivities.decisions[0].relationshipSnapshot.support, 0);
   assert.equal(decided.customerActivities.decisions[0].configRevision, 12);
   assert.equal(response.customerActivities?.tasks.length, 0);
+  assert.equal(response.customerActivities?.unavailableNotices.length, 1,
+    'a persisted non-allow decision is projected to the preview unavailable-notice queue');
+  const publicUnavailable = response.customerActivities?.unavailableNotices[0];
+  assert.deepEqual(Object.keys(publicUnavailable ?? {}), ['id', 'npcId', 'type', 'decidedAt'],
+    'the preview notification carries only the narrow public unavailable projection');
+  assert.equal(JSON.stringify(publicUnavailable).includes('relationshipSnapshot'), false);
+  assert.equal(JSON.stringify(publicUnavailable).includes('decisionConfig'), false);
+  assert.equal(JSON.stringify(publicUnavailable).includes('support'), false);
+  assert.equal(JSON.stringify(publicUnavailable).includes('pleasantness'), false);
 
   const aiUser = 'preview-activity-once';
   const aiStore = new PreviewSessionStore();
@@ -748,7 +828,7 @@ async function testFrozenNumericGateAndDuplicateDecision() {
     jevInvoker: async (request) => {
       if (typeof request.state === 'object') {
         gateCalls += 1;
-        return { answers: { decision: { type: 'choice', choice: 'reject', probabilities: { allow: 0, reject: 1, need_more: 0 }, confidence: 1 } } };
+        return { answers: { decision: { type: 'choice', choice: 'reject', probabilities: { allow: 0, reject: 1 }, confidence: 1 } } };
       }
       return selectionJev()(request);
     },
@@ -1062,7 +1142,7 @@ async function testFeasibilityRouterAndReplyGuards() {
     assert.equal(baseInvoker, sentinelBase);
     return { answers: { decision: { type: 'choice', choice: 'allow', probabilities: { allow: 1 }, confidence: 1 } } };
   }, sentinelBase);
-  await routedInvoker({ state: { activityType: 'technical_meeting' }, questions: { decision: { type: 'choice', instructions: 'test', criteria: { allow: '允许', reject: '拒绝', need_more: '补充' } } } });
+  await routedInvoker({ state: { activityType: 'technical_meeting' }, questions: { decision: { type: 'choice', instructions: 'test', criteria: { allow: '允许', reject: '拒绝' } } } });
   assert.equal(routedTask, 'customer_activity_feasibility', 'default activity decisions route to the dedicated designer task, not the string-only preview router');
 
   const prompts: string[] = [];
@@ -1285,7 +1365,7 @@ async function testPersistentPhoneProposalFlowAndDiagnostics() {
       if (system.includes('活动提议语义识别器')) {
         activityDetectorCalls += 1;
         if (index === 1) throw new Error('temporary semantic lookup outage');
-        return json({ activities: [] });
+        return json(modelCandidate(messagesFromDetectionPrompt(messages.at(-1)?.content ?? ''), 'technical_meeting'));
       }
       if (system.includes('独立评估刚刚完成的 NPC 正文')) return json({ memorySuggestions: [] });
 
@@ -1353,36 +1433,42 @@ async function testPersistentPhoneProposalFlowAndDiagnostics() {
     response = await run({ action: 'customer_activity_end_conversation', npcId: 'P1-004', channel: 'work_phone' });
     current = restored();
     assert.equal(current.activeCustomerActivityConversation, null);
-    assert.equal(current.pendingCustomerActivityDetections.length, 0, 'the ended call is settled before the response commits');
-    assert.equal(current.customerActivities.decisions.length, 1);
-    assert.equal(current.customerActivities.tasks.length, 1, 'the five-person 20/60 threshold creates the technical-meeting task');
-    const task = current.customerActivities.tasks[0];
-    assert.equal(task.type, 'technical_meeting');
-    assert.equal(task.initiator, 'sales');
-    assert.equal(task.responseKind, 'not_required', 'a vague NPC reply is not fabricated into agreement evidence');
-    assert.equal(task.decisionRevision, config.revision);
-    assert.ok(task.sourceConversation.some((message) => message.speaker === 'customer' && /向上级汇报/.test(message.text)));
-    assert.ok(response.customerActivities?.tasks.some((item) => item.id === task.id));
-    assert.equal(activityDetectorCalls, 1,
-      'the semantic detector runs for possible additional customer-initiated activities while the deterministic sales candidate is retained');
-
     const diagnosticEvents = current.customerActivityDiagnostics.map((entry) => entry.event);
-    for (const event of ['conversation_queued', 'detection_started', 'candidate_accepted', 'candidates_count', 'threshold_decision', 'task_created']) {
+    for (const event of ['conversation_queued', 'detection_started']) {
       assert.ok(diagnosticEvents.includes(event), `private diagnostic trail includes ${event}`);
     }
-    const acceptedDiagnostic = current.customerActivityDiagnostics.find((entry) => entry.event === 'candidate_accepted');
-    assert.equal(acceptedDiagnostic?.details?.detection_source, 'deterministic_sales_proposal');
     if (index === 0) {
-      assert.ok(diagnosticEvents.includes('model_response'), 'an empty semantic result does not discard a deterministic sales proposal');
+      assert.equal(current.pendingCustomerActivityDetections.length, 0, 'a model-recognized proposal settles before the response commits');
+      assert.equal(current.customerActivities.decisions.length, 1);
+      assert.equal(current.customerActivities.tasks.length, 1, 'the five-person 20/60 threshold creates the model-recognized task');
+      const task = current.customerActivities.tasks[0];
+      assert.equal(task.type, 'technical_meeting');
+      assert.equal(task.initiator, 'sales');
+      assert.equal(task.responseKind, 'not_required', 'a vague NPC reply is not fabricated into agreement evidence');
+      assert.equal(task.decisionRevision, config.revision);
+      assert.ok(task.sourceConversation.some((message) => message.speaker === 'customer' && /向上级汇报/.test(message.text)));
+      assert.ok(response.customerActivities?.tasks.some((item) => item.id === task.id));
+      const acceptedDiagnostic = current.customerActivityDiagnostics.find((entry) => entry.event === 'candidate_accepted');
+      assert.equal(acceptedDiagnostic?.reason, 'llm_verified_sales_proposal_enters_feasibility_without_customer_response');
+      assert.ok(diagnosticEvents.includes('model_response'));
+      for (const event of ['candidate_accepted', 'candidates_count', 'threshold_decision', 'task_created']) {
+        assert.ok(diagnosticEvents.includes(event), `model evidence records ${event}`);
+      }
+      const decisionDiagnostic = current.customerActivityDiagnostics.find((entry) => entry.event === 'threshold_decision');
+      assert.equal(decisionDiagnostic?.decision, 'allow');
+      assert.equal(decisionDiagnostic?.configRevision, config.revision);
+      assert.equal(decisionDiagnostic?.organizationSnapshot?.length, 5);
+      assert.ok(decisionDiagnostic?.organizationSnapshot?.every((member) => member.support === 20 && member.pleasantness === 60));
     } else {
       assert.ok(diagnosticEvents.includes('model_error'), 'a semantic model error is recorded');
-      assert.ok(diagnosticEvents.includes('fallback_used'), 'the deterministic candidate is retained after a semantic model error');
+      assert.ok(diagnosticEvents.includes('detection_retryable_error'));
+      assert.equal(current.pendingCustomerActivityDetections.length, 1, 'failed semantic matching leaves the conversation queued for retry');
+      assert.equal(current.customerActivities.decisions.length, 0);
+      assert.equal(current.customerActivities.tasks.length, 0, 'a provider error does not fall back to a keyword-created task');
+      assert.equal(response.customerActivities?.unavailableNotices.length, 0);
+      assert.equal(diagnosticEvents.includes('candidate_accepted'), false);
     }
-    const decisionDiagnostic = current.customerActivityDiagnostics.find((entry) => entry.event === 'threshold_decision');
-    assert.equal(decisionDiagnostic?.decision, 'allow');
-    assert.equal(decisionDiagnostic?.configRevision, config.revision);
-    assert.equal(decisionDiagnostic?.organizationSnapshot?.length, 5);
-    assert.ok(decisionDiagnostic?.organizationSnapshot?.every((member) => member.support === 20 && member.pleasantness === 60));
+    assert.equal(activityDetectorCalls, 1, 'the detector runs once while settling the ended conversation');
 
     assert.equal('customerActivityDiagnostics' in toPreviewRecoveryDto(current), false,
       'the internal decision trace is not exposed through the player recovery DTO');
@@ -1393,8 +1479,10 @@ async function testPersistentPhoneProposalFlowAndDiagnostics() {
 
     await run({ action: 'customer_activity_end_conversation', npcId: 'P1-004', channel: 'work_phone' });
     current = restored();
-    assert.equal(current.customerActivities.tasks.length, 1, 'repeating end after a committed hangup does not create another task');
-    assert.equal(current.customerActivities.decisions.length, 1, 'repeating end does not record a second decision');
+    assert.equal(current.customerActivities.tasks.length, index === 0 ? 1 : 0,
+      'repeating end cannot create a task without model evidence');
+    assert.equal(current.customerActivities.decisions.length, index === 0 ? 1 : 0,
+      'repeating end cannot record a decision without model evidence');
     assert.ok(current.customerActivityDiagnostics.some((entry) => entry.event === 'phone_end_without_active_call'),
       'a hangup with no active call leaves an explicit internal diagnostic');
     assert.equal(acquireCount, 5, 'every command reacquires and restores persisted JSON state');
@@ -1448,6 +1536,11 @@ async function testProposalMergeAndLowConfidenceFiltering() {
       return json({
         activities: [
           {
+            type: 'technical_meeting',
+            initiator: 'sales',
+            proposal: { messageId: 'sales-tech', quote: '我建议下周召开技术交流会' },
+          },
+          {
             type: 'case_site_visit',
             initiator: 'customer',
             proposal: { messageId: 'customer-case', quote: '案例现场参观' },
@@ -1471,13 +1564,13 @@ async function testProposalMergeAndLowConfidenceFiltering() {
     onDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
   });
 
-  assert.equal(semanticCalls, 1, 'one semantic request is allowed to find activities beyond the deterministic sales proposal');
+  assert.equal(semanticCalls, 1, 'the single semantic request supplies the sales proposal and customer proposal evidence');
   assert.deepEqual(candidates.map((candidate) => candidate.type).sort(), ['case_site_visit', 'technical_meeting']);
   const salesCandidate = candidates.find((candidate) => candidate.type === 'technical_meeting');
   assert.equal(salesCandidate?.initiator, 'sales');
   assert.equal(salesCandidate?.responseKind, 'not_required');
   assert.ok(candidates.some((candidate) => candidate.type === 'case_site_visit' && candidate.initiator === 'customer'),
-    'a confirmed customer-initiated activity is merged with the deterministic salesperson proposal');
+    'a confirmed customer-initiated activity is retained alongside model-recognized sales evidence');
   assert.ok(!candidates.some((candidate) => candidate.type === 'company_visit'),
     'a low-confidence customer proposal is filtered even when another candidate is accepted');
   assert.ok(diagnostics.some((diagnostic) => diagnostic.event === 'candidate_filtered'
@@ -1489,6 +1582,7 @@ async function main() {
   await testCustomerConfirmationAndPlanning();
   await testFrozenActivityPlanProviderAndJevFailure();
   await testHospitalityPreviewServiceFlow();
+  await testP1005HospitalityMessageFlow();
   await testFrozenNumericGateAndDuplicateDecision();
   await testOrganizationNumericGateAndLegacyQueue();
   await testServerAuthoritativeTimeout();

@@ -168,7 +168,7 @@ export type ActivityDecisionConfig = z.infer<typeof activityDecisionConfigSchema
 export type { ActivityExecutionConfig };
 export type CustomerActivityDecisionConfigSnapshot = ActivityDecisionConfig;
 export type CustomerActivityDecisionMode = 'customer_confirmed' | 'ai' | 'numeric';
-export type CustomerActivityFeasibilityOutcome = 'allow' | 'reject' | 'need_more';
+export type CustomerActivityFeasibilityOutcome = 'allow' | 'reject';
 
 const allOrganizationNpcIds: CustomerActivityOrganizationNpcId[] = [...CUSTOMER_ACTIVITY_ORGANIZATION_NPC_IDS];
 
@@ -356,7 +356,7 @@ export const customerActivityProposalCandidateSchema = z.object({
 });
 
 export const customerActivityFeasibilityDecisionSchema = z.object({
-  decision: z.enum(['allow', 'reject', 'need_more']),
+  decision: z.enum(['allow', 'reject']),
   mode: z.enum(['customer_confirmed', 'ai', 'numeric']),
   configRevision: z.number().int().nonnegative(),
   reason: z.string().trim().min(1).max(300),
@@ -535,6 +535,8 @@ export const customerActivityDecisionRecordSchema = z.object({
   initiator: z.enum(['sales', 'customer']),
   proposalMessageId: z.string().trim().min(1).max(160),
   responseMessageId: z.string().trim().min(1).max(160),
+  // Historical saves may contain need_more. New feasibility decisions are
+  // binary and pass through customerActivityFeasibilityDecisionSchema above.
   decision: z.enum(['allow', 'reject', 'need_more']),
   mode: z.enum(['customer_confirmed', 'ai', 'numeric']),
   configRevision: z.number().int().nonnegative(),
@@ -598,6 +600,20 @@ export type PublicCustomerActivityTask = Omit<CustomerActivityTask,
   evaluation?: Pick<CustomerActivityEvaluation, 'overallEvaluation'>;
   quiz?: PublicCustomerActivityQuiz;
 };
+
+/**
+ * The only player-visible representation of a persisted rejection. It
+ * intentionally omits the decision kind, reason, frozen
+ * relationship snapshot, threshold configuration, and any scoring inputs.
+ */
+export const publicUnavailableCustomerActivityNoticeSchema = z.object({
+  id: z.string().trim().min(1).max(512),
+  npcId: z.string().trim().min(1).max(128),
+  type: z.enum(CUSTOMER_ACTIVITY_TYPES),
+  decidedAt: z.number().int().nonnegative(),
+}).strict();
+
+export type PublicUnavailableCustomerActivityNotice = z.infer<typeof publicUnavailableCustomerActivityNoticeSchema>;
 
 export type CustomerActivityPlanningAction = 'manual' | 'timeout' | 'room_ended';
 
@@ -1191,4 +1207,18 @@ export function toPublicCustomerActivityTask(taskInput: CustomerActivityTask): P
       .filter((item) => item.kind === 'proposal' || item.kind === 'acceptance' || item.kind === 'response')
       .map((item) => item.quote),
   };
+}
+
+/** Projects a persisted rejection for the one-time player notification. */
+export function toPublicUnavailableCustomerActivityNotice(
+  decisionInput: CustomerActivityDecisionRecord,
+): PublicUnavailableCustomerActivityNotice | null {
+  const decision = decisionInput;
+  if (decision.decision !== 'reject') return null;
+  return publicUnavailableCustomerActivityNoticeSchema.parse({
+    id: decision.idempotencyKey,
+    npcId: decision.npcId,
+    type: decision.type,
+    decidedAt: decision.decidedAt,
+  });
 }

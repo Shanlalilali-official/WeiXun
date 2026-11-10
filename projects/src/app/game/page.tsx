@@ -25,7 +25,7 @@ import {
   X,
 } from 'lucide-react';
 import { isCurrentPreparationType, type GamePublicResearchRecord, type GameRuntimeState } from '@/lib/game/state';
-import type { ProjectOnePublicBrief } from '@/lib/contracts/project-one-onboarding';
+import type { ProjectOneOnboardingSelection, ProjectOnePublicBrief } from '@/lib/contracts/project-one-onboarding';
 import { loadProjectOneOnboarding } from '@/lib/game/load-project-one-onboarding';
 import { hasExternalReferral } from '@/lib/game/external-referral';
 import { isLegacyCompetitorPlaceholder, type CompetitorProfile } from '@/lib/contracts/competitors';
@@ -1232,7 +1232,7 @@ function GameInner() {
     }
   };
 
-  const startNewGame = async (onboardingScenarioId: string) => {
+  const startNewGame = async (onboardingScenarioId: string, onboardingSelection?: ProjectOneOnboardingSelection) => {
     const replacing = activeSaves.length > 0;
     const previousSaveId = activeSaves[0]?.id;
     if (replacing && !window.confirm('开始新游戏会永久覆盖当前进度，原存档无法恢复。确定继续吗？')) {
@@ -1245,7 +1245,7 @@ function GameInner() {
       const response = await fetch('/api/game/sessions', {
         method: 'POST',
         headers,
-        body: JSON.stringify({ scenarioCode: location, replaceExisting: replacing, onboardingScenarioId }),
+        body: JSON.stringify({ scenarioCode: location, replaceExisting: replacing, onboardingScenarioId, onboardingSelection }),
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.gameSession) throw new Error(
@@ -1272,11 +1272,11 @@ function GameInner() {
     try {
       const onboarding = await loadProjectOneOnboarding();
       onboarding.open({
-        onStart: async (brief) => {
+        onStart: async (brief, selection) => {
           if ((localStorage.getItem('weixun_session') || '') !== onboardingToken) {
             throw new Error('登录身份已变更，请关闭开场并重新进入项目。');
           }
-          await startNewGame(brief.id);
+          await startNewGame(brief.id, selection);
         },
         // Dismissing the shared modal has no persistence side effect.
         onClose: () => undefined,
@@ -2163,6 +2163,12 @@ function GameInner() {
             <h2 className="mt-2 text-xl font-bold text-slate-900">{projectOneBrief?.projectName ?? projectNotice?.title ?? scene.name}</h2>
             <p className="mt-2 text-sm leading-6 text-slate-600">{projectOneBrief?.overview ?? projectNotice?.summary ?? scene.description}</p>
             <div className="mt-4 flex flex-wrap gap-2 text-xs">{projectOneBrief ? <span className="rounded-full bg-white px-3 py-1.5 font-semibold text-slate-700">客户：{projectOneBrief.clientName}</span> : <span className="rounded-full bg-white px-3 py-1.5 font-semibold text-slate-700">预算：{projectNotice?.budget ?? `${scene.budget} 万元`}</span>}<span className="rounded-full bg-white px-3 py-1.5 font-semibold text-slate-700">项目类型：销售攻关实训</span></div>
+            {projectOneBrief?.id === 'custom' && (
+              <dl className="mt-4 grid gap-2 break-words text-sm text-slate-600">
+                <div><dt className="inline font-semibold">客户行业：</dt><dd className="inline">{projectOneBrief.industryLabel}</dd></div>
+                <div><dt className="inline font-semibold">主营业务：</dt><dd className="inline">{projectOneBrief.businessLabel}</dd></div>
+              </dl>
+            )}
           </div>
           <div className="mt-5 space-y-4">
             {projectOneBrief ? <><section className="rounded-xl border border-slate-200 bg-white p-4"><h3 className="text-sm font-bold text-slate-900">项目目标</h3><div className="mt-2 space-y-2">{projectOneBrief.goals.map((goal, index) => <p key={`${projectOneBrief.id}-goal-${index}`} className="text-sm leading-6 text-slate-600">{goal}</p>)}</div></section>{projectOneBrief.details.map((section) => <section key={section.title} className="rounded-xl border border-slate-200 bg-white p-4"><h3 className="text-sm font-bold text-slate-900">{section.title}</h3><dl className="mt-2 space-y-2">{section.items.map((item) => <div key={`${section.title}-${item.label}`} className="text-sm leading-6 text-slate-600"><dt className="font-semibold text-slate-700">{item.label}</dt><dd>{item.value}</dd></div>)}</dl></section>)}</> : <>{(projectNotice?.sections ?? []).map((section) => <section key={section.heading} className="rounded-xl border border-slate-200 bg-white p-4"><h3 className="text-sm font-bold text-slate-900">{section.heading}</h3><div className="mt-2 space-y-2">{section.content.map((line, index) => <p key={`${section.heading}-${index}`} className="text-sm leading-6 text-slate-600">{line}</p>)}</div></section>)}{(!projectNotice || projectNotice.sections.length === 0) && <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-600">{scene.description}</p>}</>}

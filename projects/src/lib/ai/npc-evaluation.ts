@@ -11,6 +11,7 @@ import {
 } from '@/lib/contracts/ai';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import { verifyNpcEvaluationSources } from '@/lib/ai/npc-evaluation-sources';
+import { resolveRuntimeRulePrompt } from '@/lib/ai/runtime-rule-prompts';
 
 export { verifyNpcEvaluationSources } from '@/lib/ai/npc-evaluation-sources';
 
@@ -566,9 +567,9 @@ function npcDecisionQuestions(): JevQuestions {
   };
 }
 
-function npcNarrativeMessages(ctx: NpcEvaluationContext, decision: NpcTurnEvaluation, designerInstructions: string): ChatMessage[] {
+function npcNarrativeMessages(ctx: NpcEvaluationContext, decision: NpcTurnEvaluation, runtimeRulePrompt: string, designerInstructions: string): ChatMessage[] {
   return [
-    { role: 'system', content: `你只为已确定的NPC状态撰写说明、事实和NPC已说出的证据。不得改变任何数值、布尔值、枚举、礼品结果、线索、情绪或转交对象。只返回 JSON：{"affinityReason":"...","confirmedFacts":[],"commitments":[],"publicValueEvidence":[],"personalBenefitEvidence":[],"giftRiskReason":"...","handoffSummary":"..."}。所有事实、承诺和证据须来自NPC实际回复；responseAction 为 read_no_reply 时不得虚构NPC事实、承诺、证据或转交。${designerInstructions ? `\n${designerInstructions}` : ''}` },
+    { role: 'system', content: `${designerInstructions ? `## 既有设计师评分补充\n${designerInstructions}\n\n` : ''}${runtimeRulePrompt}\n\n只返回 JSON：{"affinityReason":"...","confirmedFacts":[],"commitments":[],"publicValueEvidence":[],"personalBenefitEvidence":[],"giftRiskReason":"...","handoffSummary":"..."}。` },
     { role: 'user', content: serializeUntrustedPromptData('npc_narrative_context', { context: ctx, decision }, { maxStringLength: 1000, maxTotalLength: 14_000 }) },
   ];
 }
@@ -643,7 +644,11 @@ export async function evaluateNpcTurn(
   }
 
   try {
-    const output = await (dependencies.invoker ?? invokeLLM)(npcNarrativeMessages(ctx, selected, designerInstructions), {
+    const [legacyGuidance, runtimeRulePrompt] = await Promise.all([
+      resolveRuntimeRulePrompt('live_npc_evaluator_legacy_guidance', designerInstructions),
+      resolveRuntimeRulePrompt('live_npc_evidence_narrative'),
+    ]);
+    const output = await (dependencies.invoker ?? invokeLLM)(npcNarrativeMessages(ctx, selected, runtimeRulePrompt, legacyGuidance), {
       temperature: 0,
       maxTokens: 900,
       jsonMode: true,
@@ -841,9 +846,9 @@ function readChoice(response: Awaited<ReturnType<JevInvoker>>, key: string): str
   return answer?.type === 'choice' ? answer.choice : undefined;
 }
 
-function buildGiftNarrativeMessages(ctx: GiftDecisionContext, decision: GiftCommandDecision): ChatMessage[] {
+function buildGiftNarrativeMessages(ctx: GiftDecisionContext, decision: GiftCommandDecision, runtimeRulePrompt: string): ChatMessage[] {
   return [
-    { role: 'system', content: '你只负责为已确定的礼品处置撰写人物化文字。不得改变 disposition、数值、严重度或任何状态结论。只返回 JSON：{"reason":"...","riskReason":"...","npcResponse":"..."}。' },
+    { role: 'system', content: `${runtimeRulePrompt}\n\n只返回 JSON：{"reason":"...","riskReason":"...","npcResponse":"..."}。` },
     { role: 'user', content: serializeUntrustedPromptData('gift_narrative_context', { context: ctx, decision }, { maxStringLength: 500, maxTotalLength: 10_000 }) },
   ];
 }
@@ -887,7 +892,8 @@ export async function evaluateGiftDecision(ctx: GiftDecisionContext, dependencie
   const fallback = createFallbackGiftDecision(ctx);
   const invoker = dependencies.invoker ?? invokeLLM;
   try {
-    const output = await invoker(buildGiftNarrativeMessages(ctx, selected), {
+    const runtimeRulePrompt = await resolveRuntimeRulePrompt('live_gift_explanation');
+    const output = await invoker(buildGiftNarrativeMessages(ctx, selected, runtimeRulePrompt), {
       temperature: 0,
       maxTokens: 400,
       jsonMode: true,

@@ -37,6 +37,7 @@ export async function POST(request: NextRequest) {
       getProgressionMultiplier(guard.session.userId),
       parsed.data.replaceExisting,
       parsed.data.onboardingScenarioId,
+      parsed.data.onboardingSelection,
     );
     return NextResponse.json({ success: true, gameSession: { ...gameSession, state: toPlayerVisibleGameState(gameSession.state) } });
   } catch (error) {

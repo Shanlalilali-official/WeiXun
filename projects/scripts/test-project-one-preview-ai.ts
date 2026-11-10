@@ -8,6 +8,7 @@ import { PROJECT_ONE_NPC_CHANNEL_EXCEPTIONS } from '../src/lib/designer/project-
 import { getPreviewRequestHash } from '../src/lib/game/project-one-preview-session-repository';
 import type { JevInvoker, JevQuestion } from '../src/lib/ai/jev-client';
 import { DEFAULT_PROJECT_ONE_PROMPT_CONFIG } from '../src/lib/designer/prompt-config';
+import { isCustomerActivityReplyContext } from '../src/lib/game/invitation-intent';
 
 const json = (value: unknown) => JSON.stringify(value);
 let commandIndex = 0;
@@ -266,11 +267,74 @@ async function main() {
   const phone = await phoneService.execute('user-phone', withMeta({ action: 'phone_connect', npcId: 'P1-001', text: '请确认技术验收口径。' }, 0));
   assert.equal(phone.responseAction, undefined, 'phone retains its legacy public reply contract');
   assert.equal(phone.readStatus, undefined, 'phone does not expose asynchronous read status');
+  assert.equal(phone.connected, true);
   assert.equal(phone.content, '请通过电话先说明具体事项。');
   const legacyWorkPhone = await phoneService.execute('user-phone', withMeta({ action: 'message', npcId: 'P1-001', channel: 'work_phone', text: '请确认技术验收口径。' }, phone.version, phone.previewSessionId));
   assert.equal(legacyWorkPhone.responseAction, undefined, 'work_phone message cannot enter the read_no_reply contract');
   assert.equal(legacyWorkPhone.readStatus, undefined, 'work_phone message remains a legacy synchronous reply');
   assert.equal(legacyWorkPhone.content, '请通过电话先说明具体事项。');
+
+  const channelPromptConfig = structuredClone(DEFAULT_PROJECT_ONE_PROMPT_CONFIG);
+  channelPromptConfig.npcChannelDecisionPrompts = {
+    'P1-001': { work_phone: 'PHONE_PERSONAL_GUIDANCE', email: 'EMAIL_PERSONAL_GUIDANCE' },
+  };
+  const contactInstructions: string[] = [];
+  const replyInstructions: string[] = [];
+  const channelDecisionService = createPreviewAiService({
+    invoker: async () => json(emptyEvaluation),
+    jevInvoker: async (request) => {
+      const contact = request.questions.contactAction;
+      if (contact) {
+        contactInstructions.push(typeof contact.instructions === 'string' ? contact.instructions : '');
+        return { answers: { contactAction: { type: 'choice', choice: 'unanswered', probabilities: { answer: 0, unanswered: 1 }, confidence: 1 } } };
+      }
+      const replyInstruction = request.questions.responseAction?.instructions;
+      if (typeof replyInstruction === 'string') replyInstructions.push(replyInstruction);
+      return testJevInvoker(request);
+    },
+  });
+  const decisionState = channelDecisionService.store.create('user-channel-decision-prompts');
+  const unanswered = await channelDecisionService.execute('user-channel-decision-prompts', withMeta({
+    action: 'phone_connect', npcId: 'P1-001', text: '玩家拨打工作电话，等待接听。',
+  }, 0, decisionState.previewSessionId), channelPromptConfig);
+  assert.equal(unanswered.connected, false);
+  assert.equal(decisionState.activeCustomerActivityConversation, null);
+  assert.equal(decisionState.conversations['P1-001'].length, 0);
+  assert.match(contactInstructions.join('\n'), /PHONE_PERSONAL_GUIDANCE/);
+  assert.doesNotMatch(contactInstructions.join('\n'), /EMAIL_PERSONAL_GUIDANCE/);
+  const readEmail = await channelDecisionService.execute('user-channel-decision-prompts', withMeta({
+    action: 'message', npcId: 'P1-001', channel: 'email', text: '收到，谢谢。',
+  }, 1, decisionState.previewSessionId), channelPromptConfig);
+  assert.equal(readEmail.responseAction, 'read_no_reply');
+  assert.match(replyInstructions.join('\n'), /EMAIL_PERSONAL_GUIDANCE/);
+  assert.doesNotMatch(replyInstructions.join('\n'), /PHONE_PERSONAL_GUIDANCE/);
+
+  const indirectMeal = '明天有空当面聊吗？我请客，找个馆子坐一坐。';
+  assert.equal(isCustomerActivityReplyContext(indirectMeal), false, 'the phrasing does not activate the legacy reply hint');
+  const semanticActivityService = createPreviewAiServiceBase({
+    jevInvoker: testJevInvoker,
+    invoker: async (messages) => {
+      const system = messages[0].content;
+      if (system.includes('活动提议语义识别器')) {
+        const input = messages[1].content.match(/\n([\s\S]+)\n<\/untrusted_data>/)?.[1] ?? '[]';
+        const transcript = JSON.parse(input) as Array<{ messageId: string; speaker: string; text: string }>;
+        const proposal = transcript.find((message) => message.speaker === 'sales' && message.text === indirectMeal);
+        return json({ activities: proposal ? [{
+          type: 'hospitality', initiator: 'sales', finalStatus: 'active',
+          proposal: { messageId: proposal.messageId, quote: '我请客，找个馆子坐一坐' },
+        }] : [] });
+      }
+      if (system.includes('客户活动回复的上下文语义复核器')) return json({ decision: 'allowed', issue: 'none' });
+      if (system.includes('独立评估刚刚完成的 NPC 正文')) return json(emptyEvaluation);
+      return json({ content: '我先考虑一下，之后再给您反馈。' });
+    },
+  });
+  const semanticActivity = await semanticActivityService.execute('semantic-appointment-routing', withMeta({
+    action: 'message', channel: 'email', npcId: 'P1-005', text: indirectMeal,
+  }, 0));
+  assert.equal(semanticActivity.invitationStatus, 'none', 'an indirect activity is removed from the ordinary appointment path');
+  assert.equal(semanticActivity.appointment, undefined);
+  assert.equal(semanticActivity.customerActivities?.unavailableNotices[0]?.type, 'hospitality');
 
   const roleReversedReply = '您好，张总。我们是专注政企数字化交付的团队，刚中标了省里两个同类项目。';
   let labelledDrafts = 0;

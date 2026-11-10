@@ -1,16 +1,22 @@
 # 政企销售 AI 竞标实训游戏
 
-## 2026-10-30 工作交接
+面向政企和 B2B 销售的 AI 竞标实训平台。项目一提供五位客户角色，玩家通过联系客户、准备拜访、策划活动、收集证据和应对竞品完成对局，并查看结算复盘。
 
-完整说明和日常操作请读 [交接与操作手册](docs/handover/README.md)，数据迁移请读 [恢复手册](docs/handover/DATA_RESTORE.md)，本次数据/验证范围请读 [交接核验记录](docs/handover/DELIVERY_REPORT.md)。页面/API清单、架构、配置、已知问题和故障排查均在同目录。
+## 当前分支
+
+本页对应 `handover/2026-11-02-preview`，包含最新一批项目一改动。
+
+- **项目一**（`/game`）和**实际测试**（`/project-one-preview`）使用同一开场流程。行业和主营业务可分别选择预设或自行填写。自定义方向会随对局保存，并使用通用练习简报。按自定义方向即时生成完整项目资料仍在计划中。
+- **客户活动**由大模型根据对话识别真实提议。达到开展门槛后进入策划，未达门槛时提示客户暂时无法开展。
+- **设计师工作台**（`/designer`）可以查看和编辑运行时业务规则（`/designer/runtime-prompts`）、结构化决策（`/designer/jev-config`）以及人物和渠道提示词（`/designer/prompt-library`）。人物提示词页可一并编辑该人物的电话接听和邮件回复决策。客户活动的开展条件与方案评价在活动专项设置（`/designer/customer-activities`）维护。
 
 ## Windows 一键启动
 
-双击项目根目录的 `start-project.bat`。脚本会检查环境与构建产物、启动 `http://127.0.0.1:5000/` 并自动打开浏览器。运行期间不要关闭命令行窗口；按 `Ctrl+C` 或关闭窗口即可停止服务。
+先按[应用配置与验证说明](projects/README.md)准备 Node.js、pnpm 9.x、Supabase 和模型服务，再双击项目根目录的 `start-project.bat`。脚本检查数据库和构建产物，需要时重新构建，并打开浏览器。默认地址为 `http://127.0.0.1:5000/`。如果端口已被其他服务占用，以脚本输出的地址为准。
 
-首次使用仍需先完成 `projects/.env.local` 配置并安装依赖。正常重启电脑后无需再次安装或配置，直接双击脚本即可。
+## 交接资料
 
-本目录是项目治理与版本管理根目录。现有 Next.js 工程保留在 `projects/`，外层 `harness/` 用于管理目标、项目上下文、长期记忆、迭代计划和开发循环。
+日常操作与历史交接记录见[交接与操作手册](docs/handover/README.md)。数据库和素材恢复见[恢复手册](docs/handover/DATA_RESTORE.md)，2026-10-30 的交付核验见[交接核验记录](docs/handover/DELIVERY_REPORT.md)。本分支当前实现与验证范围见[项目状态](harness/STATE.md)。
 
 ## 入口
 

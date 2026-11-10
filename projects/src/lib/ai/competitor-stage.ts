@@ -5,6 +5,7 @@ import { invokeJev, type JevAnswer, type JevInvoker, type JevQuestions } from '@
 import { invokeConfiguredJev } from '@/lib/ai/jev-designer-config';
 import { serializeUntrustedPromptData } from '@/lib/ai/prompt-data';
 import { COMPETITOR_PROMPT } from '@/lib/ai/prompts/competitor';
+import { resolveRuntimeRulePrompt } from '@/lib/ai/runtime-rule-prompts';
 import {
   COMPETITOR_TARGET_NPC_IDS,
   isCompetitorStageActionCandidate,
@@ -137,18 +138,19 @@ function buildStageContext(state: GameRuntimeState) {
 export function buildCompetitorStageMessages(
   state: GameRuntimeState,
   decision?: z.infer<typeof competitorStageDecisionSchema>,
+  runtimeRulePrompt = `这是项目一单机五阶段的隐藏竞品动作文案。竞品已经由独立决策系统确定动作，绝不能选择或改写目标、类型、压力值。
+只描述给定的竞品动作，不输出玩家、NPC支持度、竞品分数或其他隐藏数值。调研、已完成拜访和已使用材料只作为写作背景，是否对冲及实际 supportImpact 由服务端确定性计算。`,
 ): ChatMessage[] {
   const protocol = `
-这是项目一单机五阶段的隐藏竞品动作文案。竞品已经由独立决策系统确定动作，绝不能选择或改写目标、类型、压力值。
 只返回一个 JSON 对象，不要 Markdown、解释或额外字段：
 {
   "title": "不超过120字的竞品动作标题",
   "summary": "不超过320字的竞品动作摘要"
 }
-只描述给定的竞品动作，不输出玩家、NPC支持度、竞品分数或其他隐藏数值。调研、已完成拜访和已使用材料只作为写作背景，是否对冲及实际 supportImpact 由服务端确定性计算。`;
+`;
   const basePrompt = COMPETITOR_PROMPT({ scenarioId: state.scenarioCode });
   return [
-    { role: 'system', content: `${basePrompt}\n${protocol}` },
+    { role: 'system', content: `${basePrompt}\n\n${runtimeRulePrompt}\n${protocol}` },
     {
       role: 'user',
       content: serializeUntrustedPromptData('competitor_stage_context', { ...buildStageContext(state), decision }, {
@@ -201,7 +203,8 @@ async function runDecision(
     }
     let narrative = fallbackNarrative(decision.data);
     try {
-      const raw = await invoker(buildCompetitorStageMessages(state, decision.data), {
+      const runtimeRulePrompt = await resolveRuntimeRulePrompt('competitor_stage_narrative');
+      const raw = await invoker(buildCompetitorStageMessages(state, decision.data, runtimeRulePrompt), {
       temperature: 0,
       maxTokens: 350,
       jsonMode: true,

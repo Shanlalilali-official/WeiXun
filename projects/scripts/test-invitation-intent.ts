@@ -50,11 +50,14 @@ assert.equal(isNaturalLanguageCustomerActivityInvitation('不是不能安排技�
   'double negation stays an invitation signal rather than a cancellation');
 assert.equal(isNaturalLanguageCustomerActivityInvitation('方便不方便安排一次技术交流会？'), true,
   'a question using a negative form remains an invitation signal');
-for (const example of ['明晚一起吃个饭吧', '周末要不要喝酒？', '我想请您吃顿饭', '下周安排个饭局方便吗？']) {
+for (const example of ['明晚一起吃个饭吧', '周末要不要喝酒？', '我想请您吃顿饭', '下周安排个饭局方便吗？', '请问您最近是否有空呢？想请您吃个便饭，顺便也请教您一些问题~', '我想请您吃一顿便饭。']) {
   assert.equal(isNaturalLanguageInvitation(example), true, `hospitality invitation is separated from ordinary appointments: ${example}`);
   assert.equal(isNaturalLanguageCustomerActivityInvitation(example), true, example);
   assert.equal(isCustomerActivityReplyContext(example), true, `${example} receives customer-activity reply guidance`);
+  assert.equal(isHospitalityCustomerActivityContext(example), true, example);
 }
+assert.equal(isNaturalLanguageCustomerActivityInvitation('上次请您吃个便饭时已经聊过。'), false);
+assert.equal(isNaturalLanguageCustomerActivityInvitation('今天先不请您吃个便饭了。'), false);
 assert.equal(isNaturalLanguageCustomerActivityInvitation('上次饭局聊得很愉快，材料我已发您。'), false,
   'historical dinners remain ordinary conversation');
 assert.equal(isNaturalLanguageCustomerActivityInvitation('这次先不安排饭局了。'), false,

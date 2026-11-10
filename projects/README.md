@@ -4,20 +4,20 @@
 
 ## 本地准备
 
-需要 Node.js 20+、pnpm 9+、Docker Desktop 和 Supabase CLI。Windows 推荐使用 Scoop 安装 CLI：
+需要 Node.js 20+、pnpm 9.x 和一个已应用项目迁移的 Supabase 环境。本地 Supabase 使用 Docker 与 Supabase CLI，也可以连接托管开发库。在 Windows 上可用 Scoop 安装 CLI。
 
 ```powershell
 scoop install supabase
 ```
 
-首次启动。脚本检测到 Docker 时启动本地 Supabase；没有 Docker 时显示托管 Supabase 的连接步骤：
+在 `projects/` 目录安装依赖并准备环境。脚本检测到 Docker 时启动本地 Supabase，没有 Docker 时会显示托管 Supabase 的配置步骤。
 
 ```powershell
-pnpm install
+corepack pnpm install --frozen-lockfile
 ./scripts/setup-local.ps1
 ```
 
-脚本会创建 `.env.local`（若不存在）、启动本地 Supabase 并显示连接信息。把输出中的 API URL、anon key 和 service_role key 填入 `.env.local`，再填入模型服务配置：
+脚本会在缺少 `.env.local` 时从模板创建它。配置 `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY` 和独立的 `SESSION_SECRET`，再填入模型服务配置。
 
 ```dotenv
 AI_BASE_URL=https://your-provider.example/v1
@@ -27,14 +27,20 @@ AI_MODEL=your-model-name
 
 `AI_BASE_URL` 必须对应支持 `POST /chat/completions` 的 OpenAI 兼容地址。密钥只放在 `.env.local`，该文件不会进入 Git。
 
+结构化业务决策可在 `/designer/jev-config` 选择 Jev 或 LLM 模式。使用 Jev 时按 [环境变量模板](.env.example) 配置 `JEV_API_URL`、`JEV_API_KEY` 和 `JEV_MODEL`，并运行 `pnpm local:check:jev`。普通对话和活动语义识别使用应用配置的 LLM。
+
 ## 常用命令
 
 ```powershell
 pnpm local:check
 pnpm dev
+pnpm validate
 pnpm build
 pnpm start
 pnpm test:ai-provider
+pnpm test:jev-designer-config
+pnpm test:runtime-rule-prompts
+pnpm test:customer-activities
 pnpm test:game-state
 pnpm test:metrics
 pnpm supabase:start
